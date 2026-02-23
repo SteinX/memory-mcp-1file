@@ -433,8 +433,17 @@ pub async fn get_index_status(
     match state.storage.get_index_status(&params.project_id).await {
         Ok(Some(mut status)) => {
             let mut current_file: Option<String> = None;
-            if status.status == crate::types::IndexState::Indexing {
-                if let Some(monitor) = state.progress.get(&params.project_id).await {
+
+            // Always try to fetch current_file from monitor if available, even if failed or stuck
+            if let Some(monitor) = state.progress.get(&params.project_id).await {
+                if let Ok(cf) = monitor.current_file.read() {
+                    if !cf.is_empty() {
+                        current_file = Some(cf.clone());
+                    }
+                }
+
+                // If we are actively indexing, update the progress counters
+                if status.status == crate::types::IndexState::Indexing {
                     let indexed = monitor
                         .indexed_files
                         .load(std::sync::atomic::Ordering::Relaxed);
@@ -447,12 +456,6 @@ pub async fn get_index_status(
                     }
                     if total > 0 {
                         status.total_files = std::cmp::max(status.total_files, total);
-                    }
-
-                    if let Ok(cf) = monitor.current_file.read() {
-                        if !cf.is_empty() {
-                            current_file = Some(cf.clone());
-                        }
                     }
                 }
             }
@@ -527,7 +530,9 @@ pub async fn get_index_status(
                 "overall_progress": {
                     "percent": format!("{:.1}", overall_progress),
                     "is_complete": status.status == crate::types::IndexState::Completed || (embedded_chunks >= total_chunks && embedded_symbols >= total_symbols && total_chunks > 0)
-                }
+                },
+                "error_message": status.error_message,
+                "failed_files": status.failed_files
             })))
         }
         Ok(None) => Ok(error_response(format!(

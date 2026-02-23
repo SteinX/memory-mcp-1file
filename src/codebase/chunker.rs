@@ -54,7 +54,8 @@ fn chunk_by_ast(
     for child in root.children(&mut cursor) {
         let start_byte = child.start_byte();
         let end_byte = child.end_byte();
-        let node_text = &content[start_byte..end_byte];
+
+        let node_text = content.get(start_byte..end_byte).unwrap_or("");
 
         if node_text.len() < MIN_CHUNK_CHARS {
             continue;

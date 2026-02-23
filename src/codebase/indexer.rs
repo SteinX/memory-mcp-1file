@@ -24,7 +24,30 @@ pub async fn index_project(state: Arc<AppState>, project_path: &Path) -> Result<
         .unwrap_or("unknown")
         .to_string();
 
-    match do_index_project(state.clone(), project_path, &project_id).await {
+    let state_clone = state.clone();
+    let project_path_clone = project_path.to_path_buf();
+    let project_id_clone = project_id.clone();
+
+    // Spawn as a task so we can catch panics natively
+    let handle = tokio::spawn(async move {
+        do_index_project(state_clone, &project_path_clone, &project_id_clone).await
+    });
+
+    let result = match handle.await {
+        Ok(res) => res,
+        Err(join_err) => {
+            let msg = if join_err.is_panic() {
+                "Indexing panicked (crashed)".to_string()
+            } else if join_err.is_cancelled() {
+                "Indexing was cancelled".to_string()
+            } else {
+                "Indexing failed to complete".to_string()
+            };
+            Err(crate::AppError::Internal(msg))
+        }
+    };
+
+    match result {
         Ok(status) => Ok(status),
         Err(e) => {
             tracing::error!(project_id = %project_id, error = %e, "Indexing failed");
@@ -32,8 +55,24 @@ pub async fn index_project(state: Arc<AppState>, project_path: &Path) -> Result<
             if let Ok(Some(existing)) = state.storage.get_index_status(&project_id).await {
                 status = existing;
             }
+
+            // Extract last known file if possible
+            if let Some(monitor) = state.progress.get(&project_id).await {
+                if let Ok(cf) = monitor.current_file.read() {
+                    if !cf.is_empty() {
+                        status.failed_files.push(cf.clone());
+                        status.error_message = Some(format!("{}: Failed at file {}", e, cf));
+                    } else {
+                        status.error_message = Some(e.to_string());
+                    }
+                } else {
+                    status.error_message = Some(e.to_string());
+                }
+            } else {
+                status.error_message = Some(e.to_string());
+            }
+
             status.status = IndexState::Failed;
-            status.error_message = Some(e.to_string());
             status.completed_at = Some(crate::types::Datetime::default());
             let _ = state.storage.update_index_status(status.clone()).await;
             Err(e)
@@ -84,6 +123,8 @@ async fn do_index_project(
             *cf = file_path.to_string_lossy().to_string();
         }
 
+        tracing::info!("Indexing file: {:?}", file_path);
+
         // Skip auto-generated files (no useful semantic content)
         if crate::codebase::scanner::is_ignored_file(file_path) {
             tracing::debug!(path = ?file_path, "Skipping generated file");
@@ -110,13 +151,19 @@ async fn do_index_project(
                 status
                     .failed_files
                     .push(file_path.to_string_lossy().to_string());
-                status.indexed_files += 1;
-                monitor
-                    .indexed_files
-                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 continue;
             }
         };
+
+        // Skip massive files to prevent OOM/TreeSitter crashes (e.g. giant bundled JS or Dart files)
+        if content.len() > 1_000_000 {
+            // > 1MB
+            tracing::warn!("Skipping large file (>1MB): {:?}", file_path);
+            status
+                .failed_files
+                .push(file_path.to_string_lossy().to_string());
+            continue;
+        }
 
         // Store file-level hash for incremental indexing
         let file_path_str = file_path.to_string_lossy().to_string();
