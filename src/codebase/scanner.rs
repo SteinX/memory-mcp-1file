@@ -4,20 +4,69 @@ use ignore::{overrides::OverrideBuilder, WalkBuilder};
 
 use crate::types::Language;
 
+/// Directories that should be skipped entirely during traversal.
+/// This prevents the walker from even descending into them (saves I/O).
+const SKIP_DIRS: &[&str] = &[
+    // Build artifacts
+    "build",
+    "dist",
+    "out",
+    "target",
+    // JS/Node
+    "node_modules",
+    ".npm",
+    ".yarn",
+    ".pnp",
+    // Dart/Flutter
+    ".dart_tool",
+    ".pub-cache",
+    // Android/Gradle
+    ".gradle",
+    ".android",
+    // iOS
+    "Pods",
+    ".symlinks",
+    // Python
+    "__pycache__",
+    ".venv",
+    "venv",
+    ".mypy_cache",
+    ".pytest_cache",
+    ".ruff_cache",
+    "egg-info",
+    // Rust
+    ".cargo",
+    // IDE/Editor
+    ".idea",
+    ".vscode",
+    ".vs",
+    // Cache/temp
+    // Coverage/test artifacts
+    "coverage",
+    ".nyc_output",
+    // Container/infra
+    ".terraform",
+    // Generated
+    ".generated",
+    ".next",
+    ".nuxt",
+    ".svelte-kit",
+];
+
 pub fn scan_directory(root: &Path) -> crate::Result<Vec<PathBuf>> {
     let mut overrides = OverrideBuilder::new(root);
+    // Generated dart files (match at any depth)
     let _ = overrides.add("!**/*.g.dart");
     let _ = overrides.add("!**/*.freezed.dart");
     let _ = overrides.add("!**/*.gr.dart");
     let _ = overrides.add("!**/*.config.dart");
     let _ = overrides.add("!**/*.mocks.dart");
     let _ = overrides.add("!**/*.arb");
-    let _ = overrides.add("!build/**");
-    let _ = overrides.add("!.dart_tool/**");
-    let _ = overrides.add("!dist/**");
-    let _ = overrides.add("!out/**");
-    let _ = overrides.add("!target/**");
-    let _ = overrides.add("!node_modules/**");
+
+    // Skip directories at any nesting depth via overrides
+    for dir in SKIP_DIRS {
+        let _ = overrides.add(&format!("!**/{dir}/**"));
+    }
 
     let walker = WalkBuilder::new(root)
         .hidden(true)
@@ -28,6 +77,27 @@ pub fn scan_directory(root: &Path) -> crate::Result<Vec<PathBuf>> {
                 .build()
                 .unwrap_or_else(|_| ignore::overrides::Override::empty()),
         )
+        .filter_entry(|entry| {
+            // Early directory pruning — don't even descend into known-junk dirs.
+            // This is the critical optimization: avoids stat()/readdir() on millions of files.
+            if entry.file_type().is_some_and(|ft| ft.is_dir()) {
+                if let Some(name) = entry.file_name().to_str() {
+                    let name_lower = name.to_lowercase();
+                    // Skip any directory whose name matches SKIP_DIRS
+                    if SKIP_DIRS
+                        .iter()
+                        .any(|d| d.eq_ignore_ascii_case(&name_lower))
+                    {
+                        return false;
+                    }
+                    // Also skip hidden directories (start with .)
+                    if name.starts_with('.') && name != "." && name != ".." {
+                        return false;
+                    }
+                }
+            }
+            true
+        })
         .build();
 
     let mut files = Vec::new();
@@ -43,20 +113,14 @@ pub fn scan_directory(root: &Path) -> crate::Result<Vec<PathBuf>> {
 
 pub fn is_ignored_file(path: &Path) -> bool {
     let path_str = path.to_string_lossy().to_lowercase();
-    if path_str.contains("/node_modules/")
-        || path_str.contains("\\node_modules\\")
-        || path_str.contains("/target/")
-        || path_str.contains("\\target\\")
-        || path_str.contains("/build/")
-        || path_str.contains("\\build\\")
-        || path_str.contains("/.dart_tool/")
-        || path_str.contains("\\.dart_tool\\")
-        || path_str.contains("/dist/")
-        || path_str.contains("\\dist\\")
-        || path_str.contains("/out/")
-        || path_str.contains("\\out\\")
-    {
-        return true;
+
+    // Check if any path component matches a skip directory
+    for dir in SKIP_DIRS {
+        let pattern1 = format!("/{}/", dir);
+        let pattern2 = format!("\\{}\\", dir);
+        if path_str.contains(&pattern1) || path_str.contains(&pattern2) {
+            return true;
+        }
     }
 
     let name = path
@@ -64,11 +128,14 @@ pub fn is_ignored_file(path: &Path) -> bool {
         .and_then(|n| n.to_str())
         .unwrap_or("")
         .to_lowercase();
+
+    // Hidden files (dotfiles)
     if name.starts_with('.') && name != "." {
         return true;
     }
 
-    matches!(
+    // Lock files
+    if matches!(
         name.as_str(),
         "package-lock.json"
             | "yarn.lock"
@@ -78,7 +145,12 @@ pub fn is_ignored_file(path: &Path) -> bool {
             | "pubspec.lock"
             | "gemfile.lock"
             | "poetry.lock"
-    ) || name.ends_with(".g.dart")
+    ) {
+        return true;
+    }
+
+    // Generated / minified files
+    name.ends_with(".g.dart")
         || name.ends_with(".freezed.dart")
         || name.ends_with(".gr.dart")
         || name.ends_with(".config.dart")
@@ -87,6 +159,10 @@ pub fn is_ignored_file(path: &Path) -> bool {
         || name.ends_with(".min.js")
         || name.ends_with(".min.css")
         || name.ends_with(".bundle.js")
+        || name.ends_with(".map")
+        || name.ends_with(".d.ts")
+        || path_str.contains("/generated/")
+        || path_str.contains("\\generated\\")
 }
 
 pub fn is_code_file(path: &Path) -> bool {

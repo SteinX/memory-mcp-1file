@@ -36,6 +36,7 @@ impl Default for AppConfig {
 pub struct IndexMonitor {
     pub total_files: AtomicU32,
     pub indexed_files: AtomicU32,
+    pub current_file: std::sync::RwLock<String>,
 }
 
 impl Default for IndexMonitor {
@@ -43,6 +44,7 @@ impl Default for IndexMonitor {
         Self {
             total_files: AtomicU32::new(0),
             indexed_files: AtomicU32::new(0),
+            current_file: std::sync::RwLock::new(String::new()),
         }
     }
 }

@@ -79,6 +79,11 @@ async fn do_index_project(
     const MAX_CHUNKS_PER_FILE: usize = 50;
 
     for file_path in &files {
+        // Update current file in monitor for status reporting
+        if let Ok(mut cf) = monitor.current_file.write() {
+            *cf = file_path.to_string_lossy().to_string();
+        }
+
         // Skip auto-generated files (no useful semantic content)
         if crate::codebase::scanner::is_ignored_file(file_path) {
             tracing::debug!(path = ?file_path, "Skipping generated file");

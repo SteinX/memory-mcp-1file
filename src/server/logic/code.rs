@@ -432,6 +432,7 @@ pub async fn get_index_status(
 ) -> anyhow::Result<CallToolResult> {
     match state.storage.get_index_status(&params.project_id).await {
         Ok(Some(mut status)) => {
+            let mut current_file: Option<String> = None;
             if status.status == crate::types::IndexState::Indexing {
                 if let Some(monitor) = state.progress.get(&params.project_id).await {
                     let indexed = monitor
@@ -446,6 +447,12 @@ pub async fn get_index_status(
                     }
                     if total > 0 {
                         status.total_files = std::cmp::max(status.total_files, total);
+                    }
+
+                    if let Ok(cf) = monitor.current_file.read() {
+                        if !cf.is_empty() {
+                            current_file = Some(cf.clone());
+                        }
                     }
                 }
             }
@@ -499,7 +506,8 @@ pub async fn get_index_status(
 
                 "parsing": {
                     "status": if status.indexed_files >= status.total_files { "completed" } else { "in_progress" },
-                    "progress": format!("{}/{}", status.indexed_files, status.total_files)
+                    "progress": format!("{}/{}", status.indexed_files, status.total_files),
+                    "current_file": current_file
                 },
 
                 "vector_embeddings": {
