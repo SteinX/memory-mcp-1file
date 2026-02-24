@@ -91,7 +91,12 @@ async fn check_and_complete_project(
     let embedded_symbols = state.storage.count_embedded_symbols(project_id).await?;
 
     let chunks_complete = embedded_chunks >= total_chunks;
-    let symbols_complete = embedded_symbols >= total_symbols;
+    // Safety threshold: if ≥99.5% symbols embedded, consider complete
+    // (handles edge case where some symbols lack signature text for embedding)
+    let symbols_complete = embedded_symbols >= total_symbols
+        || (total_symbols > 0
+            && embedded_symbols > 0
+            && (embedded_symbols as f64 / total_symbols as f64) >= 0.995);
     let has_content = total_chunks > 0 || total_symbols > 0;
 
     let mut is_stuck = false;

@@ -231,17 +231,19 @@ async fn do_index_project(
                     Ok(ids) => {
                         // 2. Queue for async embedding
                         for (id, sym) in ids.iter().zip(batch.iter()) {
-                            if let Some(sig) = &sym.signature {
-                                let _ = state
-                                    .embedding_queue
-                                    .send(EmbeddingRequest {
-                                        text: sig.clone(),
-                                        responder: None,
-                                        target: Some(EmbeddingTarget::Symbol(id.clone())),
-                                        retry_count: 0,
-                                    })
-                                    .await;
-                            }
+                            let embed_text = sym
+                                .signature
+                                .clone()
+                                .unwrap_or_else(|| format!("{} {}", sym.symbol_type, sym.name));
+                            let _ = state
+                                .embedding_queue
+                                .send(EmbeddingRequest {
+                                    text: embed_text,
+                                    responder: None,
+                                    target: Some(EmbeddingTarget::Symbol(id.clone())),
+                                    retry_count: 0,
+                                })
+                                .await;
                         }
                     }
                     Err(e) => {
@@ -309,17 +311,19 @@ async fn do_index_project(
             .await?;
 
         for (id, sym) in ids.iter().zip(batch.iter()) {
-            if let Some(sig) = &sym.signature {
-                let _ = state
-                    .embedding_queue
-                    .send(EmbeddingRequest {
-                        text: sig.clone(),
-                        responder: None,
-                        target: Some(EmbeddingTarget::Symbol(id.clone())),
-                        retry_count: 0,
-                    })
-                    .await;
-            }
+            let embed_text = sym
+                .signature
+                .clone()
+                .unwrap_or_else(|| format!("{} {}", sym.symbol_type, sym.name));
+            let _ = state
+                .embedding_queue
+                .send(EmbeddingRequest {
+                    text: embed_text,
+                    responder: None,
+                    target: Some(EmbeddingTarget::Symbol(id.clone())),
+                    retry_count: 0,
+                })
+                .await;
         }
     }
 
