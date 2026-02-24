@@ -8,6 +8,7 @@ use super::scanner::detect_language;
 const MAX_CHUNK_CHARS: usize = 4000;
 const MIN_CHUNK_CHARS: usize = 10;
 const MAX_CHUNK_LINES: usize = 150;
+const MIN_OTHER_CHUNK_LINES: usize = 3;
 
 pub fn chunk_file(path: &Path, content: &str, project_id: &str) -> Vec<CodeChunk> {
     let language = detect_language(path);
@@ -62,6 +63,11 @@ fn chunk_by_ast(
         }
 
         if node_text.len() <= MAX_CHUNK_CHARS {
+            let chunk_type = detect_chunk_type(&child);
+            let line_count = child.end_position().row - child.start_position().row + 1;
+            if chunk_type == ChunkType::Other && line_count < MIN_OTHER_CHUNK_LINES {
+                continue; // Skip noise
+            }
             chunks.push(create_chunk(
                 node_text,
                 file_path,
@@ -69,7 +75,7 @@ fn chunk_by_ast(
                 language.clone(),
                 child.start_position().row as u32 + 1,
                 child.end_position().row as u32 + 1,
-                detect_chunk_type(&child),
+                chunk_type,
             ));
         } else {
             let sub_chunks = split_large_node(

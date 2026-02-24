@@ -26,6 +26,10 @@ impl SurrealStorage {
         let db: Surreal<Db> = Surreal::new::<SurrealKv>(db_path).await?;
         db.use_ns("memory").use_db("main").await?;
 
+        // Drop old fulltext index on code_chunks that caused startup errors on existing databases
+        db.query("REMOVE INDEX IF EXISTS idx_chunks_fts ON code_chunks;")
+            .await?;
+
         let schema = include_str!("schema.surql").replace("{dim}", &model_dim.to_string());
         db.query(&schema).await?;
 
@@ -1409,8 +1413,8 @@ impl StorageBackend for SurrealStorage {
 
         let where_clause = conditions.join(" AND ");
         let sql = format!(
-            "SELECT * FROM code_symbols WHERE {} ORDER BY name ASC LIMIT {} START {}",
-            where_clause, limit, offset
+            "SELECT * FROM code_symbols WHERE {} ORDER BY name ASC LIMIT $limit START $offset",
+            where_clause
         );
 
         let count_sql = format!(
@@ -1418,7 +1422,12 @@ impl StorageBackend for SurrealStorage {
             where_clause
         );
 
-        let mut query_builder = self.db.query(&sql).bind(("query", query.to_string()));
+        let mut query_builder = self
+            .db
+            .query(&sql)
+            .bind(("query", query.to_string()))
+            .bind(("limit", limit))
+            .bind(("offset", offset));
         let mut count_builder = self.db.query(&count_sql).bind(("query", query.to_string()));
 
         if let Some(pid) = project_id {

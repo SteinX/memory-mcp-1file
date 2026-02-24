@@ -75,8 +75,8 @@ DEFINE FIELD indexed_at       ON code_chunks TYPE datetime DEFAULT time::now();
 
 DEFINE INDEX OVERWRITE idx_chunks_vec ON code_chunks 
     FIELDS embedding HNSW DIMENSION {dim} DIST COSINE;
-DEFINE INDEX IF NOT EXISTS idx_chunks_fts ON code_chunks 
-    FIELDS content FULLTEXT ANALYZER simple BM25;
+-- idx_chunks_fts removed: caused startup errors on existing databases; not used in hot path
+-- DEFINE INDEX IF NOT EXISTS idx_chunks_fts ON code_chunks FIELDS content FULLTEXT ANALYZER simple BM25;
 DEFINE INDEX IF NOT EXISTS idx_chunks_path ON code_chunks FIELDS file_path;
 DEFINE INDEX IF NOT EXISTS idx_chunks_project ON code_chunks FIELDS project_id;
 DEFINE INDEX IF NOT EXISTS idx_chunks_hash ON code_chunks FIELDS content_hash;
@@ -117,6 +117,7 @@ DEFINE FIELD embedding      ON code_symbols TYPE option<array<float>>;
 DEFINE FIELD indexed_at     ON code_symbols TYPE datetime DEFAULT time::now();
 
 DEFINE INDEX IF NOT EXISTS idx_symbols_name ON code_symbols FIELDS name;
+DEFINE INDEX IF NOT EXISTS idx_symbols_type_name ON code_symbols FIELDS symbol_type, name;
 DEFINE INDEX IF NOT EXISTS idx_symbols_project ON code_symbols FIELDS project_id;
 DEFINE INDEX IF NOT EXISTS idx_symbols_path ON code_symbols FIELDS file_path;
 DEFINE INDEX OVERWRITE idx_symbols_vec ON code_symbols 
