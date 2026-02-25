@@ -22,7 +22,11 @@ DEFINE FIELD superseded_by    ON memories TYPE option<string>;
 DEFINE FIELD content_hash     ON memories TYPE option<string>;
 DEFINE FIELD embedding_state  ON memories TYPE string DEFAULT 'none';
 
-DEFINE INDEX OVERWRITE idx_memories_vec ON memories 
+-- IF NOT EXISTS: index is created once; dimension changes are handled by
+-- check_dimension() in mod.rs which explicitly REMOVE+DEFINE when needed.
+-- OVERWRITE was forcing a full O(n log n) HNSW rebuild on every startup,
+-- causing stack overflow + OOM on large datasets (298k+ vectors).
+DEFINE INDEX IF NOT EXISTS idx_memories_vec ON memories 
     FIELDS embedding HNSW DIMENSION {dim} DIST COSINE;
 DEFINE INDEX IF NOT EXISTS idx_memories_fts ON memories 
     FIELDS content FULLTEXT ANALYZER simple BM25;
@@ -37,7 +41,7 @@ DEFINE FIELD content_hash     ON entities TYPE option<string>;
 DEFINE FIELD user_id          ON entities TYPE option<string>;
 DEFINE FIELD created_at       ON entities TYPE datetime DEFAULT time::now();
 
-DEFINE INDEX OVERWRITE idx_entities_vec ON entities 
+DEFINE INDEX IF NOT EXISTS idx_entities_vec ON entities 
     FIELDS embedding HNSW DIMENSION {dim} DIST COSINE;
 DEFINE INDEX IF NOT EXISTS idx_entities_fts ON entities 
     FIELDS name FULLTEXT ANALYZER simple BM25;
@@ -73,7 +77,7 @@ DEFINE FIELD content_hash     ON code_chunks TYPE string;
 DEFINE FIELD project_id       ON code_chunks TYPE option<string>;
 DEFINE FIELD indexed_at       ON code_chunks TYPE datetime DEFAULT time::now();
 
-DEFINE INDEX OVERWRITE idx_chunks_vec ON code_chunks 
+DEFINE INDEX IF NOT EXISTS idx_chunks_vec ON code_chunks 
     FIELDS embedding HNSW DIMENSION {dim} DIST COSINE;
 -- idx_chunks_fts removed: caused startup errors on existing databases; not used in hot path
 -- DEFINE INDEX IF NOT EXISTS idx_chunks_fts ON code_chunks FIELDS content FULLTEXT ANALYZER simple BM25;
@@ -120,5 +124,5 @@ DEFINE INDEX IF NOT EXISTS idx_symbols_name ON code_symbols FIELDS name;
 DEFINE INDEX IF NOT EXISTS idx_symbols_type_name ON code_symbols FIELDS symbol_type, name;
 DEFINE INDEX IF NOT EXISTS idx_symbols_project ON code_symbols FIELDS project_id;
 DEFINE INDEX IF NOT EXISTS idx_symbols_path ON code_symbols FIELDS file_path;
-DEFINE INDEX OVERWRITE idx_symbols_vec ON code_symbols 
+DEFINE INDEX IF NOT EXISTS idx_symbols_vec ON code_symbols 
     FIELDS embedding HNSW DIMENSION {dim} DIST COSINE;

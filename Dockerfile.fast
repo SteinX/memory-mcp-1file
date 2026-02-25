@@ -16,6 +16,9 @@ COPY target/fast/memory-mcp /usr/local/bin/memory-mcp
 RUN mkdir -p /data /project
 ENV DATA_DIR=/data
 ENV LOG_LEVEL=info
+# SurrealKV WAL recovery uses deep recursion on large datasets;
+# 16 MB prevents stack overflow in spawn_blocking threads.
+ENV RUST_MIN_STACK=16777216
 
 # Persist data and allow project mounting
 VOLUME ["/data", "/project"]

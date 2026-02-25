@@ -69,10 +69,22 @@ fn pin_compute_threads() {
     }
 }
 
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
+fn main() -> anyhow::Result<()> {
     pin_compute_threads();
     let cli = Cli::parse();
+
+    // Explicit runtime: SurrealKV WAL recovery and HNSW graph operations use
+    // deep recursion that overflows the default 2-8MB Tokio worker stack on
+    // large datasets (298k+ vectors). 16MB gives ~4x headroom.
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .thread_stack_size(16 * 1024 * 1024) // 16 MB
+        .build()?;
+
+    runtime.block_on(async_main(cli))
+}
+
+async fn async_main(cli: Cli) -> anyhow::Result<()> {
 
     if cli.list_models {
         println!("Available models:");
