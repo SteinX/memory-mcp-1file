@@ -1,0 +1,333 @@
+use std::sync::Arc;
+
+use rmcp::model::CallToolResult;
+use serde_json::json;
+
+use crate::config::AppState;
+use crate::graph::{
+    rrf_merge, run_ppr, DEFAULT_CODE_BM25_WEIGHT, DEFAULT_CODE_PPR_WEIGHT,
+    DEFAULT_CODE_VECTOR_WEIGHT,
+};
+use crate::server::params::{RecallCodeParams, SearchCodeParams};
+use crate::storage::StorageBackend;
+
+use super::super::{normalize_limit, success_json};
+
+pub async fn search_code(
+    state: &Arc<AppState>,
+    params: SearchCodeParams,
+) -> anyhow::Result<CallToolResult> {
+    crate::ensure_embedding_ready!(state);
+
+    let mut is_partial = false;
+    let mut indexing_message = None;
+
+    if let Some(ref project_id) = params.project_id {
+        if let Ok(Some(status)) = state.storage.get_index_status(project_id).await {
+            if status.status == crate::types::IndexState::Indexing
+                || status.status == crate::types::IndexState::EmbeddingPending
+            {
+                is_partial = true;
+                indexing_message = Some(format!(
+                    "Indexing in progress ({}/{} files). Results may be incomplete.",
+                    status.indexed_files, status.total_files
+                ));
+            }
+        }
+    }
+
+    let query_embedding = state.embedding.embed(&params.query).await?;
+
+    let limit = normalize_limit(params.limit);
+    let results = state
+        .storage
+        .vector_search_code(&query_embedding, params.project_id.as_deref(), limit)
+        .await
+        .unwrap_or_default();
+
+    if !results.is_empty() {
+        return Ok(success_json(json!({
+            "results": results,
+            "count": results.len(),
+            "query": params.query,
+            "is_partial": is_partial,
+            "message": indexing_message
+        })));
+    }
+
+    // Fallback: use in-memory BM25 engine instead of DB-based text search
+    let fallback = state
+        .code_search
+        .search(
+            &params.query,
+            params.project_id.as_deref(),
+            limit,
+            state.storage.as_ref(),
+        )
+        .await;
+
+    Ok(success_json(json!({
+        "results": fallback,
+        "count": fallback.len(),
+        "query": params.query,
+        "note": "fallback to text search (in-memory BM25)",
+        "is_partial": is_partial,
+        "message": indexing_message
+    })))
+}
+
+/// Hybrid code search: Vector + BM25 + Symbol Graph PageRank → RRF merge
+pub async fn recall_code(
+    state: &Arc<AppState>,
+    params: RecallCodeParams,
+) -> anyhow::Result<CallToolResult> {
+    use petgraph::graph::{DiGraph, NodeIndex};
+    use std::collections::HashMap;
+
+    crate::ensure_embedding_ready!(state);
+
+    let mut is_partial = false;
+    let mut indexing_message = None;
+
+    if let Some(ref project_id) = params.project_id {
+        if let Ok(Some(status)) = state.storage.get_index_status(project_id).await {
+            if status.status == crate::types::IndexState::Indexing
+                || status.status == crate::types::IndexState::EmbeddingPending
+            {
+                is_partial = true;
+                indexing_message = Some(format!(
+                    "Indexing in progress ({}/{} files). Results may be incomplete.",
+                    status.indexed_files, status.total_files
+                ));
+            }
+        }
+    }
+
+    let query_embedding = state.embedding.embed(&params.query).await?;
+
+    let limit = normalize_limit(params.limit);
+    let fetch_limit = limit * 3;
+
+    let vector_weight = params.vector_weight.unwrap_or(DEFAULT_CODE_VECTOR_WEIGHT);
+    let bm25_weight = params.bm25_weight.unwrap_or(DEFAULT_CODE_BM25_WEIGHT);
+    let ppr_weight = params.ppr_weight.unwrap_or(DEFAULT_CODE_PPR_WEIGHT);
+
+    let project_id = params.project_id.as_deref();
+
+    // 1. Vector search on code_chunks
+    let vector_results = state
+        .storage
+        .vector_search_code(&query_embedding, project_id, fetch_limit)
+        .await
+        .unwrap_or_default();
+
+    // 2. BM25 search via in-memory engine (replaces DB-based CONTAINS fallback)
+    let bm25_results = state
+        .code_search
+        .search(
+            &params.query,
+            project_id,
+            fetch_limit,
+            state.storage.as_ref(),
+        )
+        .await;
+
+    let vector_tuples: Vec<_> = vector_results
+        .iter()
+        .map(|r| (r.id.clone(), r.score))
+        .collect();
+    let bm25_tuples: Vec<_> = bm25_results
+        .iter()
+        .map(|r| (r.id.clone(), r.score))
+        .collect();
+
+    // 3. Graph component: find related symbols → PPR
+    let _all_chunk_ids: Vec<String> = vector_results
+        .iter()
+        .chain(bm25_results.iter())
+        .map(|r| r.id.clone())
+        .collect::<std::collections::HashSet<_>>()
+        .into_iter()
+        .collect();
+
+    let ppr_tuples: Vec<(String, f32)> = if ppr_weight > 0.0 {
+        // Find semantically similar symbols via vector search
+        let seed_symbols = state
+            .storage
+            .vector_search_symbols(&query_embedding, project_id, 20)
+            .await
+            .unwrap_or_default();
+
+        let symbol_ids: Vec<String> = seed_symbols
+            .iter()
+            .filter_map(|s| {
+                s.id.as_ref().map(|id| {
+                    format!(
+                        "{}:{}",
+                        id.table.as_str(),
+                        crate::types::record_key_to_string(&id.key)
+                    )
+                })
+            })
+            .collect();
+
+        if !symbol_ids.is_empty() {
+            match state.storage.get_code_subgraph(&symbol_ids).await {
+                Ok((symbols, relations)) if !symbols.is_empty() => {
+                    let mut graph: DiGraph<String, f32> = DiGraph::new();
+                    let mut node_map: HashMap<String, NodeIndex> = HashMap::new();
+                    // Map: symbol file_path → symbol node ID (for chunk→symbol mapping)
+                    let mut file_to_symbols: HashMap<String, Vec<String>> = HashMap::new();
+
+                    for sym in &symbols {
+                        if let Some(ref id) = sym.id {
+                            let id_str = format!(
+                                "{}:{}",
+                                id.table.as_str(),
+                                crate::types::record_key_to_string(&id.key)
+                            );
+                            let idx = graph.add_node(id_str.clone());
+                            node_map.insert(id_str.clone(), idx);
+                            file_to_symbols
+                                .entry(sym.file_path.clone())
+                                .or_default()
+                                .push(id_str);
+                        }
+                    }
+
+                    for rel in &relations {
+                        let from_str = format!(
+                            "{}:{}",
+                            rel.from_symbol.table.as_str(),
+                            crate::types::record_key_to_string(&rel.from_symbol.key)
+                        );
+                        let to_str = format!(
+                            "{}:{}",
+                            rel.to_symbol.table.as_str(),
+                            crate::types::record_key_to_string(&rel.to_symbol.key)
+                        );
+                        if let (Some(&from_idx), Some(&to_idx)) =
+                            (node_map.get(&from_str), node_map.get(&to_str))
+                        {
+                            graph.add_edge(from_idx, to_idx, 1.0);
+                        }
+                    }
+
+                    // Seed PPR with the vector-matched symbols
+                    let seed_nodes: Vec<NodeIndex> = symbol_ids
+                        .iter()
+                        .filter_map(|id| node_map.get(id).copied())
+                        .collect();
+
+                    if !seed_nodes.is_empty() && graph.node_count() > 0 {
+                        // Run shared PPR + hub-dampening kernel
+                        let ppr_scores = run_ppr(&graph, &seed_nodes);
+
+                        // Map symbol PPR scores → chunk IDs by file_path
+                        let reverse_map: HashMap<NodeIndex, String> = node_map
+                            .iter()
+                            .map(|(id, idx)| (*idx, id.clone()))
+                            .collect();
+
+                        // Build file_path → max PPR score
+                        let mut file_scores: HashMap<String, f32> = HashMap::new();
+                        for (idx, score) in &ppr_scores {
+                            if let Some(sym_id) = reverse_map.get(idx) {
+                                if let Some(sym) = symbols.iter().find(|s| {
+                                    s.id.as_ref().map(|id| {
+                                        format!(
+                                            "{}:{}",
+                                            id.table.as_str(),
+                                            crate::types::record_key_to_string(&id.key)
+                                        )
+                                    }) == Some(sym_id.clone())
+                                }) {
+                                    let entry =
+                                        file_scores.entry(sym.file_path.clone()).or_insert(0.0);
+                                    if *score > *entry {
+                                        *entry = *score;
+                                    }
+                                }
+                            }
+                        }
+
+                        // Map file PPR scores to chunk IDs
+                        let mut tuples: Vec<(String, f32)> = Vec::new();
+                        for chunk in vector_results.iter().chain(bm25_results.iter()) {
+                            if let Some(&score) = file_scores.get(&chunk.file_path) {
+                                tuples.push((chunk.id.clone(), score));
+                            }
+                        }
+                        tuples.sort_by(|a, b| {
+                            b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal)
+                        });
+                        tuples.dedup_by(|a, b| a.0 == b.0);
+                        tuples
+                    } else {
+                        vec![]
+                    }
+                }
+                _ => vec![],
+            }
+        } else {
+            vec![]
+        }
+    } else {
+        vec![]
+    };
+
+    // 4. RRF merge
+    let merged = rrf_merge(
+        &vector_tuples,
+        &bm25_tuples,
+        &ppr_tuples,
+        vector_weight,
+        bm25_weight,
+        ppr_weight,
+        limit,
+    );
+
+    // 5. Build response with score breakdown
+    let mut content_map: HashMap<String, &crate::types::ScoredCodeChunk> = HashMap::new();
+    for r in &vector_results {
+        content_map.insert(r.id.clone(), r);
+    }
+    for r in &bm25_results {
+        content_map.entry(r.id.clone()).or_insert(r);
+    }
+
+    let results: Vec<serde_json::Value> = merged
+        .into_iter()
+        .filter_map(|(id, scores)| {
+            content_map.get(&id).map(|chunk| {
+                json!({
+                    "id": id,
+                    "file_path": chunk.file_path,
+                    "content": chunk.content,
+                    "language": chunk.language,
+                    "start_line": chunk.start_line,
+                    "end_line": chunk.end_line,
+                    "chunk_type": chunk.chunk_type,
+                    "name": chunk.name,
+                    "score": scores.combined_score,
+                    "vector_score": scores.vector_score,
+                    "bm25_score": scores.bm25_score,
+                    "ppr_score": scores.ppr_score,
+                })
+            })
+        })
+        .collect();
+
+    Ok(success_json(json!({
+        "results": results,
+        "count": results.len(),
+        "query": params.query,
+        "weights": {
+            "vector": vector_weight,
+            "bm25": bm25_weight,
+            "ppr": ppr_weight
+        },
+        "is_partial": is_partial,
+        "message": indexing_message
+    })))
+}

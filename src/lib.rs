@@ -3,6 +3,7 @@ pub mod config;
 pub mod embedding;
 pub mod graph;
 pub mod lifecycle;
+pub mod search;
 pub mod server;
 pub mod storage;
 pub mod types;

@@ -43,7 +43,7 @@ pub async fn index_project(state: Arc<AppState>, project_path: &Path) -> Result<
             } else {
                 "Indexing failed to complete".to_string()
             };
-            Err(crate::AppError::Internal(msg))
+            Err(crate::AppError::Internal(msg.into()))
         }
     };
 
@@ -92,7 +92,12 @@ async fn do_index_project(
     state.storage.delete_project_symbols(project_id).await?;
     state.storage.delete_file_hashes(project_id).await?;
 
-    let files = scan_directory(project_path)?;
+    // `scan_directory` uses `ignore::WalkBuilder` — a synchronous blocking I/O walk.
+    // Wrap in `spawn_blocking` to avoid starving the Tokio async thread pool.
+    let project_path_for_scan = project_path.to_path_buf();
+    let files = tokio::task::spawn_blocking(move || scan_directory(&project_path_for_scan))
+        .await
+        .map_err(|e| crate::AppError::Internal(format!("scan_directory panicked: {e}").into()))??;
     status.total_files = files.len() as u32;
     tracing::info!(
         project = %project_id,
@@ -174,7 +179,30 @@ async fn do_index_project(
             .await;
 
         // 1. Chunking (Vector Search) — cap chunks per file to bound memory
-        let mut chunks = chunk_file(file_path, &content, project_id);
+        // `chunk_file` runs TreeSitter AST parsing (CPU-bound); offload to blocking thread.
+        // `CodeParser::parse_file` is also CPU-bound; combine both into one spawn_blocking
+        // to avoid two round-trips through the blocking thread pool per file.
+        let file_path_for_blocking = file_path.clone();
+        let content_for_blocking = content.clone();
+        let project_id_for_blocking = project_id.to_string();
+        let (mut chunks, parsed) = tokio::task::spawn_blocking(move || {
+            let chunks = chunk_file(
+                &file_path_for_blocking,
+                &content_for_blocking,
+                &project_id_for_blocking,
+            );
+            let parsed = CodeParser::parse_file(
+                &file_path_for_blocking,
+                &content_for_blocking,
+                &project_id_for_blocking,
+            );
+            (chunks, parsed)
+        })
+        .await
+        .map_err(|e| crate::AppError::Internal(format!("parse/chunk panicked: {e}").into()))?;
+
+        let (symbols, references) = parsed;
+
         if chunks.len() > MAX_CHUNKS_PER_FILE {
             tracing::info!(
                 path = ?file_path,
@@ -206,9 +234,6 @@ async fn do_index_project(
                 }
             }
         }
-
-        // 2. Parsing (Code Graph)
-        let (symbols, references) = CodeParser::parse_file(file_path, &content, project_id);
 
         if !symbols.is_empty() {
             tracing::debug!("File {:?}: found {} symbols", file_path, symbols.len());
@@ -356,6 +381,12 @@ async fn do_index_project(
 
     state.storage.update_index_status(status.clone()).await?;
 
+    // Rebuild in-memory BM25 index for this project from the freshly inserted chunks
+    state
+        .code_search
+        .rebuild_from_storage(state.storage.as_ref(), project_id)
+        .await;
+
     Ok(status)
 }
 
@@ -421,8 +452,27 @@ pub async fn incremental_index(
             .delete_symbols_by_path(project_id, &path_str)
             .await;
 
-        // 1. Chunks - async via queue (consistent with index_project)
-        let chunks = super::chunker::chunk_file(&path, &content, project_id);
+        // 1. Chunks + 2. Symbols — both CPU-bound (TreeSitter); offload together to blocking thread.
+        let path_for_blocking = path.clone();
+        let content_for_blocking = content.clone();
+        let project_id_for_blocking = project_id.to_string();
+        let (chunks, (symbols, references)) = tokio::task::spawn_blocking(move || {
+            let chunks = super::chunker::chunk_file(
+                &path_for_blocking,
+                &content_for_blocking,
+                &project_id_for_blocking,
+            );
+            let parsed = CodeParser::parse_file(
+                &path_for_blocking,
+                &content_for_blocking,
+                &project_id_for_blocking,
+            );
+            (chunks, parsed)
+        })
+        .await
+        .map_err(|e| {
+            crate::AppError::Internal(format!("incremental parse/chunk panicked: {e}").into())
+        })?;
 
         let _permit = state.db_semaphore.acquire().await;
         if let Ok(results) = state.storage.create_code_chunks_batch(chunks).await {
@@ -439,8 +489,7 @@ pub async fn incremental_index(
             }
         }
 
-        // 2. Symbols
-        let (symbols, references) = CodeParser::parse_file(&path, &content, project_id);
+        // 2. Symbols (already parsed above in spawn_blocking)
         if !symbols.is_empty() {
             let _permit = state.db_semaphore.acquire().await;
             let created_ids = match state
@@ -496,6 +545,14 @@ pub async fn incremental_index(
         updated += 1;
     }
 
+    // Rebuild in-memory BM25 index if any files were updated
+    if updated > 0 {
+        state
+            .code_search
+            .rebuild_from_storage(state.storage.as_ref(), project_id)
+            .await;
+    }
+
     Ok(updated)
 }
 
@@ -527,12 +584,12 @@ mod tests {
         assert_eq!(status.total_files, 150);
         assert_eq!(status.total_chunks, 150);
 
+        // Use in-memory BM25 engine (rebuilt automatically after indexing)
         let chunks = ctx
             .state
-            .storage
-            .bm25_search_code("fn test", None, 200)
-            .await
-            .unwrap();
+            .code_search
+            .search("fn test", None, 200, ctx.state.storage.as_ref())
+            .await;
         assert_eq!(chunks.len(), 150);
     }
 }

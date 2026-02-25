@@ -6,6 +6,7 @@ use crate::embedding::{
     AdaptiveEmbeddingQueue, EmbeddingConfig, EmbeddingMetrics, EmbeddingService, EmbeddingStore,
     ModelType,
 };
+use crate::search::CodeSearchEngine;
 use crate::storage::SurrealStorage;
 
 pub struct TestContext {
@@ -62,6 +63,8 @@ impl TestContext {
             log_level: "debug".to_string(),
         };
 
+        let (shutdown_tx, _) = tokio::sync::watch::channel(false);
+
         let state = Arc::new(AppState {
             config,
             storage,
@@ -70,6 +73,9 @@ impl TestContext {
             embedding_queue: adaptive_queue,
             progress: crate::config::IndexProgressTracker::new(),
             db_semaphore: Arc::new(tokio::sync::Semaphore::new(10)),
+            code_search: Arc::new(CodeSearchEngine::new()),
+            indexing_projects: Arc::new(std::sync::Mutex::new(std::collections::HashSet::new())),
+            shutdown_tx,
         });
 
         Self {

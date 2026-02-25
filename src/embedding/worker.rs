@@ -235,6 +235,7 @@ mod tests {
         let metrics = std::sync::Arc::new(EmbeddingMetrics::new());
         let adaptive_queue = AdaptiveEmbeddingQueue::with_defaults(tx, metrics);
 
+        let (shutdown_tx, _) = tokio::sync::watch::channel(false);
         let _worker = EmbeddingWorker::new(
             rx,
             service.get_engine(),
@@ -247,6 +248,11 @@ mod tests {
                 embedding_queue: adaptive_queue,
                 progress: crate::config::IndexProgressTracker::new(),
                 db_semaphore: Arc::new(tokio::sync::Semaphore::new(10)),
+                code_search: Arc::new(crate::search::CodeSearchEngine::new()),
+                indexing_projects: Arc::new(
+                    std::sync::Mutex::new(std::collections::HashSet::new()),
+                ),
+                shutdown_tx,
             }),
         );
     }

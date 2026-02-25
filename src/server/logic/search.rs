@@ -5,8 +5,7 @@ use serde_json::json;
 
 use crate::config::AppState;
 use crate::graph::{
-    apply_hub_dampening, personalized_page_rank, rrf_merge, DEFAULT_BM25_WEIGHT,
-    DEFAULT_PPR_WEIGHT, DEFAULT_VECTOR_WEIGHT, PPR_DAMPING, PPR_MAX_ITER, PPR_TOLERANCE,
+    rrf_merge, run_ppr, DEFAULT_BM25_WEIGHT, DEFAULT_PPR_WEIGHT, DEFAULT_VECTOR_WEIGHT,
 };
 use crate::server::params::{RecallParams, SearchParams};
 use crate::storage::StorageBackend;
@@ -123,31 +122,15 @@ pub async fn recall(state: &Arc<AppState>, params: RecallParams) -> anyhow::Resu
                     .filter_map(|id| node_map.get(id).copied())
                     .collect();
 
-                let mut ppr_scores = personalized_page_rank(
-                    &graph,
-                    &seed_nodes,
-                    PPR_DAMPING,
-                    PPR_TOLERANCE,
-                    PPR_MAX_ITER,
-                );
-
-                let degrees: HashMap<NodeIndex, usize> = graph
-                    .node_indices()
-                    .map(|idx| (idx, graph.edges(idx).count()))
-                    .collect();
-                apply_hub_dampening(&mut ppr_scores, &degrees);
-
                 let reverse_map: HashMap<NodeIndex, String> = node_map
                     .iter()
                     .map(|(id, idx)| (*idx, id.clone()))
                     .collect();
 
-                let mut tuples: Vec<_> = ppr_scores
+                run_ppr(&graph, &seed_nodes)
                     .into_iter()
                     .filter_map(|(idx, score)| reverse_map.get(&idx).map(|id| (id.clone(), score)))
-                    .collect();
-                tuples.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
-                tuples
+                    .collect()
             }
             _ => vec![],
         }

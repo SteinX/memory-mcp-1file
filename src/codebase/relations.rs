@@ -15,7 +15,7 @@ pub struct RelationStats {
 
 /// Create symbol relations from references using the symbol index for resolution.
 pub async fn create_symbol_relations(
-    storage: &dyn StorageBackend,
+    storage: &impl StorageBackend,
     project_id: &str,
     references: &[CodeReference],
     symbol_index: &SymbolIndex,

@@ -2,20 +2,31 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
+use tokio::sync::watch;
+
 use crate::config::AppState;
 use crate::storage::StorageBackend;
 use crate::types::IndexState;
 
 const POLL_INTERVAL_SECS: u64 = 10;
 
-pub async fn run_completion_monitor(state: Arc<AppState>) {
+/// Runs the completion monitor loop until `shutdown_rx` receives `true`.
+pub async fn run_completion_monitor(state: Arc<AppState>, mut shutdown_rx: watch::Receiver<bool>) {
     let mut interval = tokio::time::interval(Duration::from_secs(POLL_INTERVAL_SECS));
     interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
     let mut progress_map: HashMap<String, (u32, u32, u8)> = HashMap::new();
 
     loop {
-        interval.tick().await;
+        tokio::select! {
+            _ = interval.tick() => {}
+            _ = shutdown_rx.changed() => {
+                if *shutdown_rx.borrow() {
+                    tracing::debug!("Completion monitor received shutdown signal");
+                    return;
+                }
+            }
+        }
 
         let projects = match state.storage.list_projects().await {
             Ok(p) => p,

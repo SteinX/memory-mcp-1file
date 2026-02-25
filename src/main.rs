@@ -8,6 +8,7 @@ use memory_mcp::config::{AppConfig, AppState};
 use memory_mcp::embedding::{
     EmbeddingConfig, EmbeddingService, EmbeddingStore, EmbeddingWorker, ModelType,
 };
+use memory_mcp::search::CodeSearchEngine;
 use memory_mcp::server::MemoryMcpServer;
 use memory_mcp::storage::{StorageBackend, SurrealStorage};
 
@@ -137,6 +138,8 @@ async fn main() -> anyhow::Result<()> {
     let adaptive_queue =
         memory_mcp::embedding::AdaptiveEmbeddingQueue::with_defaults(queue_tx, metrics.clone());
 
+    let (shutdown_tx, _shutdown_rx) = tokio::sync::watch::channel(false);
+
     let state = Arc::new(AppState {
         config: AppConfig {
             data_dir: cli.data_dir,
@@ -152,6 +155,9 @@ async fn main() -> anyhow::Result<()> {
         embedding_queue: adaptive_queue,
         progress: memory_mcp::config::IndexProgressTracker::new(),
         db_semaphore: Arc::new(tokio::sync::Semaphore::new(10)),
+        code_search: Arc::new(CodeSearchEngine::new()),
+        indexing_projects: Arc::new(std::sync::Mutex::new(std::collections::HashSet::new())),
+        shutdown_tx,
     });
 
     let worker = EmbeddingWorker::new(
@@ -168,7 +174,23 @@ async fn main() -> anyhow::Result<()> {
     });
 
     let monitor_state = state.clone();
-    tokio::spawn(memory_mcp::embedding::run_completion_monitor(monitor_state));
+    let monitor_shutdown = state.shutdown_rx();
+    tokio::spawn(memory_mcp::embedding::run_completion_monitor(
+        monitor_state,
+        monitor_shutdown,
+    ));
+
+    // Warm the in-memory BM25 index from existing DB data (background, non-blocking)
+    let bm25_state = state.clone();
+    tokio::spawn(async move {
+        let count = bm25_state
+            .code_search
+            .load_all_from_storage(bm25_state.storage.as_ref())
+            .await;
+        if count > 0 {
+            tracing::info!(chunks = count, "BM25 in-memory index warmed from DB");
+        }
+    });
 
     let server = MemoryMcpServer::new(state.clone());
 
@@ -275,6 +297,9 @@ async fn main() -> anyhow::Result<()> {
     }
 
     tracing::info!(reason = shutdown_reason, "Initiating graceful shutdown...");
+
+    // Signal all background loops to stop
+    let _ = state.shutdown_tx.send(true);
 
     tracing::info!("Flushing database...");
     if let Err(e) = state.storage.shutdown().await {

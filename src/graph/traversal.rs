@@ -1,6 +1,5 @@
 use crate::types::{Direction, Entity, Relation};
 use crate::Result;
-use async_trait::async_trait;
 use std::collections::{HashSet, VecDeque};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -36,7 +35,7 @@ pub struct TraversalResult {
     pub deferred_count: usize,
 }
 
-#[async_trait]
+#[allow(async_fn_in_trait)]
 pub trait GraphTraversalStorage: Send + Sync {
     async fn get_direct_relations(
         &self,

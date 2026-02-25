@@ -1,11 +1,12 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::atomic::AtomicU32;
 use std::sync::Arc;
 
-use tokio::sync::{RwLock, Semaphore};
+use tokio::sync::{watch, RwLock, Semaphore};
 
 use crate::embedding::{AdaptiveEmbeddingQueue, EmbeddingService, EmbeddingStore};
+use crate::search::CodeSearchEngine;
 use crate::storage::SurrealStorage;
 
 #[derive(Debug, Clone)]
@@ -98,4 +99,20 @@ pub struct AppState {
     pub progress: IndexProgressTracker,
     /// Semaphore to limit concurrent DB operations (prevents SurrealKV channel exhaustion)
     pub db_semaphore: Arc<Semaphore>,
+    /// In-memory BM25 index for code chunks (replaces broken SurrealDB FTS)
+    pub code_search: Arc<CodeSearchEngine>,
+    /// Atomic lock: set of project IDs currently being (re-)indexed.
+    /// Insert returns `false` if the ID is already present → concurrent request is rejected.
+    /// Removed when indexing finishes (success or failure).
+    pub indexing_projects: Arc<std::sync::Mutex<HashSet<String>>>,
+    /// Shutdown signal sender. Send `true` to request graceful shutdown of background loops.
+    pub shutdown_tx: watch::Sender<bool>,
+}
+
+impl AppState {
+    /// Returns a new receiver subscribed to the shutdown channel.
+    /// Background tasks should select on `rx.changed()` and exit when `*rx.borrow() == true`.
+    pub fn shutdown_rx(&self) -> watch::Receiver<bool> {
+        self.shutdown_tx.subscribe()
+    }
 }

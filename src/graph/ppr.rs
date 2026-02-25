@@ -6,6 +6,28 @@ pub const PPR_DAMPING: f32 = 0.5;
 pub const PPR_TOLERANCE: f32 = 1e-6;
 pub const PPR_MAX_ITER: usize = 15;
 
+/// Run PPR + hub dampening on a pre-built graph, returning scored nodes sorted descending.
+///
+/// This is the shared kernel used by both the memory-graph recall path and the
+/// code-symbol graph recall path.  Callers are responsible for building the
+/// `DiGraph` and `seed_nodes` slice; this function handles the pure graph math.
+///
+/// Returns `Vec<(NodeIndex, f32)>` sorted by score descending.
+pub fn run_ppr(graph: &DiGraph<String, f32>, seeds: &[NodeIndex]) -> Vec<(NodeIndex, f32)> {
+    if graph.node_count() == 0 || seeds.is_empty() {
+        return vec![];
+    }
+    let mut scores = personalized_page_rank(graph, seeds, PPR_DAMPING, PPR_TOLERANCE, PPR_MAX_ITER);
+    let degrees: HashMap<NodeIndex, usize> = graph
+        .node_indices()
+        .map(|idx| (idx, graph.edges(idx).count()))
+        .collect();
+    apply_hub_dampening(&mut scores, &degrees);
+    let mut result: Vec<(NodeIndex, f32)> = scores.into_iter().collect();
+    result.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+    result
+}
+
 pub fn personalized_page_rank(
     graph: &DiGraph<String, f32>,
     seed_nodes: &[NodeIndex],

@@ -3,7 +3,7 @@ use thiserror::Error;
 #[derive(Error, Debug)]
 pub enum AppError {
     #[error("Database error: {0}")]
-    Database(String),
+    Database(#[source] Box<surrealdb::Error>),
 
     #[error("Embedding error: {0}")]
     Embedding(String),
@@ -30,34 +30,35 @@ pub enum AppError {
     DimensionMismatch { model: usize, db: usize },
 
     #[error("IO error: {0}")]
-    Io(String),
+    Io(#[source] std::io::Error),
 
     #[error("Internal error: {0}")]
-    Internal(String),
+    Internal(#[source] Box<dyn std::error::Error + Send + Sync>),
 }
 
 pub type Result<T> = std::result::Result<T, AppError>;
 
 impl From<surrealdb::Error> for AppError {
     fn from(e: surrealdb::Error) -> Self {
-        AppError::Database(e.to_string())
+        AppError::Database(Box::new(e))
     }
 }
 
 impl From<anyhow::Error> for AppError {
     fn from(e: anyhow::Error) -> Self {
-        AppError::Internal(e.to_string())
+        // anyhow::Error -> Box<dyn Error+Send+Sync> via into_boxed_error (1.82+) or manual
+        AppError::Internal(e.into())
     }
 }
 
 impl From<std::io::Error> for AppError {
     fn from(e: std::io::Error) -> Self {
-        AppError::Io(e.to_string())
+        AppError::Io(e)
     }
 }
 
 impl From<notify::Error> for AppError {
     fn from(e: notify::Error) -> Self {
-        AppError::Internal(format!("File watcher error: {}", e))
+        AppError::Internal(Box::new(e))
     }
 }

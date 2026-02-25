@@ -1,6 +1,6 @@
 [package]
 name = "memory-mcp"
-version = "0.4.10"
+version = "0.5.0"
 edition = "2021"
 description = "MCP memory server for AI agents"
 license = "MIT"
@@ -45,7 +45,6 @@ tree-sitter-dart-orchard = "0.3.2"
 
 # Async runtime
 tokio = { version = "1", features = ["full"] }
-async-trait = "0.1"
 
 # Serialization
 serde = { version = "1", features = ["derive"] }
@@ -74,6 +73,9 @@ sha2 = "0.10.9"
 moka = { version = "0.12.12", features = ["future"] }
 redb = "3.1.0"
 bincode = { version = "=2.0.1", features = ["serde"] }
+regex = "1.12.3"
+convert_case = "0.11.0"
+bm-25 = { version = "3.0.0", default-features = false, features = ["parallelism"] }
 
 
 # Local patch to expose `Model::clear_kv_cache()` as `pub` so we can reset

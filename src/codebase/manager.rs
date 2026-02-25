@@ -102,28 +102,33 @@ impl CodebaseManager {
 
         let state = self.state.clone();
         let project_id = self.project_id.clone();
+        let shutdown_rx = self.state.shutdown_rx();
 
-        watcher.start(move |changed_paths| {
-            let state = state.clone();
-            let project_id = project_id.clone();
+        watcher.start(
+            move |changed_paths| {
+                let state = state.clone();
+                let project_id = project_id.clone();
 
-            tokio::spawn(async move {
-                info!(
-                    count = changed_paths.len(),
-                    "File changes detected, running incremental index"
-                );
-                match super::indexer::incremental_index(state, &project_id, changed_paths).await {
-                    Ok(updated) => {
-                        if updated > 0 {
-                            info!(updated, "Incremental index completed");
+                tokio::spawn(async move {
+                    info!(
+                        count = changed_paths.len(),
+                        "File changes detected, running incremental index"
+                    );
+                    match super::indexer::incremental_index(state, &project_id, changed_paths).await
+                    {
+                        Ok(updated) => {
+                            if updated > 0 {
+                                info!(updated, "Incremental index completed");
+                            }
+                        }
+                        Err(e) => {
+                            error!("Incremental index failed: {}", e);
                         }
                     }
-                    Err(e) => {
-                        error!("Incremental index failed: {}", e);
-                    }
-                }
-            });
-        })?;
+                });
+            },
+            shutdown_rx,
+        )?;
 
         *self.watcher.write().await = Some(watcher);
         info!(path = ?self.project_path, "File watcher started");

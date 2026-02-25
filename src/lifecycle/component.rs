@@ -1,4 +1,5 @@
-use async_trait::async_trait;
+use std::future::Future;
+use std::pin::Pin;
 use std::time::Duration;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
@@ -36,7 +37,10 @@ pub enum ShutdownResult {
     Error(String),
 }
 
-#[async_trait]
+/// A dyn-compatible component lifecycle trait.
+///
+/// Async methods are exposed via `Box<dyn Future>` to remain object-safe
+/// without requiring the `async-trait` crate (Rust 1.75+).
 pub trait Component: Send + Sync {
     fn name(&self) -> &'static str;
 
@@ -44,11 +48,14 @@ pub trait Component: Send + Sync {
         ShutdownPriority::Normal
     }
 
-    async fn health(&self) -> ComponentHealth {
-        ComponentHealth::default()
+    fn health(&self) -> Pin<Box<dyn Future<Output = ComponentHealth> + Send + '_>> {
+        Box::pin(async { ComponentHealth::default() })
     }
 
-    async fn shutdown(&self, timeout: Duration) -> ShutdownResult;
+    fn shutdown(
+        &self,
+        timeout: Duration,
+    ) -> Pin<Box<dyn Future<Output = ShutdownResult> + Send + '_>>;
 
-    async fn force_stop(&self);
+    fn force_stop(&self) -> Pin<Box<dyn Future<Output = ()> + Send + '_>>;
 }

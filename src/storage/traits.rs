@@ -4,7 +4,6 @@
 //! Implemented by SurrealStorage.
 
 use crate::types::Datetime;
-use async_trait::async_trait;
 use std::collections::HashMap;
 
 use crate::types::{
@@ -14,7 +13,7 @@ use crate::types::{
 use crate::Result;
 
 /// Storage backend trait for all database operations
-#[async_trait]
+#[allow(async_fn_in_trait)]
 pub trait StorageBackend: Send + Sync {
     // ─────────────────────────────────────────────────────────────────────────
     // Memory CRUD
@@ -161,6 +160,14 @@ pub trait StorageBackend: Send + Sync {
     /// Get all chunks for a specific file path within a project  
     async fn get_chunks_by_path(&self, project_id: &str, file_path: &str)
         -> Result<Vec<CodeChunk>>;
+
+    /// Get all code chunks for a project (used to build in-memory BM25 index)
+    async fn get_all_chunks_for_project(&self, project_id: &str) -> Result<Vec<CodeChunk>>;
+
+    /// Fetch specific code chunks by their string IDs (e.g. "abc123").
+    /// Used by the BM25 search to hydrate content for top-N results without
+    /// keeping all chunk content in RAM.
+    async fn get_chunks_by_ids(&self, ids: &[String]) -> Result<Vec<CodeChunk>>;
 
     /// Get indexing status for a project
     async fn get_index_status(&self, project_id: &str) -> Result<Option<IndexStatus>>;

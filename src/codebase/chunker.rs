@@ -220,3 +220,197 @@ fn detect_chunk_type(node: &tree_sitter::Node) -> ChunkType {
         _ => ChunkType::Other,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::Path;
+
+    // -----------------------------------------------------------------------
+    // Helper: chunk_by_structure is private, so we drive tests through the
+    // public chunk_file() entry point using paths with no known language
+    // support (plain text files) so we always get the structure-based path.
+    // -----------------------------------------------------------------------
+
+    fn plain_path() -> &'static Path {
+        Path::new("test.txt")
+    }
+
+    fn rust_path() -> &'static Path {
+        Path::new("test.rs")
+    }
+
+    // -----------------------------------------------------------------------
+    // Empty / trivial input
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_empty_content_yields_no_chunks() {
+        let chunks = chunk_file(plain_path(), "", "proj");
+        assert!(chunks.is_empty(), "Empty content should produce no chunks");
+    }
+
+    #[test]
+    fn test_whitespace_only_yields_no_chunks() {
+        let chunks = chunk_file(plain_path(), "   \n\t\n  ", "proj");
+        assert!(
+            chunks.is_empty(),
+            "Whitespace-only content should produce no chunks"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // MIN_CHUNK_CHARS enforcement
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_content_below_min_chars_yields_no_chunk() {
+        // MIN_CHUNK_CHARS = 10; 9 non-whitespace chars should not be emitted
+        let short = "123456789"; // 9 chars
+        let chunks = chunk_file(plain_path(), short, "proj");
+        assert!(
+            chunks.is_empty(),
+            "Content shorter than MIN_CHUNK_CHARS should not produce a chunk"
+        );
+    }
+
+    #[test]
+    fn test_content_at_min_chars_yields_one_chunk() {
+        let exactly_min = "1234567890"; // exactly 10 chars = MIN_CHUNK_CHARS
+        let chunks = chunk_file(plain_path(), exactly_min, "proj");
+        assert_eq!(
+            chunks.len(),
+            1,
+            "Content at exactly MIN_CHUNK_CHARS should produce 1 chunk"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // MAX_CHUNK_CHARS enforcement — structure chunker splits on paragraphs
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_large_content_split_into_multiple_chunks() {
+        // Build a text larger than MAX_CHUNK_CHARS (4000 chars).
+        // Use double-newlines so chunk_by_structure sees paragraph boundaries.
+        let paragraph = "x".repeat(1500); // 1500 chars per paragraph
+        let content = format!("{paragraph}\n\n{paragraph}\n\n{paragraph}"); // ~4502 chars
+
+        let chunks = chunk_file(plain_path(), &content, "proj");
+        assert!(
+            chunks.len() >= 2,
+            "Content > MAX_CHUNK_CHARS should be split into multiple chunks, got {}",
+            chunks.len()
+        );
+        for chunk in &chunks {
+            assert!(
+                chunk.content.len() <= MAX_CHUNK_CHARS,
+                "Every chunk must be <= MAX_CHUNK_CHARS chars, got {}",
+                chunk.content.len()
+            );
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // AST chunker: MIN_OTHER_CHUNK_LINES for ChunkType::Other nodes
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_ast_skips_small_other_chunks_but_keeps_functions() {
+        // A Rust file with a real function (kept) and a tiny top-level expression
+        // that would be ChunkType::Other with < MIN_OTHER_CHUNK_LINES (3).
+        let src = r#"
+use std::io;
+
+fn hello() {
+    println!("hello world");
+    println!("line two");
+    println!("line three");
+}
+"#;
+        let chunks = chunk_file(rust_path(), src, "proj");
+
+        // The function should appear
+        let has_function = chunks.iter().any(|c| c.chunk_type == ChunkType::Function);
+        assert!(has_function, "AST chunker should keep function chunks");
+
+        // No chunk should be a tiny Other (< MIN_OTHER_CHUNK_LINES lines)
+        for chunk in &chunks {
+            if chunk.chunk_type == ChunkType::Other {
+                let line_count = chunk.end_line.saturating_sub(chunk.start_line) + 1;
+                assert!(
+                    line_count >= MIN_OTHER_CHUNK_LINES as u32,
+                    "Other chunks with < {MIN_OTHER_CHUNK_LINES} lines should be skipped, \
+                     found one with {line_count} lines: {:?}",
+                    chunk.content
+                );
+            }
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // split_large_node: large node is sub-divided into MAX_CHUNK_LINES slices
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_large_node_subdivided_within_line_limit() {
+        // Build a Rust function body large enough to exceed both MAX_CHUNK_CHARS
+        // (4000 chars) and MAX_CHUNK_LINES (150 lines) to trigger split_large_node.
+        // Each statement is ~40 chars → 200 lines × 40 chars = ~8000 chars > 4000.
+        let body: String = (0..200)
+            .map(|i| format!("    let _variable_{i:04} = {i} * {i} + {i};"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let src = format!("fn big() {{\n{body}\n}}\n");
+
+        // Confirm the source is actually large enough to trigger splitting
+        assert!(
+            src.len() > MAX_CHUNK_CHARS,
+            "Test source ({} chars) must exceed MAX_CHUNK_CHARS ({MAX_CHUNK_CHARS})",
+            src.len()
+        );
+
+        let chunks = chunk_file(rust_path(), &src, "proj");
+
+        assert!(
+            chunks.len() >= 2,
+            "Function with >MAX_CHUNK_LINES lines should be split into >= 2 chunks, got {}",
+            chunks.len()
+        );
+        for chunk in &chunks {
+            let line_count = (chunk.end_line - chunk.start_line + 1) as usize;
+            assert!(
+                line_count <= MAX_CHUNK_LINES + 2, // small tolerance for header/footer lines
+                "Chunk has {line_count} lines which exceeds MAX_CHUNK_LINES ({MAX_CHUNK_LINES})"
+            );
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // chunk metadata: project_id, file_path, language
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_chunk_metadata_is_correct() {
+        let content = "fn foo() { let x = 1 + 2 + 3; }";
+        let chunks = chunk_file(rust_path(), content, "my_project");
+
+        assert!(!chunks.is_empty(), "Should produce at least one chunk");
+        for chunk in &chunks {
+            assert_eq!(
+                chunk.project_id.as_deref(),
+                Some("my_project"),
+                "project_id mismatch"
+            );
+            assert!(
+                chunk.file_path.contains("test.rs"),
+                "file_path should contain 'test.rs'"
+            );
+            assert!(
+                chunk.start_line >= 1,
+                "start_line should be 1-based, got {}",
+                chunk.start_line
+            );
+        }
+    }
+}

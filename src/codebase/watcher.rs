@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use notify::{Event, RecommendedWatcher, RecursiveMode, Watcher};
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, watch};
 use tracing::{info, warn};
 
 use super::scanner::{is_code_file, is_ignored_file};
@@ -26,7 +26,7 @@ impl FileWatcher {
         }
     }
 
-    pub fn start<F>(&mut self, callback: F) -> Result<()>
+    pub fn start<F>(&mut self, callback: F, mut shutdown_rx: watch::Receiver<bool>) -> Result<()>
     where
         F: Fn(Vec<PathBuf>) + Send + Sync + 'static,
     {
@@ -82,6 +82,12 @@ impl FileWatcher {
                     _ = cancel_rx.recv() => {
                         info!("Watcher debounce cancelled, discarding {} pending paths", pending_paths.len());
                         break;
+                    }
+                    _ = shutdown_rx.changed() => {
+                        if *shutdown_rx.borrow() {
+                            info!("Watcher received shutdown signal, discarding {} pending paths", pending_paths.len());
+                            break;
+                        }
                     }
                     _ = tokio::time::sleep(sleep_duration) => {
                         if let Some(last) = last_event {

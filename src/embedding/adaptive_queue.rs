@@ -68,7 +68,7 @@ impl AdaptiveEmbeddingQueue {
         self.sender
             .send(req)
             .await
-            .map_err(|_| crate::AppError::Internal("Embedding queue closed".to_string()))?;
+            .map_err(|_| crate::AppError::Internal("Embedding queue closed".into()))?;
         self.metrics.inc_queue();
 
         Ok(())
@@ -79,11 +79,11 @@ impl AdaptiveEmbeddingQueue {
         self.sender.try_send(req).map_err(|e| match e {
             mpsc::error::TrySendError::Full(_) => {
                 self.metrics.dec_queue();
-                crate::AppError::Internal("Embedding queue full".to_string())
+                crate::AppError::Internal("Embedding queue full".into())
             }
             mpsc::error::TrySendError::Closed(_) => {
                 self.metrics.dec_queue();
-                crate::AppError::Internal("Embedding queue closed".to_string())
+                crate::AppError::Internal("Embedding queue closed".into())
             }
         })
     }
