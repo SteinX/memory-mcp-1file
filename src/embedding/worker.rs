@@ -22,7 +22,7 @@ pub struct EmbeddingRequest {
 
 pub struct EmbeddingWorker {
     queue: mpsc::Receiver<EmbeddingRequest>,
-    engine: Arc<tokio::sync::RwLock<Option<EmbeddingEngine>>>,
+    engine: Arc<tokio::sync::RwLock<Option<Arc<EmbeddingEngine>>>>,
     store: Arc<EmbeddingStore>,
     storage: Arc<crate::storage::SurrealStorage>,
 }
@@ -30,7 +30,7 @@ pub struct EmbeddingWorker {
 impl EmbeddingWorker {
     pub fn new(
         queue: mpsc::Receiver<EmbeddingRequest>,
-        engine: Arc<tokio::sync::RwLock<Option<EmbeddingEngine>>>,
+        engine: Arc<tokio::sync::RwLock<Option<Arc<EmbeddingEngine>>>>,
         store: Arc<EmbeddingStore>,
         state: Arc<crate::config::AppState>,
     ) -> Self {
@@ -98,15 +98,21 @@ impl EmbeddingWorker {
             return true;
         }
 
-        let guard = self.engine.read().await;
-        let engine = match guard.as_ref() {
-            Some(e) => e,
-            None => {
-                // Return false to indicate retry needed
-                return false;
+        // ── PHASE 1: Brief lock — clone the inner Arc, drop guard immediately ──
+        // This ensures writers (model hot-reload) are never blocked during
+        // inference or across the .await points below.
+        let engine: Arc<EmbeddingEngine> = {
+            let guard = self.engine.read().await;
+            match guard.as_ref() {
+                Some(e) => Arc::clone(e),
+                None => {
+                    // Return false to indicate retry needed
+                    return false;
+                }
             }
-        };
+        }; // guard dropped — writers unblocked
 
+        // ── PHASE 2: Cache lookups (async, no lock held) ──
         let mut final_embeddings = Vec::with_capacity(batch.len());
         let mut misses_indices = Vec::new();
         let mut misses_texts = Vec::new();
@@ -123,20 +129,31 @@ impl EmbeddingWorker {
             }
         }
 
+        // ── PHASE 3: Offload inference to blocking pool (no lock, no block_in_place) ──
+        // spawn_blocking is strictly better than block_in_place here because
+        // Arc<EmbeddingEngine> is Send — the tokio worker thread is freed
+        // immediately rather than being commandeered.
         if !misses_texts.is_empty() {
-            let embed_result = tokio::task::block_in_place(|| engine.embed_batch(&misses_texts));
+            let engine_for_blocking = Arc::clone(&engine);
+            let embed_result =
+                tokio::task::spawn_blocking(move || engine_for_blocking.embed_batch(&misses_texts))
+                    .await;
+
             match embed_result {
-                Ok(new_embeddings) => {
+                Ok(Ok(new_embeddings)) => {
+                    // Collect all cache misses for a single batched disk write
+                    let mut cache_batch = Vec::with_capacity(new_embeddings.len());
                     for (local_idx, vec) in new_embeddings.into_iter().enumerate() {
                         let original_idx = misses_indices[local_idx];
                         let req = &batch[original_idx];
                         let hash = blake3::hash(req.text.as_bytes()).to_hex().to_string();
 
-                        let _ = self.store.put(hash, vec.clone()).await;
+                        cache_batch.push((hash, vec.clone()));
                         final_embeddings[original_idx] = Some(vec);
                     }
+                    let _ = self.store.put_batch(cache_batch).await;
                 }
-                Err(e) => {
+                Ok(Err(e)) => {
                     tracing::error!(
                         "Batch embedding failed (items will have no embeddings): {}",
                         e
@@ -152,10 +169,13 @@ impl EmbeddingWorker {
                         }
                     }
                 }
+                Err(join_err) => {
+                    tracing::error!("embed_batch task panicked: {}", join_err);
+                }
             }
         }
 
-        // Collect updates for batch processing instead of spawning per item
+        // ── PHASE 4: Collect updates for batch DB writes (no lock held) ──
         let mut symbol_updates: Vec<(String, Vec<f32>)> = Vec::new();
         let mut chunk_updates: Vec<(String, Vec<f32>)> = Vec::new();
 

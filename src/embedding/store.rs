@@ -117,6 +117,44 @@ impl EmbeddingStore {
 
         Ok(())
     }
+
+    /// Batch insert embeddings into both RAM and disk cache with a single
+    /// redb write transaction (one fsync instead of N).
+    pub async fn put_batch(&self, items: Vec<(String, Vec<f32>)>) -> Result<()> {
+        if items.is_empty() {
+            return Ok(());
+        }
+
+        // L1: update RAM cache for all items
+        for (hash, embedding) in &items {
+            let key = self.cache_key(hash);
+            self.ram_cache.insert(key, embedding.clone()).await;
+        }
+
+        // L2: single disk transaction for all items
+        let db = self.disk_cache.clone();
+        let cache_keys: Vec<(String, Vec<f32>)> = items
+            .into_iter()
+            .map(|(hash, emb)| (self.cache_key(&hash), emb))
+            .collect();
+
+        tokio::task::spawn_blocking(move || -> Result<()> {
+            let write_txn = db.begin_write()?;
+            {
+                let mut table = write_txn.open_table(CACHE_TABLE)?;
+                for (key, embedding) in &cache_keys {
+                    let bytes =
+                        bincode::serde::encode_to_vec(embedding, bincode::config::standard())?;
+                    table.insert(key.as_str(), bytes.as_slice())?;
+                }
+            }
+            write_txn.commit()?;
+            Ok(())
+        })
+        .await??;
+
+        Ok(())
+    }
 }
 
 #[cfg(test)]

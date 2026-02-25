@@ -834,6 +834,13 @@ mod tests {
         async fn set_file_hash(&self, _: &str, _: &str, _: &str) -> crate::Result<()> {
             unreachable!()
         }
+        async fn set_file_hashes_batch(
+            &self,
+            _: &str,
+            _: &[(String, String)],
+        ) -> crate::Result<()> {
+            unreachable!()
+        }
         async fn delete_file_hashes(&self, _: &str) -> crate::Result<()> {
             unreachable!()
         }
@@ -871,6 +878,12 @@ mod tests {
             &self,
             _: crate::types::SymbolRelation,
         ) -> crate::Result<String> {
+            unreachable!()
+        }
+        async fn create_symbol_relations_batch(
+            &self,
+            _: Vec<crate::types::SymbolRelation>,
+        ) -> crate::Result<u32> {
             unreachable!()
         }
         async fn delete_project_symbols(&self, _: &str) -> crate::Result<usize> {

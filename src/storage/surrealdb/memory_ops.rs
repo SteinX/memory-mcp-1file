@@ -119,17 +119,25 @@ pub(super) async fn vector_search(
     embedding: &[f32],
     limit: usize,
 ) -> Result<Vec<SearchResult>> {
-    let query = r#"
+    // Use HNSW index via <|K,EF|> KNN operator for fast candidate selection,
+    // then compute exact cosine similarity for scoring.
+    // Over-fetch because the valid_until post-filter may discard some KNN hits.
+    let knn_k = (limit * 4).min(200);
+    let ef = knn_k.max(150);
+
+    let query = format!(
+        r#"
         SELECT meta::id(id) AS id, content, memory_type,
             vector::similarity::cosine(embedding, $vec) AS score, metadata 
         FROM memories 
-        WHERE embedding IS NOT NONE 
+        WHERE embedding <|{knn_k},{ef}|> $vec
           AND (valid_until IS NONE OR valid_until > time::now())
         ORDER BY score DESC 
         LIMIT $limit
-    "#;
+    "#
+    );
     let mut response = db
-        .query(query)
+        .query(&query)
         .bind(("vec", embedding.to_vec()))
         .bind(("limit", limit))
         .await?;

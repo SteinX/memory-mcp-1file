@@ -1,7 +1,7 @@
 use surrealdb::engine::local::Db;
 use surrealdb::Surreal;
 
-use crate::types::{CodeSymbol, Direction, ScoredCodeChunk, SymbolRelation};
+use crate::types::{record_key_to_string, CodeSymbol, Direction, ScoredCodeChunk, SymbolRelation};
 use crate::Result;
 
 use super::helpers::{parse_thing, value_to_symbol_relations};
@@ -22,21 +22,48 @@ pub(super) async fn create_code_symbols_batch(
         return Ok(vec![]);
     }
 
-    // Use typed SDK upsert per symbol — preserves Datetime type correctly.
-    // Raw SQL FOR loop + serde_json loses Datetime → string, which SCHEMAFULL
-    // silently rejects (SurrealDB #6816).
+    // Single INSERT ... ON DUPLICATE KEY UPDATE instead of N individual upserts.
+    //
+    // We intentionally omit `indexed_at` and `embedding` from the JSON payload:
+    //   - `indexed_at`: server DEFAULT time::now() applies on INSERT; explicit
+    //     time::now() in ON DUPLICATE KEY UPDATE handles the upsert case.
+    //     This side-steps SurrealDB #6816 where serde_json serializes Datetime
+    //     as a string which SCHEMAFULL silently rejects.
+    //   - `embedding`: always None for newly created symbols (set later by
+    //     the embedding worker).
+    let mut data = Vec::with_capacity(symbols.len());
     let mut ids = Vec::with_capacity(symbols.len());
 
-    for mut symbol in symbols {
+    for symbol in &symbols {
         let key = symbol.unique_key();
-        symbol.id = None;
-        let _: Option<CodeSymbol> = db
-            .upsert(("code_symbols", key.as_str()))
-            .content(symbol)
-            .await?;
         ids.push(format!("code_symbols:{}", key));
+
+        data.push(serde_json::json!({
+            "id": key,
+            "name": symbol.name,
+            "symbol_type": symbol.symbol_type,
+            "file_path": symbol.file_path,
+            "start_line": symbol.start_line,
+            "end_line": symbol.end_line,
+            "project_id": symbol.project_id,
+            "signature": symbol.signature,
+        }));
     }
 
+    let sql = r#"
+        INSERT INTO code_symbols $symbols
+        ON DUPLICATE KEY UPDATE
+            name = $input.name,
+            symbol_type = $input.symbol_type,
+            file_path = $input.file_path,
+            start_line = $input.start_line,
+            end_line = $input.end_line,
+            project_id = $input.project_id,
+            signature = $input.signature,
+            indexed_at = time::now()
+    "#;
+
+    db.query(sql).bind(("symbols", data)).await?;
     Ok(ids)
 }
 
@@ -96,6 +123,53 @@ pub(super) async fn create_symbol_relation(
         .bind(("cat", relation.created_at))
         .await?;
     Ok("relation_created".to_string())
+}
+
+/// Batch-create symbol relations with a single FOR loop instead of N RELATE queries.
+///
+/// `created_at` is omitted from the data payload — the SCHEMAFULL DEFAULT
+/// `time::now()` applies automatically, which side-steps SurrealDB #6816
+/// (Datetime loses type in FOR loops with serde_json).
+pub(super) async fn create_symbol_relations_batch(
+    db: &Surreal<Db>,
+    relations: Vec<SymbolRelation>,
+) -> Result<u32> {
+    if relations.is_empty() {
+        return Ok(0);
+    }
+
+    let thing_to_string = |t: &surrealdb::types::RecordId| -> String {
+        format!("{}:{}", t.table.as_str(), record_key_to_string(&t.key))
+    };
+
+    let data: Vec<_> = relations
+        .iter()
+        .map(|r| {
+            serde_json::json!({
+                "from": thing_to_string(&r.from_symbol),
+                "to": thing_to_string(&r.to_symbol),
+                "relation_type": r.relation_type.to_string(),
+                "project_id": r.project_id,
+                "file_path": r.file_path,
+                "line_number": r.line_number as i64,
+            })
+        })
+        .collect();
+
+    let count = data.len() as u32;
+
+    let sql = r#"
+        FOR $r IN $relations {
+            RELATE type::record($r.from)->symbol_relation->type::record($r.to)
+            SET relation_type = $r.relation_type,
+                project_id = $r.project_id,
+                file_path = $r.file_path,
+                line_number = $r.line_number;
+        };
+    "#;
+
+    db.query(sql).bind(("relations", data)).await?;
+    Ok(count)
 }
 
 pub(super) async fn delete_project_symbols(db: &Surreal<Db>, project_id: &str) -> Result<usize> {
@@ -265,20 +339,27 @@ pub(super) async fn get_related_symbols(
         }
     }
 
-    // Fetch symbols by ID
-    let mut symbols: Vec<CodeSymbol> = vec![];
-    for sid in symbol_ids {
-        let id_part = if let Some(idx) = sid.find(':') {
-            &sid[idx + 1..]
-        } else {
-            &sid
-        };
-
-        let s: Option<CodeSymbol> = db.select(("code_symbols", id_part)).await?;
-        if let Some(sym) = s {
-            symbols.push(sym);
-        }
-    }
+    // Fetch all symbols in a single query (batch) — eliminates N+1
+    let symbols: Vec<CodeSymbol> = if symbol_ids.is_empty() {
+        vec![]
+    } else {
+        // Deduplicate and ensure table prefix
+        let record_list: Vec<String> = symbol_ids
+            .iter()
+            .collect::<std::collections::HashSet<_>>()
+            .into_iter()
+            .map(|sid| {
+                if sid.contains(':') {
+                    sid.clone()
+                } else {
+                    format!("code_symbols:{}", sid)
+                }
+            })
+            .collect();
+        let sql = format!("SELECT * FROM {}", record_list.join(", "));
+        let mut response = db.query(sql).await?;
+        response.take(0).unwrap_or_default()
+    };
 
     Ok((symbols, relations))
 }
@@ -333,19 +414,24 @@ pub(super) async fn get_code_subgraph(
         all_ids.insert(to_str);
     }
 
-    // Fetch all symbols
-    let mut symbols: Vec<CodeSymbol> = Vec::new();
-    for sid in &all_ids {
-        let id_part = if let Some(idx) = sid.find(':') {
-            &sid[idx + 1..]
-        } else {
-            sid.as_str()
-        };
-        let s: Option<CodeSymbol> = db.select(("code_symbols", id_part)).await?;
-        if let Some(sym) = s {
-            symbols.push(sym);
-        }
-    }
+    // Fetch all symbols in a single query (batch) — eliminates N+1
+    let symbols: Vec<CodeSymbol> = if all_ids.is_empty() {
+        vec![]
+    } else {
+        let record_list: Vec<String> = all_ids
+            .iter()
+            .map(|sid| {
+                if sid.contains(':') {
+                    sid.clone()
+                } else {
+                    format!("code_symbols:{}", sid)
+                }
+            })
+            .collect();
+        let sql = format!("SELECT * FROM {}", record_list.join(", "));
+        let mut response = db.query(sql).await?;
+        response.take(0).unwrap_or_default()
+    };
 
     Ok((symbols, relations))
 }
@@ -542,7 +628,18 @@ pub(super) async fn vector_search_code(
     project_id: Option<&str>,
     limit: usize,
 ) -> Result<Vec<ScoredCodeChunk>> {
-    let query = r#"
+    // Use HNSW index via <|K,EF|> KNN operator for fast candidate selection,
+    // then compute exact cosine similarity for scoring.
+    // Over-fetch when project_id filter is active since KNN runs before filtering.
+    let knn_k = if project_id.is_some() {
+        (limit * 4).min(200)
+    } else {
+        limit.min(200)
+    };
+    let ef = knn_k.max(150);
+
+    let query = format!(
+        r#"
         SELECT 
             meta::id(id) AS id,
             file_path,
@@ -554,13 +651,14 @@ pub(super) async fn vector_search_code(
             name,
             vector::similarity::cosine(embedding, $vec) AS score 
         FROM code_chunks
-        WHERE embedding IS NOT NONE
+        WHERE embedding <|{knn_k},{ef}|> $vec
           AND ($project_id IS NONE OR project_id = $project_id)
         ORDER BY score DESC 
         LIMIT $limit
-    "#;
+    "#
+    );
     let mut response = db
-        .query(query)
+        .query(&query)
         .bind(("vec", embedding.to_vec()))
         .bind(("project_id", project_id.map(String::from)))
         .bind(("limit", limit))
@@ -575,17 +673,29 @@ pub(super) async fn vector_search_symbols(
     project_id: Option<&str>,
     limit: usize,
 ) -> Result<Vec<CodeSymbol>> {
-    let sql = r#"
+    // Use HNSW index via <|K,EF|> KNN operator for fast candidate selection,
+    // then compute exact cosine similarity for scoring.
+    // Over-fetch when project_id filter is active since KNN runs before filtering.
+    let knn_k = if project_id.is_some() {
+        (limit * 4).min(200)
+    } else {
+        limit.min(200)
+    };
+    let ef = knn_k.max(150);
+
+    let sql = format!(
+        r#"
         SELECT *,
             vector::similarity::cosine(embedding, $vec) AS _score
         FROM code_symbols
-        WHERE embedding IS NOT NONE
+        WHERE embedding <|{knn_k},{ef}|> $vec
           AND ($project_id IS NONE OR project_id = $project_id)
         ORDER BY _score DESC
         LIMIT $limit
-    "#;
+    "#
+    );
     let mut response = db
-        .query(sql)
+        .query(&sql)
         .bind(("vec", embedding.to_vec()))
         .bind(("project_id", project_id.map(String::from)))
         .bind(("limit", limit))

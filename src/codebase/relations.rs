@@ -14,6 +14,9 @@ pub struct RelationStats {
 }
 
 /// Create symbol relations from references using the symbol index for resolution.
+///
+/// Collects all resolvable relations into a Vec and writes them in a single
+/// batch query instead of N individual RELATE round-trips.
 pub async fn create_symbol_relations(
     storage: &impl StorageBackend,
     project_id: &str,
@@ -21,6 +24,7 @@ pub async fn create_symbol_relations(
     symbol_index: &SymbolIndex,
 ) -> RelationStats {
     let mut stats = RelationStats::default();
+    let mut batch: Vec<SymbolRelation> = Vec::with_capacity(references.len());
 
     for reference in references {
         // 1. Build from_symbol Thing using the stored definition line
@@ -60,25 +64,26 @@ pub async fn create_symbol_relations(
             }
         };
 
-        // 3. Create the relation
-        let relation = SymbolRelation::new(
+        // 3. Collect the relation for batch write
+        batch.push(SymbolRelation::new(
             from_thing,
             to_thing,
             reference.relation_type,
             reference.file_path.clone(),
             reference.line,
             project_id.to_string(),
-        );
+        ));
+    }
 
-        match storage.create_symbol_relation(relation).await {
-            Ok(_) => stats.created += 1,
+    // 4. Flush all relations in a single batch query
+    if !batch.is_empty() {
+        match storage.create_symbol_relations_batch(batch).await {
+            Ok(n) => stats.created = n,
             Err(e) => {
-                stats.failed += 1;
+                stats.failed = 1; // report as a single batch failure
                 tracing::warn!(
-                    from = %reference.from_symbol,
-                    to = %reference.to_symbol,
                     error = %e,
-                    "Failed to create symbol relation"
+                    "Batch symbol relation creation failed"
                 );
             }
         }

@@ -413,6 +413,14 @@ impl StorageBackend for SurrealStorage {
         code_ops::set_file_hash(&self.db, project_id, file_path, hash).await
     }
 
+    async fn set_file_hashes_batch(
+        &self,
+        project_id: &str,
+        hashes: &[(String, String)],
+    ) -> Result<()> {
+        code_ops::set_file_hashes_batch(&self.db, project_id, hashes).await
+    }
+
     async fn delete_file_hashes(&self, project_id: &str) -> Result<()> {
         code_ops::delete_file_hashes(&self.db, project_id).await
     }
@@ -447,6 +455,10 @@ impl StorageBackend for SurrealStorage {
 
     async fn create_symbol_relation(&self, relation: SymbolRelation) -> Result<String> {
         symbol_ops::create_symbol_relation(&self.db, relation).await
+    }
+
+    async fn create_symbol_relations_batch(&self, relations: Vec<SymbolRelation>) -> Result<u32> {
+        symbol_ops::create_symbol_relations_batch(&self.db, relations).await
     }
 
     async fn delete_project_symbols(&self, project_id: &str) -> Result<usize> {

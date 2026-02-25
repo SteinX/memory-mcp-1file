@@ -25,7 +25,7 @@ struct LoadState {
 }
 
 pub struct EmbeddingService {
-    engine: Arc<RwLock<Option<EmbeddingEngine>>>,
+    engine: Arc<RwLock<Option<Arc<EmbeddingEngine>>>>,
     cache: EmbeddingCache,
     config: EmbeddingConfig,
     status: Arc<AtomicU8>,
@@ -120,7 +120,7 @@ impl EmbeddingService {
                         }
 
                         let mut guard = engine_state.write().await;
-                        *guard = Some(engine);
+                        *guard = Some(Arc::new(engine));
                     });
 
                     status.store(STATUS_READY, Ordering::SeqCst);
@@ -282,11 +282,19 @@ impl EmbeddingService {
             return Ok(vec);
         }
 
-        let guard = self.engine.read().await;
-        let engine = guard.as_ref().ok_or(AppError::EmbeddingNotReady)?;
+        // Brief lock — clone the inner Arc, then drop the guard immediately.
+        // This ensures writers (model hot-reload) are never blocked during inference.
+        let engine = {
+            let guard = self.engine.read().await;
+            Arc::clone(guard.as_ref().ok_or(AppError::EmbeddingNotReady)?)
+        }; // guard dropped — writers unblocked
 
-        let embedding = engine
-            .embed(text)
+        // Offload CPU-bound neural-net inference to the blocking thread pool so
+        // the tokio worker thread is freed for other async tasks.
+        let text_owned = text.to_string();
+        let embedding = tokio::task::spawn_blocking(move || engine.embed(&text_owned))
+            .await
+            .map_err(|e| AppError::Internal(format!("embed task panicked: {e}").into()))?
             .map_err(|e| AppError::Embedding(e.to_string()))?;
 
         self.cache.put(text, model_ver, embedding.clone());
@@ -400,7 +408,7 @@ impl EmbeddingService {
         self.config.output_dim()
     }
 
-    pub fn get_engine(&self) -> Arc<RwLock<Option<EmbeddingEngine>>> {
+    pub fn get_engine(&self) -> Arc<RwLock<Option<Arc<EmbeddingEngine>>>> {
         self.engine.clone()
     }
 }

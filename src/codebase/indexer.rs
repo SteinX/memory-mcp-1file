@@ -15,7 +15,8 @@ use super::scanner::scan_directory;
 use super::symbol_index::SymbolIndex;
 
 use crate::embedding::{EmbeddingRequest, EmbeddingTarget};
-use crate::types::symbol::CodeReference;
+use crate::types::code::CodeChunk;
+use crate::types::symbol::{CodeReference, CodeSymbol};
 
 pub async fn index_project(state: Arc<AppState>, project_path: &Path) -> Result<IndexStatus> {
     let project_id = project_path
@@ -119,8 +120,137 @@ async fn do_index_project(
     let mut symbol_index = SymbolIndex::new();
     let mut relation_buffer: Vec<CodeReference> = Vec::new();
     let mut total_relation_stats = RelationStats::default();
+    // Buffer file hashes for batched UPSERT (Bug 3 fix: avoids N sequential DB round-trips)
+    let mut hash_buffer: Vec<(String, String)> = Vec::with_capacity(batch_size);
+    const HASH_FLUSH_SIZE: usize = 50;
 
     const MAX_CHUNKS_PER_FILE: usize = 50;
+
+    // Issue 4 fix: Parse files with bounded concurrency using JoinSet instead of
+    // sequential spawn_blocking. Up to MAX_CONCURRENT_PARSES files are parsed on
+    // the blocking thread pool simultaneously.
+    #[allow(clippy::type_complexity)]
+    const MAX_CONCURRENT_PARSES: usize = 4;
+    #[allow(clippy::type_complexity)]
+    let mut parse_set: tokio::task::JoinSet<(
+        Vec<CodeChunk>,
+        Vec<CodeSymbol>,
+        Vec<CodeReference>,
+        String,
+    )> = tokio::task::JoinSet::new();
+
+    // Macro to process one completed parse result (used in drain-when-full and final drain).
+    // Expands in place so it can mutate surrounding locals and use `.await`.
+    macro_rules! drain_one_parse {
+        ($join_result:expr) => {{
+            let (mut chunks, symbols, references, fp_str) = $join_result
+                .map_err(|e| crate::AppError::Internal(
+                    format!("parse/chunk panicked: {e}").into(),
+                ))?;
+
+            if chunks.len() > MAX_CHUNKS_PER_FILE {
+                tracing::info!(
+                    path = %fp_str,
+                    total = chunks.len(),
+                    kept = MAX_CHUNKS_PER_FILE,
+                    "Capping chunks for large file"
+                );
+                chunks.truncate(MAX_CHUNKS_PER_FILE);
+            }
+            for chunk in chunks {
+                chunk_buffer.push(chunk);
+                status.total_chunks += 1;
+
+                if chunk_buffer.len() >= batch_size {
+                    let batch = std::mem::take(&mut chunk_buffer);
+                    let _permit = state.db_semaphore.acquire().await;
+                    if let Ok(results) = state.storage.create_code_chunks_batch(batch).await {
+                        for (id, chunk) in results {
+                            let _ = state
+                                .embedding_queue
+                                .send(EmbeddingRequest {
+                                    text: chunk.content,
+                                    responder: None,
+                                    target: Some(EmbeddingTarget::Chunk(id)),
+                                    retry_count: 0,
+                                })
+                                .await;
+                        }
+                    }
+                }
+            }
+
+            if !symbols.is_empty() {
+                tracing::debug!(file = %fp_str, count = symbols.len(), "Parsed symbols");
+            }
+
+            // Add symbols to in-memory index (for cross-file relation resolution at end)
+            for symbol in &symbols {
+                symbol_index.add(symbol);
+            }
+
+            for symbol in symbols {
+                symbol_buffer.push(symbol);
+                status.total_symbols += 1;
+
+                if symbol_buffer.len() >= batch_size {
+                    let batch = std::mem::take(&mut symbol_buffer);
+                    let _permit = state.db_semaphore.acquire().await;
+                    match state.storage.create_code_symbols_batch(batch.clone()).await {
+                        Ok(ids) => {
+                            for (id, sym) in ids.iter().zip(batch.iter()) {
+                                let embed_text = sym
+                                    .signature
+                                    .clone()
+                                    .unwrap_or_else(|| format!("{} {}", sym.symbol_type, sym.name));
+                                let _ = state
+                                    .embedding_queue
+                                    .send(EmbeddingRequest {
+                                        text: embed_text,
+                                        responder: None,
+                                        target: Some(EmbeddingTarget::Symbol(id.clone())),
+                                        retry_count: 0,
+                                    })
+                                    .await;
+                            }
+                        }
+                        Err(e) => {
+                            tracing::error!(
+                                count = batch.len(),
+                                error = %e,
+                                "Failed to store symbol batch"
+                            );
+                        }
+                    }
+                }
+            }
+
+            // Buffer references for deferred processing (after ALL symbols are indexed)
+            relation_buffer.extend(references);
+
+            status.indexed_files += 1;
+            monitor
+                .indexed_files
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+
+            if status.indexed_files % 10 == 0 {
+                let percent =
+                    (status.indexed_files as f32 / status.total_files as f32 * 100.0) as u32;
+                tracing::info!(
+                    indexed = status.indexed_files,
+                    total = status.total_files,
+                    percent,
+                    chunks = status.total_chunks,
+                    symbols = status.total_symbols,
+                    failed = status.failed_files.len(),
+                    "Indexing progress"
+                );
+                if let Err(e) = state.storage.update_index_status(status.clone()).await {
+                    tracing::warn!("Failed to update intermediate status: {}", e);
+                }
+            }
+        }};
+    }
 
     for file_path in &files {
         // Update current file in monitor for status reporting
@@ -170,144 +300,52 @@ async fn do_index_project(
             continue;
         }
 
-        // Store file-level hash for incremental indexing
+        // Compute file-level hash for incremental indexing and buffer for batch flush
         let file_path_str = file_path.to_string_lossy().to_string();
         let file_hash = blake3::hash(content.as_bytes()).to_hex().to_string();
+        hash_buffer.push((file_path_str, file_hash));
+
+        // Flush hash buffer periodically to avoid unbounded growth
+        if hash_buffer.len() >= HASH_FLUSH_SIZE {
+            let batch = std::mem::take(&mut hash_buffer);
+            let _ = state
+                .storage
+                .set_file_hashes_batch(project_id, &batch)
+                .await;
+        }
+
+        // Issue 4 fix: Bounded-concurrency parsing via JoinSet.
+        // Drain one completed parse result before spawning if at capacity.
+        if parse_set.len() >= MAX_CONCURRENT_PARSES {
+            if let Some(join_result) = parse_set.join_next().await {
+                drain_one_parse!(join_result);
+            }
+        }
+
+        // Spawn CPU-bound chunk+parse work onto the blocking thread pool.
+        // `content` is moved (not cloned) — the hash was already computed above.
+        let file_path_for_blocking = file_path.clone();
+        let project_id_for_blocking = project_id.to_string();
+        parse_set.spawn_blocking(move || {
+            let fp_str = file_path_for_blocking.to_string_lossy().to_string();
+            let chunks = chunk_file(&file_path_for_blocking, &content, &project_id_for_blocking);
+            let (symbols, references) =
+                CodeParser::parse_file(&file_path_for_blocking, &content, &project_id_for_blocking);
+            (chunks, symbols, references, fp_str)
+        });
+    }
+
+    // Drain remaining in-flight parse tasks from the JoinSet
+    while let Some(join_result) = parse_set.join_next().await {
+        drain_one_parse!(join_result);
+    }
+
+    // Flush any remaining buffered file hashes
+    if !hash_buffer.is_empty() {
         let _ = state
             .storage
-            .set_file_hash(project_id, &file_path_str, &file_hash)
+            .set_file_hashes_batch(project_id, &hash_buffer)
             .await;
-
-        // 1. Chunking (Vector Search) — cap chunks per file to bound memory
-        // `chunk_file` runs TreeSitter AST parsing (CPU-bound); offload to blocking thread.
-        // `CodeParser::parse_file` is also CPU-bound; combine both into one spawn_blocking
-        // to avoid two round-trips through the blocking thread pool per file.
-        let file_path_for_blocking = file_path.clone();
-        let content_for_blocking = content.clone();
-        let project_id_for_blocking = project_id.to_string();
-        let (mut chunks, parsed) = tokio::task::spawn_blocking(move || {
-            let chunks = chunk_file(
-                &file_path_for_blocking,
-                &content_for_blocking,
-                &project_id_for_blocking,
-            );
-            let parsed = CodeParser::parse_file(
-                &file_path_for_blocking,
-                &content_for_blocking,
-                &project_id_for_blocking,
-            );
-            (chunks, parsed)
-        })
-        .await
-        .map_err(|e| crate::AppError::Internal(format!("parse/chunk panicked: {e}").into()))?;
-
-        let (symbols, references) = parsed;
-
-        if chunks.len() > MAX_CHUNKS_PER_FILE {
-            tracing::info!(
-                path = ?file_path,
-                total = chunks.len(),
-                kept = MAX_CHUNKS_PER_FILE,
-                "Capping chunks for large file"
-            );
-            chunks.truncate(MAX_CHUNKS_PER_FILE);
-        }
-        for chunk in chunks {
-            chunk_buffer.push(chunk);
-            status.total_chunks += 1;
-
-            if chunk_buffer.len() >= batch_size {
-                let batch = std::mem::take(&mut chunk_buffer);
-                let _permit = state.db_semaphore.acquire().await;
-                if let Ok(results) = state.storage.create_code_chunks_batch(batch).await {
-                    for (id, chunk) in results {
-                        let _ = state
-                            .embedding_queue
-                            .send(EmbeddingRequest {
-                                text: chunk.content,
-                                responder: None,
-                                target: Some(EmbeddingTarget::Chunk(id)),
-                                retry_count: 0,
-                            })
-                            .await;
-                    }
-                }
-            }
-        }
-
-        if !symbols.is_empty() {
-            tracing::debug!("File {:?}: found {} symbols", file_path, symbols.len());
-        }
-
-        // Add symbols to in-memory index FIRST (for relation resolution)
-        for symbol in &symbols {
-            symbol_index.add(symbol);
-        }
-
-        for symbol in symbols {
-            symbol_buffer.push(symbol);
-            status.total_symbols += 1;
-
-            if symbol_buffer.len() >= batch_size {
-                let batch = std::mem::take(&mut symbol_buffer);
-                let _permit = state.db_semaphore.acquire().await;
-                // 1. Insert batch to get IDs
-                match state.storage.create_code_symbols_batch(batch.clone()).await {
-                    Ok(ids) => {
-                        // 2. Queue for async embedding
-                        for (id, sym) in ids.iter().zip(batch.iter()) {
-                            let embed_text = sym
-                                .signature
-                                .clone()
-                                .unwrap_or_else(|| format!("{} {}", sym.symbol_type, sym.name));
-                            let _ = state
-                                .embedding_queue
-                                .send(EmbeddingRequest {
-                                    text: embed_text,
-                                    responder: None,
-                                    target: Some(EmbeddingTarget::Symbol(id.clone())),
-                                    retry_count: 0,
-                                })
-                                .await;
-                        }
-                    }
-                    Err(e) => {
-                        tracing::error!(
-                            count = batch.len(),
-                            error = %e,
-                            "Failed to store symbol batch"
-                        );
-                    }
-                }
-
-                // Relations are deferred to final flush after ALL symbols are indexed
-                // (removing mid-loop flush fixes cross-file forward reference loss)
-            }
-        }
-
-        // Buffer references for deferred processing (after symbols are in DB)
-        relation_buffer.extend(references);
-
-        status.indexed_files += 1;
-        monitor
-            .indexed_files
-            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-
-        if status.indexed_files.is_multiple_of(10) {
-            let percent = (status.indexed_files as f32 / status.total_files as f32 * 100.0) as u32;
-            tracing::info!(
-                indexed = status.indexed_files,
-                total = status.total_files,
-                percent,
-                chunks = status.total_chunks,
-                symbols = status.total_symbols,
-                failed = status.failed_files.len(),
-                "Indexing progress"
-            );
-            if let Err(e) = state.storage.update_index_status(status.clone()).await {
-                tracing::warn!("Failed to update intermediate status: {}", e);
-            }
-        }
     }
 
     if !chunk_buffer.is_empty() {
@@ -398,6 +436,96 @@ pub async fn incremental_index(
 ) -> Result<usize> {
     let mut updated = 0;
 
+    // Issue 4 fix: Bounded-concurrency parsing via JoinSet (same pattern as do_index_project).
+    const MAX_CONCURRENT_PARSES: usize = 4;
+    // Return type: (chunks, symbols, references, path_str, new_hash)
+    type IncrResult = (
+        Vec<CodeChunk>,
+        Vec<CodeSymbol>,
+        Vec<CodeReference>,
+        String,
+        String,
+    );
+    let mut parse_set: tokio::task::JoinSet<IncrResult> = tokio::task::JoinSet::new();
+
+    // Process one completed incremental parse result (DB writes + relations + hash store).
+    macro_rules! drain_one_incr {
+        ($join_result:expr) => {{
+            let (chunks, symbols, references, path_str, new_hash) = $join_result.map_err(|e| {
+                crate::AppError::Internal(
+                    format!("incremental parse/chunk panicked: {e}").into(),
+                )
+            })?;
+
+            let _permit = state.db_semaphore.acquire().await;
+            if let Ok(results) = state.storage.create_code_chunks_batch(chunks).await {
+                for (id, chunk) in results {
+                    let _ = state
+                        .embedding_queue
+                        .send(EmbeddingRequest {
+                            text: chunk.content,
+                            responder: None,
+                            target: Some(EmbeddingTarget::Chunk(id)),
+                            retry_count: 0,
+                        })
+                        .await;
+                }
+            }
+
+            if !symbols.is_empty() {
+                let _permit = state.db_semaphore.acquire().await;
+                let created_ids = match state
+                    .storage
+                    .create_code_symbols_batch(symbols.clone())
+                    .await
+                {
+                    Ok(ids) => ids,
+                    Err(e) => {
+                        tracing::warn!(path = %path_str, error = %e, "Failed to create symbols");
+                        vec![]
+                    }
+                };
+
+                for (id, sym) in created_ids.iter().zip(symbols.iter()) {
+                    if let Some(sig) = &sym.signature {
+                        let _ = state
+                            .embedding_queue
+                            .send(EmbeddingRequest {
+                                text: sig.clone(),
+                                responder: None,
+                                target: Some(EmbeddingTarget::Symbol(id.clone())),
+                                retry_count: 0,
+                            })
+                            .await;
+                    }
+                }
+            }
+
+            // Create relations using project-wide symbol index for cross-file resolution
+            if !references.is_empty() {
+                let mut symbol_index = SymbolIndex::new();
+                if let Ok(all_symbols) = state.storage.get_project_symbols(project_id).await {
+                    symbol_index.add_batch(&all_symbols);
+                }
+                symbol_index.add_batch(&symbols);
+                let _stats = create_symbol_relations(
+                    state.storage.as_ref(),
+                    project_id,
+                    &references,
+                    &symbol_index,
+                )
+                .await;
+            }
+
+            // Store updated file hash
+            let _ = state
+                .storage
+                .set_file_hash(project_id, &path_str, &new_hash)
+                .await;
+            updated += 1;
+        }};
+    }
+
     for path in changed_paths {
         let path_str = path.to_string_lossy().to_string();
 
@@ -452,97 +580,30 @@ pub async fn incremental_index(
             .delete_symbols_by_path(project_id, &path_str)
             .await;
 
-        // 1. Chunks + 2. Symbols — both CPU-bound (TreeSitter); offload together to blocking thread.
+        // Issue 4 fix: Drain one completed parse before spawning if at capacity.
+        if parse_set.len() >= MAX_CONCURRENT_PARSES {
+            if let Some(join_result) = parse_set.join_next().await {
+                drain_one_incr!(join_result);
+            }
+        }
+
+        // Spawn CPU-bound chunk+parse onto the blocking thread pool.
+        // `content` is moved (not cloned) — the hash was already computed above.
+        // `path_str` and `new_hash` are moved through the result for post-processing.
         let path_for_blocking = path.clone();
-        let content_for_blocking = content.clone();
         let project_id_for_blocking = project_id.to_string();
-        let (chunks, (symbols, references)) = tokio::task::spawn_blocking(move || {
-            let chunks = super::chunker::chunk_file(
-                &path_for_blocking,
-                &content_for_blocking,
-                &project_id_for_blocking,
-            );
-            let parsed = CodeParser::parse_file(
-                &path_for_blocking,
-                &content_for_blocking,
-                &project_id_for_blocking,
-            );
-            (chunks, parsed)
-        })
-        .await
-        .map_err(|e| {
-            crate::AppError::Internal(format!("incremental parse/chunk panicked: {e}").into())
-        })?;
+        parse_set.spawn_blocking(move || {
+            let chunks =
+                super::chunker::chunk_file(&path_for_blocking, &content, &project_id_for_blocking);
+            let (symbols, references) =
+                CodeParser::parse_file(&path_for_blocking, &content, &project_id_for_blocking);
+            (chunks, symbols, references, path_str, new_hash)
+        });
+    }
 
-        let _permit = state.db_semaphore.acquire().await;
-        if let Ok(results) = state.storage.create_code_chunks_batch(chunks).await {
-            for (id, chunk) in results {
-                let _ = state
-                    .embedding_queue
-                    .send(EmbeddingRequest {
-                        text: chunk.content,
-                        responder: None,
-                        target: Some(EmbeddingTarget::Chunk(id)),
-                        retry_count: 0,
-                    })
-                    .await;
-            }
-        }
-
-        // 2. Symbols (already parsed above in spawn_blocking)
-        if !symbols.is_empty() {
-            let _permit = state.db_semaphore.acquire().await;
-            let created_ids = match state
-                .storage
-                .create_code_symbols_batch(symbols.clone())
-                .await
-            {
-                Ok(ids) => ids,
-                Err(e) => {
-                    tracing::warn!(path = %path_str, error = %e, "Failed to create symbols");
-                    vec![]
-                }
-            };
-
-            for (id, sym) in created_ids.iter().zip(symbols.iter()) {
-                if let Some(sig) = &sym.signature {
-                    let _ = state
-                        .embedding_queue
-                        .send(EmbeddingRequest {
-                            text: sig.clone(),
-                            responder: None,
-                            target: Some(EmbeddingTarget::Symbol(id.clone())),
-                            retry_count: 0,
-                        })
-                        .await;
-                }
-            }
-        }
-
-        // Create relations using project-wide symbol index for cross-file resolution
-        if !references.is_empty() {
-            let mut symbol_index = SymbolIndex::new();
-            // Load ALL project symbols from DB for cross-file resolution
-            if let Ok(all_symbols) = state.storage.get_project_symbols(project_id).await {
-                symbol_index.add_batch(&all_symbols);
-            }
-            // Also add current file's new symbols (may not be in DB yet)
-            symbol_index.add_batch(&symbols);
-            let _stats = create_symbol_relations(
-                state.storage.as_ref(),
-                project_id,
-                &references,
-                &symbol_index,
-            )
-            .await;
-        }
-
-        // Store updated file hash
-        let _ = state
-            .storage
-            .set_file_hash(project_id, &path_str, &new_hash)
-            .await;
-        updated += 1;
+    // Drain remaining in-flight parse tasks
+    while let Some(join_result) = parse_set.join_next().await {
+        drain_one_incr!(join_result);
     }
 
     // Rebuild in-memory BM25 index if any files were updated

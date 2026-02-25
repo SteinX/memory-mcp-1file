@@ -97,7 +97,10 @@ pub(super) async fn get_all_chunks_for_project(
     db: &Surreal<Db>,
     project_id: &str,
 ) -> Result<Vec<CodeChunk>> {
-    let sql = "SELECT * FROM code_chunks WHERE project_id = $project_id";
+    // OMIT embedding: the 768-dim Vec<f32> (~3KB/chunk) is never used by callers
+    // (BM25 warm-up discards it immediately). CodeChunk.embedding is Option<Vec<f32>>
+    // so serde defaults it to None when the field is absent.
+    let sql = "SELECT * OMIT embedding FROM code_chunks WHERE project_id = $project_id";
     let mut response = db
         .query(sql)
         .bind(("project_id", project_id.to_string()))
@@ -233,6 +236,45 @@ pub(super) async fn set_file_hash(
         .bind(("project_id", project_id.to_string()))
         .bind(("file_path", file_path.to_string()))
         .bind(("hash", hash.to_string()))
+        .await?;
+    Ok(())
+}
+
+/// Batch UPSERT file hashes in a single DB round-trip.
+/// `hashes` is a slice of `(file_path, content_hash)` pairs.
+pub(super) async fn set_file_hashes_batch(
+    db: &Surreal<Db>,
+    project_id: &str,
+    hashes: &[(String, String)],
+) -> Result<()> {
+    if hashes.is_empty() {
+        return Ok(());
+    }
+
+    let sql = r#"
+        FOR $h IN $hashes {
+            UPSERT file_hashes SET
+                project_id = $project_id,
+                file_path = $h.file_path,
+                content_hash = $h.content_hash,
+                indexed_at = time::now()
+            WHERE project_id = $project_id AND file_path = $h.file_path;
+        };
+    "#;
+
+    let data: Vec<_> = hashes
+        .iter()
+        .map(|(path, hash)| {
+            serde_json::json!({
+                "file_path": path,
+                "content_hash": hash,
+            })
+        })
+        .collect();
+
+    db.query(sql)
+        .bind(("project_id", project_id.to_string()))
+        .bind(("hashes", data))
         .await?;
     Ok(())
 }

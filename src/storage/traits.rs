@@ -191,6 +191,13 @@ pub trait StorageBackend: Send + Sync {
     /// Set/update file hash after indexing
     async fn set_file_hash(&self, project_id: &str, file_path: &str, hash: &str) -> Result<()>;
 
+    /// Batch set/update file hashes after indexing (single DB round-trip)
+    async fn set_file_hashes_batch(
+        &self,
+        project_id: &str,
+        hashes: &[(String, String)],
+    ) -> Result<()>;
+
     /// Delete all file hashes for a project (used during full re-index)
     async fn delete_file_hashes(&self, project_id: &str) -> Result<()>;
 
@@ -219,6 +226,9 @@ pub trait StorageBackend: Send + Sync {
 
     /// Create a relation between code symbols
     async fn create_symbol_relation(&self, relation: SymbolRelation) -> Result<String>;
+
+    /// Batch-create symbol relations in a single query instead of N individual RELATE calls
+    async fn create_symbol_relations_batch(&self, relations: Vec<SymbolRelation>) -> Result<u32>;
 
     /// Delete all symbols for a project
     async fn delete_project_symbols(&self, project_id: &str) -> Result<usize>;
