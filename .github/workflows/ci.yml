@@ -99,27 +99,7 @@ jobs:
           key: x86_64-unknown-linux-musl
           cache-on-failure: false
 
-      # Build dependencies only via cross
       - name: Compile dependencies
-        run: |
-          FEATURES=""
-          EXTRA_RUSTFLAGS=""
-          
-          case "${{ matrix.target }}" in
-            x86_64-*)
-              EXTRA_RUSTFLAGS="-C target-cpu=x86-64-v3"
-              ;;
-          esac
-          
-          case "${{ matrix.target }}" in
-            x86_64-unknown-linux-gnu|x86_64-pc-windows-msvc)
-              FEATURES=""
-              ;;
-            *-apple-darwin)
-              FEATURES="--features accelerate"
-              ;;
-          esac
-          
-          export RUSTFLAGS="${RUSTFLAGS} ${EXTRA_RUSTFLAGS}"
-          cargo build --release --lib --target ${{ matrix.target }} ${FEATURES}
-        shell: bash
+        run: cross build --release --lib --target x86_64-unknown-linux-musl
+        env:
+          RUSTFLAGS: "-C target-cpu=x86-64-v3"

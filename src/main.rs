@@ -85,7 +85,6 @@ fn main() -> anyhow::Result<()> {
 }
 
 async fn async_main(cli: Cli) -> anyhow::Result<()> {
-
     if cli.list_models {
         println!("Available models:");
         println!("  qwen3     - 1024 dim, ~1.2 GB (default) [Apache 2.0] Top open-source 2026, MRL, 32K ctx");
