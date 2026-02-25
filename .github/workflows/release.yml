@@ -166,8 +166,8 @@ jobs:
 
           # Hardware-accelerated BLAS features per OS
           case "${{ matrix.os }}" in
-            ubuntu-*)  FEATURES="--features mkl" ;;
-            windows-*) FEATURES="--features mkl" ;;
+            ubuntu-*)  FEATURES="" ;;
+            windows-*) FEATURES="" ;;
             macos-*)   FEATURES="--features accelerate" ;;
           esac
 

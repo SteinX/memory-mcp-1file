@@ -68,7 +68,7 @@ jobs:
           
           case "${{ matrix.target }}" in
             x86_64-unknown-linux-gnu|x86_64-pc-windows-msvc)
-              FEATURES="--features mkl"
+              FEATURES=""
               ;;
             *-apple-darwin)
               FEATURES="--features accelerate"
@@ -113,7 +113,7 @@ jobs:
           
           case "${{ matrix.target }}" in
             x86_64-unknown-linux-gnu|x86_64-pc-windows-msvc)
-              FEATURES="--features mkl"
+              FEATURES=""
               ;;
             *-apple-darwin)
               FEATURES="--features accelerate"
