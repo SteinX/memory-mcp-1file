@@ -193,13 +193,44 @@ pub async fn get_index_status(
             } else {
                 0.0
             };
-            let overall_progress = if (total_chunks + total_symbols) > 0 {
-                ((embedded_chunks + embedded_symbols) as f32
-                    / (total_chunks + total_symbols) as f32)
-                    * 100.0
+
+            // Two-phase progress: parsing (70%) + embedding (30%).
+            //
+            // During parsing, total_chunks/total_symbols grow dynamically as
+            // the parser produces output.  The embedding worker typically keeps
+            // pace, so  embedded/total ≈ 1.0  —  which made the OLD formula
+            // report ~98% when only a fraction of files had been parsed.
+            //
+            // Fix: anchor progress to the file-parsing ratio (known up-front)
+            // and let embedding fill a smaller tail portion.
+            //
+            //   overall = parse_ratio × (PARSE_W + embed_ratio × EMBED_W) × 100
+            //
+            // Properties:
+            //   • Monotonically increasing (parse_ratio only grows; embed_ratio ≈ 1)
+            //   • Continuous at the phase boundary (parse_ratio = 1 ⇒ formula
+            //     becomes  (0.70 + embed_ratio × 0.30) × 100 )
+            //   • Accurate: 50% files parsed + embedder keeping up  →  ~50%
+            const PARSE_WEIGHT: f32 = 0.70;
+            const EMBED_WEIGHT: f32 = 0.30;
+
+            let parse_ratio = if status.total_files > 0 {
+                (status.indexed_files as f32 / status.total_files as f32).min(1.0)
             } else {
                 0.0
             };
+
+            let embed_ratio = if (total_chunks + total_symbols) > 0 {
+                (embedded_chunks + embedded_symbols) as f32 / (total_chunks + total_symbols) as f32
+            } else {
+                // Nothing to embed (yet or ever) — treat as fully caught up
+                1.0
+            };
+
+            let overall_progress =
+                parse_ratio * (PARSE_WEIGHT + embed_ratio * EMBED_WEIGHT) * 100.0;
+
+            let parsing_done = status.total_files > 0 && status.indexed_files >= status.total_files;
 
             Ok(success_json(json!({
                 "project_id": status.project_id,
@@ -216,14 +247,18 @@ pub async fn get_index_status(
                 },
 
                 "vector_embeddings": {
-                    "status": if status.status == crate::types::IndexState::Completed || (embedded_chunks >= total_chunks && total_chunks > 0) { "completed" } else { "in_progress" },
+                    "status": if status.status == crate::types::IndexState::Completed
+                        || (parsing_done && embedded_chunks >= total_chunks && total_chunks > 0)
+                        { "completed" } else { "in_progress" },
                     "total": total_chunks,
                     "completed": embedded_chunks,
                     "percent": format!("{:.1}", vector_progress)
                 },
 
                 "graph_embeddings": {
-                    "status": if status.status == crate::types::IndexState::Completed || (embedded_symbols >= total_symbols && total_symbols > 0) { "completed" } else { "in_progress" },
+                    "status": if status.status == crate::types::IndexState::Completed
+                        || (parsing_done && embedded_symbols >= total_symbols && total_symbols > 0)
+                        { "completed" } else { "in_progress" },
                     "total": total_symbols,
                     "completed": embedded_symbols,
                     "percent": format!("{:.1}", graph_progress)
@@ -231,7 +266,11 @@ pub async fn get_index_status(
 
                 "overall_progress": {
                     "percent": format!("{:.1}", overall_progress),
-                    "is_complete": status.status == crate::types::IndexState::Completed || (embedded_chunks >= total_chunks && embedded_symbols >= total_symbols && total_chunks > 0)
+                    "is_complete": status.status == crate::types::IndexState::Completed
+                        || (parsing_done
+                            && embedded_chunks >= total_chunks
+                            && embedded_symbols >= total_symbols
+                            && total_chunks > 0)
                 },
                 "error_message": status.error_message,
                 "failed_files": status.failed_files
@@ -372,12 +411,29 @@ pub async fn get_project_stats(
         0.0
     };
 
+    // Two-phase overall progress (same formula as get_index_status)
+    const PARSE_WEIGHT: f32 = 0.70;
+    const EMBED_WEIGHT: f32 = 0.30;
+
+    let parse_ratio = if status.total_files > 0 {
+        (status.indexed_files as f32 / status.total_files as f32).min(1.0)
+    } else {
+        0.0
+    };
+    let embed_ratio = if (total_chunks + total_symbols) > 0 {
+        (embedded_chunks + embedded_symbols) as f32 / (total_chunks + total_symbols) as f32
+    } else {
+        1.0
+    };
+    let overall_progress = parse_ratio * (PARSE_WEIGHT + embed_ratio * EMBED_WEIGHT) * 100.0;
+
     Ok(success_json(json!({
         "project_id": params.project_id,
         "status": status.status.to_string(),
         "files": {
             "total": status.total_files,
-            "indexed": status.indexed_files
+            "indexed": status.indexed_files,
+            "parse_percent": format!("{:.1}", parse_ratio * 100.0)
         },
         "chunks": {
             "total": total_chunks,
@@ -389,6 +445,7 @@ pub async fn get_project_stats(
             "embedded": embedded_symbols,
             "progress_percent": format!("{:.1}", graph_progress)
         },
+        "overall_progress_percent": format!("{:.1}", overall_progress),
         "started_at": status.started_at,
         "completed_at": status.completed_at,
         "failed_files": status.failed_files
