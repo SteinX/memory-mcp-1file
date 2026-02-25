@@ -119,7 +119,7 @@ To use this MCP server with any client (**Claude Code**, **OpenCode**, **Cline**
 3.  **Init Process**: `--init` (Ensures the server shuts down cleanly)
 
 > [!TIP]
-> **Model Caching**: The embedding model (~1 GB) is stored in `/data/models/`. Using a **named volume** (`mcp-data:/data`) ensures the model is downloaded only once. Without a named volume, Docker creates a new anonymous volume on each `docker run`, causing the model to re-download every time.
+> **One volume persists everything**: The single `-v mcp-data:/data` mount covers both the SurrealDB database **and** the ~1.2 GB embedding model (stored under `/data/models/`). There is no need for a separate volume for `/data/models` — it is already a subdirectory of `/data` and is preserved automatically. Without a named volume, Docker creates a new anonymous volume on each `docker run`, causing the model to re-download (~1.2 GB) every time.
 
 #### JSON Configuration (Claude Desktop, etc.)
 

@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
@@ -143,6 +143,27 @@ impl EmbeddingService {
         });
     }
 
+    /// Pure filesystem check — no network I/O.
+    ///
+    /// Replicates `CacheRepo::get()` from hf-hub (which is not accessible via `ApiRepo`).
+    /// Path layout: `{cache_dir}/models--{org}--{repo}/refs/main` → commit hash →
+    ///              `{cache_dir}/models--{org}--{repo}/snapshots/{hash}/{filename}`
+    fn local_cache_path(cache_dir: &Path, repo_id: &str, filename: &str) -> Option<PathBuf> {
+        let folder = format!("models--{}", repo_id.replace('/', "--"));
+        let refs_path = cache_dir.join(&folder).join("refs").join("main");
+        let commit_hash = std::fs::read_to_string(&refs_path).ok()?;
+        let path = cache_dir
+            .join(&folder)
+            .join("snapshots")
+            .join(commit_hash.trim())
+            .join(filename);
+        if path.exists() {
+            Some(path)
+        } else {
+            None
+        }
+    }
+
     fn load_model_with_tracking(
         model: ModelType,
         mrl_dim: Option<usize>,
@@ -164,9 +185,14 @@ impl EmbeddingService {
         };
 
         let repo = api.model(model.repo_id().to_string());
+        let repo_id = model.repo_id();
 
-        let config_path = repo.get("config.json")?;
-        let is_cached = config_path.exists();
+        // Check local cache (pure filesystem, no network) to set `cached` flag.
+        // `repo.get()` is already cache-first, but we need the flag before calling it.
+        let is_cached = cache_dir
+            .as_ref()
+            .and_then(|d| Self::local_cache_path(d, repo_id, "config.json"))
+            .is_some();
 
         rt.block_on(async {
             let mut state = load_state.write().await;
@@ -174,33 +200,49 @@ impl EmbeddingService {
             state.phase = LoadingPhase::FetchingConfig;
         });
 
+        // `repo.get()` checks the local snapshot cache first; only downloads if missing.
+        let config_path = repo.get("config.json")?;
+
         rt.block_on(async {
             let mut state = load_state.write().await;
             state.phase = LoadingPhase::FetchingTokenizer;
         });
+
         let tokenizer_path = repo.get("tokenizer.json")?;
+
+        // For the weights file we want progress reporting on first download but want to
+        // skip the network entirely (including the metadata HEAD request) when already cached.
+        // `repo.download_with_progress()` always hits the network; `repo.get()` is
+        // cache-first but doesn't report progress.  Solution: check the local cache path
+        // manually, use `download_with_progress` only on a cache miss.
+        let cached_weights = cache_dir
+            .as_ref()
+            .and_then(|d| Self::local_cache_path(d, repo_id, "model.safetensors"));
 
         rt.block_on(async {
             let mut state = load_state.write().await;
-            if state.cached {
-                state.phase = LoadingPhase::VerifyingWeights;
-            } else {
-                state.phase = LoadingPhase::FetchingWeights;
-            }
-            state.progress_percent = Some(0.0);
-        });
-
-        let load_state_for_callback = load_state.clone();
-        let callback = callback_builder(move |progress: ProgressEvent| {
-            // Use try_write to avoid needing a runtime — skip update if lock is contended
-            if let Ok(mut state) = load_state_for_callback.try_write() {
-                state.progress_percent = Some(progress.percentage * 100.0);
-                let remaining = progress.remaining_time.as_secs();
-                state.remaining_seconds = if remaining > 0 { Some(remaining) } else { None };
+            state.phase = LoadingPhase::FetchingWeights;
+            if cached_weights.is_none() {
+                state.progress_percent = Some(0.0);
             }
         });
 
-        let weights_path = repo.download_with_progress("model.safetensors", callback)?;
+        let weights_path = if let Some(p) = cached_weights {
+            tracing::info!("Model weights found in local cache, skipping download");
+            p
+        } else {
+            tracing::info!("Downloading model weights from HuggingFace Hub...");
+            let load_state_for_callback = load_state.clone();
+            let callback = callback_builder(move |progress: ProgressEvent| {
+                // Use try_write to avoid needing a runtime — skip update if lock is contended
+                if let Ok(mut state) = load_state_for_callback.try_write() {
+                    state.progress_percent = Some(progress.percentage * 100.0);
+                    let remaining = progress.remaining_time.as_secs();
+                    state.remaining_seconds = if remaining > 0 { Some(remaining) } else { None };
+                }
+            });
+            repo.download_with_progress("model.safetensors", callback)?
+        };
 
         rt.block_on(async {
             let mut state = load_state.write().await;
@@ -300,6 +342,52 @@ impl EmbeddingService {
                     return Err(AppError::Embedding(format!("Model load failed: {}", msg)));
                 }
                 _ => tokio::time::sleep(std::time::Duration::from_millis(500)).await,
+            }
+        }
+    }
+
+    /// Wait for the embedding model to become ready, up to `timeout`.
+    ///
+    /// Returns `Ok(true)` if the model became ready within the timeout.
+    /// Returns `Ok(false)` if the timeout elapsed and the model is still loading.
+    /// Returns `Err` if the model failed to load.
+    ///
+    /// This is the correct primitive for tool handlers: instead of immediately
+    /// rejecting calls with "model not ready", they can absorb the startup
+    /// latency transparently, keeping the MCP session alive on fresh machines
+    /// where the model must be downloaded.
+    pub async fn wait_for_ready_timeout(&self, timeout: std::time::Duration) -> Result<bool> {
+        if self.is_ready() {
+            return Ok(true);
+        }
+
+        let deadline = tokio::time::Instant::now() + timeout;
+        tracing::info!(
+            timeout_secs = timeout.as_secs(),
+            "Tool call waiting for embedding model to load (lazy init)..."
+        );
+
+        loop {
+            match self.status.load(Ordering::SeqCst) {
+                STATUS_READY => {
+                    tracing::info!("Embedding model became ready, proceeding with tool call");
+                    return Ok(true);
+                }
+                STATUS_ERROR => {
+                    let state = self.load_state.read().await;
+                    let msg = state.error_message.clone().unwrap_or_default();
+                    return Err(AppError::Embedding(format!("Model load failed: {}", msg)));
+                }
+                _ => {
+                    if tokio::time::Instant::now() >= deadline {
+                        tracing::warn!(
+                            timeout_secs = timeout.as_secs(),
+                            "Tool call timed out waiting for embedding model"
+                        );
+                        return Ok(false);
+                    }
+                    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                }
             }
         }
     }

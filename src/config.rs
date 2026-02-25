@@ -17,6 +17,11 @@ pub struct AppConfig {
     pub batch_size: usize,
     pub timeout_ms: u64,
     pub log_level: String,
+    /// Maximum time (ms) a tool call will block waiting for the embedding model
+    /// to finish loading. This allows the MCP session to survive the first-time
+    /// model download on a fresh machine without the client seeing a timeout.
+    /// Default: 600_000 ms (10 minutes) — longer than any realistic download.
+    pub model_load_timeout_ms: u64,
 }
 
 impl Default for AppConfig {
@@ -30,6 +35,7 @@ impl Default for AppConfig {
             batch_size: 8,
             timeout_ms: 30000,
             log_level: "info".to_string(),
+            model_load_timeout_ms: 600_000,
         }
     }
 }

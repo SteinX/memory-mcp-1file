@@ -114,13 +114,42 @@ pub fn embedding_loading_response(status: &EmbeddingStatus) -> CallToolResult {
     }
 }
 
-/// Macro to check embedding status and return early if not ready
+/// Macro to check embedding status and wait for it to become ready.
+///
+/// # Architectural rationale (lazy init timeout-wait)
+///
+/// On a fresh machine the model must be downloaded (up to several GB).
+/// The old behaviour was: return an error immediately if the model isn't ready.
+/// This caused MCP clients to see tool failures during the download window and
+/// — worse — caused some clients to close the session entirely.
+///
+/// The new behaviour:
+///   1. If the model IS ready → proceed instantly (zero overhead on hot path).
+///   2. If the model is LOADING → wait up to `model_load_timeout_ms` for it to
+///      become ready, polling every 500 ms.  This keeps the MCP session alive
+///      through the entire download and load sequence.
+///   3. If the wait times out → return a descriptive loading status response
+///      so the client can retry later.
+///   4. If the model FAILED to load → return an error response.
+///
+/// `serve_server` is called immediately at startup (the JSON-RPC handshake
+/// completes in < 1 ms).  Tool calls that need embeddings are the only ones
+/// that block, and only on the very first call on a fresh machine.
 #[macro_export]
 macro_rules! ensure_embedding_ready {
     ($state:expr) => {
-        let status = $state.embedding.status().await;
-        if !status.is_ready() {
-            return Ok($crate::server::logic::embedding_loading_response(&status));
+        let timeout = std::time::Duration::from_millis($state.config.model_load_timeout_ms);
+        match $state.embedding.wait_for_ready_timeout(timeout).await {
+            Ok(true) => {} // ready, proceed
+            Ok(false) => {
+                // Still loading after timeout — return current status
+                let status = $state.embedding.status().await;
+                return Ok($crate::server::logic::embedding_loading_response(&status));
+            }
+            Err(e) => {
+                // Model failed to load
+                return Ok($crate::server::logic::error_response(e));
+            }
         }
     };
 }

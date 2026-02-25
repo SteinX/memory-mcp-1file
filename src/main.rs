@@ -38,6 +38,12 @@ struct Cli {
     #[arg(long, env = "TIMEOUT_MS", default_value = "30000")]
     timeout: u64,
 
+    /// Maximum time (seconds) a tool call will block waiting for the model to
+    /// finish loading. Applies only on the first call on a fresh machine where
+    /// the model must be downloaded. Default: 600 s (10 min).
+    #[arg(long, env = "MODEL_LOAD_TIMEOUT_SECS", default_value = "600")]
+    model_load_timeout_secs: u64,
+
     #[arg(long, env = "LOG_LEVEL", default_value = "info")]
     log_level: String,
 
@@ -148,6 +154,7 @@ async fn main() -> anyhow::Result<()> {
             batch_size: cli.batch_size,
             timeout_ms: cli.timeout,
             log_level: cli.log_level,
+            model_load_timeout_ms: cli.model_load_timeout_secs * 1000,
         },
         storage: storage.clone(),
         embedding: embedding.clone(),
@@ -193,6 +200,26 @@ async fn main() -> anyhow::Result<()> {
     });
 
     let server = MemoryMcpServer::new(state.clone());
+
+    // ── Lazy-init architecture ─────────────────────────────────────────────
+    // `serve_server` is called immediately after lightweight synchronous setup.
+    // The MCP `initialize` handshake is handled by `get_info()` which is a
+    // pure, synchronous function — it returns in < 1 ms regardless of model
+    // state.  The embedding model continues loading in a background OS thread
+    // (`start_loading` above).
+    //
+    // Tool calls that need embeddings use `ensure_embedding_ready!`, which now
+    // *waits* up to `model_load_timeout_ms` for the model instead of failing
+    // immediately.  This means:
+    //   • Fresh machine (model must download):  tool calls block transparently
+    //     until the download completes; the MCP session stays alive.
+    //   • Warm machine (model cached):  the model is ready in < 5 s; tool
+    //     calls proceed with zero perceptible delay.
+    //
+    // This is the architecturally correct fix for the SIGTERM-on-initialize
+    // bug: the server ALWAYS responds to `initialize` instantly; only the
+    // heavier tool calls experience startup latency, and only once.
+    // ──────────────────────────────────────────────────────────────────────
 
     // Auto-start codebase manager if /project exists
     let transport = rmcp::transport::io::stdio();
