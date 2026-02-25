@@ -22,6 +22,32 @@ pub struct AppConfig {
     /// model download on a fresh machine without the client seeing a timeout.
     /// Default: 600_000 ms (10 minutes) — longer than any realistic download.
     pub model_load_timeout_ms: u64,
+
+    // ── Embedding pipeline ────────────────────────────────────────────────────
+    /// Capacity of the `tokio::sync::mpsc` channel used to buffer embedding
+    /// requests before the worker picks them up. Higher values reduce
+    /// back-pressure during ingestion bursts.
+    /// Default: 256.
+    pub embedding_queue_capacity: usize,
+    /// Minimum number of pending embedding requests before the worker flushes
+    /// a batch eagerly (without waiting for the deadline).
+    /// Default: 8.
+    pub embedding_batch_size: usize,
+
+    // ── Codebase IndexWorker ──────────────────────────────────────────────────
+    /// Maximum number of file-system events to accumulate before forcing an
+    /// incremental-index flush. Larger values reduce DB round-trips on heavy
+    /// save storms.
+    /// Default: 20.
+    pub index_batch_size: usize,
+    /// Debounce window (ms): how long the IndexWorker waits for more jobs
+    /// before flushing an incomplete batch.
+    /// Default: 2 000 ms.
+    pub index_debounce_ms: u64,
+    /// How often (minutes) the periodic manifest-diff task runs to catch
+    /// changes missed by the file-system watcher.
+    /// Default: 10 minutes.
+    pub manifest_diff_interval_mins: u64,
 }
 
 impl Default for AppConfig {
@@ -36,6 +62,11 @@ impl Default for AppConfig {
             timeout_ms: 30000,
             log_level: "info".to_string(),
             model_load_timeout_ms: 600_000,
+            embedding_queue_capacity: 256,
+            embedding_batch_size: 8,
+            index_batch_size: 20,
+            index_debounce_ms: 2_000,
+            manifest_diff_interval_mins: 10,
         }
     }
 }

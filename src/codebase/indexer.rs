@@ -428,13 +428,32 @@ async fn do_index_project(
     Ok(status)
 }
 
-/// Incremental re-index for changed files only
+/// Result of an incremental re-index operation.
+#[derive(Debug, Default)]
+pub struct IncrementalResult {
+    /// New/updated chunks that were written to storage (without embedding yet).
+    pub new_chunks: Vec<CodeChunk>,
+    /// File paths that were removed from the index (file no longer exists on disk).
+    pub deleted_files: Vec<String>,
+    /// Number of files whose content changed and were re-indexed.
+    pub updated_files: usize,
+}
+
+/// Incremental re-index for changed files only.
+/// Returns an [`IncrementalResult`] describing what changed.
+/// The caller is responsible for rebuilding in-memory indices (BM25 etc.) when needed.
 pub async fn incremental_index(
     state: Arc<AppState>,
     project_id: &str,
     changed_paths: Vec<std::path::PathBuf>,
-) -> Result<usize> {
-    let mut updated = 0;
+) -> Result<IncrementalResult> {
+    let mut result = IncrementalResult::default();
+    // Keep a local alias for the previous `updated` counter used inside the macro.
+    macro_rules! inc_updated {
+        () => {
+            result.updated_files += 1;
+        };
+    }
 
     // Issue 4 fix: Bounded-concurrency parsing via JoinSet (same pattern as do_index_project).
     const MAX_CONCURRENT_PARSES: usize = 4;
@@ -460,6 +479,8 @@ pub async fn incremental_index(
             let _permit = state.db_semaphore.acquire().await;
             if let Ok(results) = state.storage.create_code_chunks_batch(chunks).await {
                 for (id, chunk) in results {
+                    // Collect the written chunk so the caller can inspect / BM25-rebuild selectively.
+                    result.new_chunks.push(chunk.clone());
                     let _ = state
                         .embedding_queue
                         .send(EmbeddingRequest {
@@ -522,7 +543,7 @@ pub async fn incremental_index(
                 .storage
                 .set_file_hash(project_id, &path_str, &new_hash)
                 .await;
-            updated += 1;
+            inc_updated!();
         }};
     }
 
@@ -538,7 +559,7 @@ pub async fn incremental_index(
                 Ok(deleted) => {
                     if deleted > 0 {
                         tracing::debug!(path = %path_str, deleted, "Removed chunks for deleted file");
-                        updated += 1;
+                        result.deleted_files.push(path_str.clone());
                     }
                 }
                 Err(e) => {
@@ -606,15 +627,12 @@ pub async fn incremental_index(
         drain_one_incr!(join_result);
     }
 
-    // Rebuild in-memory BM25 index if any files were updated
-    if updated > 0 {
-        state
-            .code_search
-            .rebuild_from_storage(state.storage.as_ref(), project_id)
-            .await;
-    }
+    // NOTE: rebuild_from_storage is intentionally NOT called here.
+    // The caller (CodebaseManager) decides when to rebuild the in-memory BM25
+    // index, allowing it to batch multiple incremental results or defer the
+    // rebuild to a background worker.
 
-    Ok(updated)
+    Ok(result)
 }
 
 #[cfg(test)]

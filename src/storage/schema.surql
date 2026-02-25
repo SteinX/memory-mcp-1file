@@ -126,3 +126,11 @@ DEFINE INDEX IF NOT EXISTS idx_symbols_project ON code_symbols FIELDS project_id
 DEFINE INDEX IF NOT EXISTS idx_symbols_path ON code_symbols FIELDS file_path;
 DEFINE INDEX IF NOT EXISTS idx_symbols_vec ON code_symbols 
     FIELDS embedding HNSW DIMENSION {dim} DIST COSINE;
+
+-- File manifest table (tracks all files in a project for deletion detection)
+DEFINE TABLE IF NOT EXISTS file_manifest SCHEMAFULL;
+DEFINE FIELD project_id   ON file_manifest TYPE string;
+DEFINE FIELD file_path    ON file_manifest TYPE string;
+DEFINE FIELD last_seen_at ON file_manifest TYPE datetime DEFAULT time::now();
+DEFINE INDEX IF NOT EXISTS idx_fm_project_path
+    ON file_manifest FIELDS project_id, file_path UNIQUE;

@@ -4,6 +4,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
+use memory_mcp::codebase::{CodebaseManager, IndexWorker};
 use memory_mcp::config::{AppConfig, AppState};
 use memory_mcp::embedding::{
     EmbeddingConfig, EmbeddingService, EmbeddingStore, EmbeddingWorker, ModelType,
@@ -159,7 +160,7 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
     embedding.start_loading();
 
     let metrics = std::sync::Arc::new(memory_mcp::embedding::EmbeddingMetrics::new());
-    let (queue_tx, queue_rx) = tokio::sync::mpsc::channel(64);
+    let (queue_tx, queue_rx) = tokio::sync::mpsc::channel(256);
     let adaptive_queue =
         memory_mcp::embedding::AdaptiveEmbeddingQueue::with_defaults(queue_tx, metrics.clone());
 
@@ -174,6 +175,8 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
             timeout_ms: cli.timeout,
             log_level: cli.log_level,
             model_load_timeout_ms: cli.model_load_timeout_secs * 1000,
+            // New fields: use compile-time defaults (values are documented in AppConfig::default)
+            ..AppConfig::default()
         },
         storage: storage.clone(),
         embedding: embedding.clone(),
@@ -241,6 +244,64 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
     // ──────────────────────────────────────────────────────────────────────
 
     // Auto-start codebase manager if /project exists
+    let project_path = PathBuf::from("/project");
+    if project_path.exists() {
+        let project_id = project_path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("project")
+            .to_string();
+
+        // Create the IndexWorker for this project and start it in the background.
+        let (index_worker, index_tx) = IndexWorker::new(state.clone(), project_id.clone());
+        index_worker.start(state.shutdown_rx());
+
+        // Build the CodebaseManager with the channel sender and start it.
+        let mgr = CodebaseManager::new(state.clone(), project_path.clone(), index_tx.clone());
+        if let Err(e) = mgr.start().await {
+            tracing::error!(error = %e, "Failed to start codebase manager for /project");
+        }
+        let mgr = Arc::new(mgr);
+
+        // ── Periodic manifest-diff task ─────────────────────────────────
+        // Every N minutes, run a lightweight manifest diff and push any
+        // discovered changes into the IndexWorker channel.  This catches
+        // files that were missed by the file-system watcher (e.g. because
+        // the process was restarted or the watcher lost events under heavy load).
+        let mgr_for_diff = mgr.clone();
+        let mut diff_shutdown = state.shutdown_rx();
+        let manifest_diff_interval_mins = state.config.manifest_diff_interval_mins;
+        tokio::spawn(async move {
+            let mut interval =
+                tokio::time::interval(Duration::from_secs(manifest_diff_interval_mins * 60));
+            interval.tick().await; // skip immediate first tick
+
+            loop {
+                tokio::select! {
+                    _ = interval.tick() => {
+                        tracing::debug!(
+                            project_id = %project_id,
+                            "Periodic manifest diff starting"
+                        );
+                        if let Err(e) = mgr_for_diff.validate_index_full().await {
+                            tracing::warn!(
+                                project_id = %project_id,
+                                error = %e,
+                                "Periodic manifest diff failed"
+                            );
+                        }
+                    }
+                    _ = diff_shutdown.changed() => {
+                        if *diff_shutdown.borrow() {
+                            tracing::debug!(project_id = %project_id, "Manifest diff task stopping");
+                            break;
+                        }
+                    }
+                }
+            }
+        });
+    }
+
     let transport = rmcp::transport::io::stdio();
 
     let service = rmcp::service::serve_server(server, transport).await?;

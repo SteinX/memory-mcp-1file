@@ -137,3 +137,17 @@ impl IndexStatus {
         }
     }
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ManifestEntry
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// A single entry in the file manifest for a project.
+/// Used to detect deleted files between indexing runs.
+#[derive(Debug, Clone, Serialize, Deserialize, SurrealValue)]
+pub struct ManifestEntry {
+    pub project_id: String,
+    pub file_path: String,
+    #[serde(default = "default_datetime")]
+    pub last_seen_at: Datetime,
+}

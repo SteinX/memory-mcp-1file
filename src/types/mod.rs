@@ -85,7 +85,7 @@ pub fn record_key_to_string(key: &RecordIdKey) -> String {
     }
 }
 
-pub use code::{ChunkType, CodeChunk, IndexState, IndexStatus, Language};
+pub use code::{ChunkType, CodeChunk, IndexState, IndexStatus, Language, ManifestEntry};
 pub use embedding_state::{EmbedResult, EmbedTarget, EmbeddingState};
 pub use entity::{Direction, Entity, Relation};
 pub use error::{AppError, Result};

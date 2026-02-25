@@ -8,14 +8,15 @@ use surrealdb::Surreal;
 use super::StorageBackend;
 use crate::graph::GraphTraversalStorage;
 use crate::types::{
-    CodeChunk, CodeSymbol, Direction, Entity, IndexStatus, Memory, MemoryUpdate, Relation,
-    ScoredCodeChunk, SearchResult, SymbolRelation,
+    CodeChunk, CodeSymbol, Direction, Entity, IndexStatus, ManifestEntry, Memory, MemoryUpdate,
+    Relation, ScoredCodeChunk, SearchResult, SymbolRelation,
 };
 use crate::Result;
 
 mod code_ops;
 mod graph_ops;
 mod helpers;
+mod manifest_ops;
 mod memory_ops;
 mod symbol_ops;
 
@@ -591,6 +592,26 @@ impl StorageBackend for SurrealStorage {
             .await?;
         tracing::info!("Storage flushed successfully");
         Ok(())
+    }
+
+    async fn upsert_manifest_entry(&self, project_id: &str, file_path: &str) -> Result<()> {
+        manifest_ops::upsert_manifest_entry(&self.db, project_id, file_path).await
+    }
+
+    async fn upsert_manifest_entries(&self, project_id: &str, file_paths: &[String]) -> Result<()> {
+        manifest_ops::upsert_manifest_entries(&self.db, project_id, file_paths).await
+    }
+
+    async fn get_manifest_entries(&self, project_id: &str) -> Result<Vec<ManifestEntry>> {
+        manifest_ops::get_manifest_entries(&self.db, project_id).await
+    }
+
+    async fn delete_manifest_entries(&self, project_id: &str) -> Result<()> {
+        manifest_ops::delete_manifest_entries(&self.db, project_id).await
+    }
+
+    async fn delete_manifest_entry(&self, project_id: &str, file_path: &str) -> Result<()> {
+        manifest_ops::delete_manifest_entry(&self.db, project_id, file_path).await
     }
 }
 

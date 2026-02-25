@@ -7,8 +7,8 @@ use crate::types::Datetime;
 use std::collections::HashMap;
 
 use crate::types::{
-    CodeChunk, CodeSymbol, Direction, Entity, IndexStatus, Memory, MemoryUpdate, Relation,
-    ScoredCodeChunk, SearchResult, SymbolRelation,
+    CodeChunk, CodeSymbol, Direction, Entity, IndexStatus, ManifestEntry, Memory, MemoryUpdate,
+    Relation, ScoredCodeChunk, SearchResult, SymbolRelation,
 };
 use crate::Result;
 
@@ -316,4 +316,23 @@ pub trait StorageBackend: Send + Sync {
 
     /// Gracefully shutdown the database, flushing any pending writes
     async fn shutdown(&self) -> Result<()>;
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // File manifest operations (track all files for deletion detection)
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /// Upsert a file path entry in the manifest (mark as seen now).
+    async fn upsert_manifest_entry(&self, project_id: &str, file_path: &str) -> Result<()>;
+
+    /// Batch upsert multiple file paths in the manifest (single round-trip).
+    async fn upsert_manifest_entries(&self, project_id: &str, file_paths: &[String]) -> Result<()>;
+
+    /// Get all file paths currently tracked in the manifest for a project.
+    async fn get_manifest_entries(&self, project_id: &str) -> Result<Vec<ManifestEntry>>;
+
+    /// Delete all manifest entries for a project (used on full re-index).
+    async fn delete_manifest_entries(&self, project_id: &str) -> Result<()>;
+
+    /// Delete a single manifest entry (file was removed from project).
+    async fn delete_manifest_entry(&self, project_id: &str, file_path: &str) -> Result<()>;
 }

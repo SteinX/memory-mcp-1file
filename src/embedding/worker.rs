@@ -56,9 +56,10 @@ impl EmbeddingWorker {
                     match recv_result {
                         Some(req) => {
                             batch.push(req);
-                            if batch.len() >= 2 {
+                            if batch.len() >= 8 {
+                                let n = batch.len();
                                 if self.process_batch(&mut batch).await {
-                                    processed_count += 2;
+                                    processed_count += n;
                                 }
                                 deadline.as_mut().reset(tokio::time::Instant::now() + Duration::from_millis(100));
                             }

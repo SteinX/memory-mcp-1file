@@ -1,4 +1,5 @@
 pub mod chunker;
+pub mod index_worker;
 pub mod indexer;
 pub mod manager;
 pub mod parser;
@@ -7,6 +8,7 @@ pub mod scanner;
 pub mod symbol_index;
 pub mod watcher;
 
+pub use index_worker::{IndexJob, IndexJobSender, IndexWorker};
 pub use indexer::{incremental_index, index_project};
 pub use manager::CodebaseManager;
 pub use parser::CodeParser;

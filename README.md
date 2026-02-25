@@ -360,6 +360,11 @@ Environment variables or CLI args:
 | `--idle-timeout` | `IDLE_TIMEOUT` | `0` | Idle timeout in minutes. 0 = disabled |
 | `--log-level` | `LOG_LEVEL` | `info` | Verbosity |
 | *(None)* | `HF_TOKEN` | *(None)* | HuggingFace Token (ONLY required for gated models like `gemma`) |
+| *(None)* | `EMBEDDING_QUEUE_CAPACITY` | `256` | Max size of the background embedding queue |
+| *(None)* | `EMBEDDING_BATCH_SIZE` | `8` | How many files to process in one embedding chunk |
+| *(None)* | `INDEX_BATCH_SIZE` | `20` | How many files to process in one incremental chunk |
+| *(None)* | `INDEX_DEBOUNCE_MS` | `2000` | MS to wait before flushing index events (debounce) |
+| *(None)* | `MANIFEST_DIFF_INTERVAL_MINS` | `10` | Minutes between periodic missing file checks |
 
 ### 🧠 Available Models
 
