@@ -1,9 +1,14 @@
 [package]
 name = "memory-mcp"
-version = "0.5.2"
+version = "0.5.3"
 edition = "2021"
 description = "MCP memory server for AI agents"
 license = "MIT"
+[features]
+default = []
+mkl = ["candle-core/mkl", "candle-nn/mkl", "candle-transformers/mkl"]
+accelerate = ["candle-core/accelerate", "candle-nn/accelerate", "candle-transformers/accelerate"]
+
 
 [dependencies]
 # Database
@@ -14,8 +19,8 @@ surrealdb = { version = "3.0", default-features = false, features = [
 surrealdb-types = "3.0" # required by SurrealValue derive macro
 
 # Embeddings
-candle-core = "0.9"
-candle-nn = "0.9"
+candle-core = { version = "0.9", optional = false }
+candle-nn = { version = "0.9", optional = false }
 candle-transformers = "0.9"
 tokenizers = "0.22.2"
 hf-hub = { version = "0.4", default-features = false, features = ["ureq"] }

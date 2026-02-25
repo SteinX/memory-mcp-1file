@@ -61,9 +61,17 @@ fn default_data_dir() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("."))
         .join("memory-mcp")
 }
+fn pin_compute_threads() {
+    for var in ["RAYON_NUM_THREADS", "MKL_NUM_THREADS", "OMP_NUM_THREADS"] {
+        if std::env::var(var).is_err() {
+            unsafe { std::env::set_var(var, "2") };
+        }
+    }
+}
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    pin_compute_threads();
     let cli = Cli::parse();
 
     if cli.list_models {

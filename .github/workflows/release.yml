@@ -46,13 +46,34 @@ jobs:
         with:
           key: x86_64-unknown-linux-musl
 
-      - name: Build MUSL
+      - name: Build
         run: |
-          cargo install cross
-          cross build --release --target x86_64-unknown-linux-musl
-        shell: bash
-
-      - name: Package Artifacts
+          FEATURES=""
+          EXTRA_RUSTFLAGS=""
+          
+          case "${{ matrix.target }}" in
+            x86_64-*)
+              EXTRA_RUSTFLAGS="-C target-cpu=x86-64-v3"
+              ;;
+          esac
+          
+          case "${{ matrix.target }}" in
+            x86_64-unknown-linux-gnu|x86_64-pc-windows-msvc)
+              FEATURES="--features mkl"
+              ;;
+            *-apple-darwin)
+              FEATURES="--features accelerate"
+              ;;
+          esac
+          
+          export RUSTFLAGS="${RUSTFLAGS} ${EXTRA_RUSTFLAGS}"
+          
+          if [ "${{ matrix.use_cross }}" = "true" ]; then
+            cargo install cross
+            cross build --release --target ${{ matrix.target }} ${FEATURES}
+          else
+            cargo build --release --target ${{ matrix.target }} ${FEATURES}
+          fi
         shell: bash
         run: |
           VERSION=${GITHUB_REF#refs/tags/v}
@@ -99,16 +120,35 @@ jobs:
           VERSION=${GITHUB_REF#refs/tags/v}
           echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
 
-      - name: Build and push Docker image
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          file: Dockerfile.release
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          build-args: |
-            VERSION=${{ steps.prep.outputs.VERSION }}
+      - name: Build
+        run: |
+          FEATURES=""
+          EXTRA_RUSTFLAGS=""
+          
+          case "${{ matrix.target }}" in
+            x86_64-*)
+              EXTRA_RUSTFLAGS="-C target-cpu=x86-64-v3"
+              ;;
+          esac
+          
+          case "${{ matrix.target }}" in
+            x86_64-unknown-linux-gnu|x86_64-pc-windows-msvc)
+              FEATURES="--features mkl"
+              ;;
+            *-apple-darwin)
+              FEATURES="--features accelerate"
+              ;;
+          esac
+          
+          export RUSTFLAGS="${RUSTFLAGS} ${EXTRA_RUSTFLAGS}"
+          
+          if [ "${{ matrix.use_cross }}" = "true" ]; then
+            cargo install cross
+            cross build --release --target ${{ matrix.target }} ${FEATURES}
+          else
+            cargo build --release --target ${{ matrix.target }} ${FEATURES}
+          fi
+        shell: bash
             REPO=${{ github.repository }}
 
   # 📦 Secondary Path: Build other binaries
@@ -152,14 +192,33 @@ jobs:
 
       - name: Build
         run: |
+          FEATURES=""
+          EXTRA_RUSTFLAGS=""
+          
+          case "${{ matrix.target }}" in
+            x86_64-*)
+              EXTRA_RUSTFLAGS="-C target-cpu=x86-64-v3"
+              ;;
+          esac
+          
+          case "${{ matrix.target }}" in
+            x86_64-unknown-linux-gnu|x86_64-pc-windows-msvc)
+              FEATURES="--features mkl"
+              ;;
+            *-apple-darwin)
+              FEATURES="--features accelerate"
+              ;;
+          esac
+          
+          export RUSTFLAGS="${RUSTFLAGS} ${EXTRA_RUSTFLAGS}"
+          
           if [ "${{ matrix.use_cross }}" = "true" ]; then
             cargo install cross
-            cross build --release --target ${{ matrix.target }}
+            cross build --release --target ${{ matrix.target }} ${FEATURES}
           else
-            cargo build --release --target ${{ matrix.target }}
+            cargo build --release --target ${{ matrix.target }} ${FEATURES}
           fi
         shell: bash
-
       - name: Package Artifacts
         shell: bash
         run: |
