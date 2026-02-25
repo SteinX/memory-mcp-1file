@@ -10,8 +10,6 @@
                 "--rm",
                 "-i",
                 "--memory=3g",
-                "-e",
-                "HF_HOME=/data/hf",
                 "--name",
                 "memory-mcp-dev",
                 "-v",
