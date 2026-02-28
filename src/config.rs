@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
-use std::sync::atomic::AtomicU32;
+use std::sync::atomic::{AtomicU32, AtomicUsize};
 use std::sync::Arc;
 
 use tokio::sync::{watch, RwLock, Semaphore};
@@ -144,6 +144,12 @@ pub struct AppState {
     pub indexing_projects: Arc<std::sync::Mutex<HashSet<String>>>,
     /// Shutdown signal sender. Send `true` to request graceful shutdown of background loops.
     pub shutdown_tx: watch::Sender<bool>,
+    /// Per-project pending job counters shared with [`IndexJobSender`] instances.
+    ///
+    /// Key = project_id.  Each `Arc<AtomicUsize>` is also held inside the
+    /// corresponding `IndexJobSender` so both sides share the same counter
+    /// without `AppState` needing to import the `codebase` crate.
+    pub index_pending: Arc<RwLock<HashMap<String, Arc<AtomicUsize>>>>,
 }
 
 impl AppState {

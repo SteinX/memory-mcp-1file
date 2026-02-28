@@ -119,10 +119,10 @@ impl GraphTraversalStorage for SurrealStorage {
         let entity_thing = ThingId::new("entities", entity_id)?.to_string();
 
         let sql = match direction {
-            Direction::Outgoing => "SELECT * FROM relations WHERE `in` = type::record($entity_id)",
-            Direction::Incoming => "SELECT * FROM relations WHERE `out` = type::record($entity_id)",
+            Direction::Outgoing => "SELECT * FROM relations WHERE `in` = type::thing($entity_id)",
+            Direction::Incoming => "SELECT * FROM relations WHERE `out` = type::thing($entity_id)",
             Direction::Both => {
-                "SELECT * FROM relations WHERE `in` = type::record($entity_id) OR `out` = type::record($entity_id)"
+                "SELECT * FROM relations WHERE `in` = type::thing($entity_id) OR `out` = type::thing($entity_id)"
             }
         };
 
@@ -612,6 +612,10 @@ impl StorageBackend for SurrealStorage {
 
     async fn delete_manifest_entry(&self, project_id: &str, file_path: &str) -> Result<()> {
         manifest_ops::delete_manifest_entry(&self.db, project_id, file_path).await
+    }
+
+    async fn count_manifest_entries(&self, project_id: &str) -> Result<usize> {
+        manifest_ops::count_manifest_entries(&self.db, project_id).await
     }
 }
 

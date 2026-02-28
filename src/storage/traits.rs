@@ -335,4 +335,9 @@ pub trait StorageBackend: Send + Sync {
 
     /// Delete a single manifest entry (file was removed from project).
     async fn delete_manifest_entry(&self, project_id: &str, file_path: &str) -> Result<()>;
+
+    /// Count the number of files tracked in the manifest for a project.
+    /// More efficient than `get_manifest_entries(...).len()` as it avoids
+    /// loading all entries into memory.
+    async fn count_manifest_entries(&self, project_id: &str) -> Result<usize>;
 }

@@ -187,6 +187,7 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
         code_search: Arc::new(CodeSearchEngine::new()),
         indexing_projects: Arc::new(std::sync::Mutex::new(std::collections::HashSet::new())),
         shutdown_tx,
+        index_pending: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
     });
 
     let worker = EmbeddingWorker::new(
@@ -254,6 +255,12 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
 
         // Create the IndexWorker for this project and start it in the background.
         let (index_worker, index_tx) = IndexWorker::new(state.clone(), project_id.clone());
+        // Register the pending-job counter in AppState so the status API can read it.
+        state
+            .index_pending
+            .write()
+            .await
+            .insert(project_id.clone(), index_tx.pending_arc());
         index_worker.start(state.shutdown_rx());
 
         // Build the CodebaseManager with the channel sender and start it.

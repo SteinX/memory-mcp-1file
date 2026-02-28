@@ -77,6 +77,7 @@ impl TestContext {
             code_search: Arc::new(CodeSearchEngine::new()),
             indexing_projects: Arc::new(std::sync::Mutex::new(std::collections::HashSet::new())),
             shutdown_tx,
+            index_pending: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
         });
 
         Self {

@@ -162,6 +162,22 @@ pub async fn get_index_status(
                 }
             }
 
+            // Use manifest entry count as the authoritative "indexed files" number.
+            let indexed_files = state
+                .storage
+                .count_manifest_entries(&params.project_id)
+                .await
+                .unwrap_or(0) as u32;
+
+            // Sync queue status from shared AtomicUsize counter.
+            let sync_queue_size = {
+                let map = state.index_pending.read().await;
+                map.get(&params.project_id)
+                    .map(|c| c.load(std::sync::atomic::Ordering::Relaxed))
+                    .unwrap_or(0)
+            };
+            let is_syncing = sync_queue_size > 0;
+
             let total_symbols = state
                 .storage
                 .count_symbols(&params.project_id)
@@ -215,7 +231,7 @@ pub async fn get_index_status(
             const EMBED_WEIGHT: f32 = 0.30;
 
             let parse_ratio = if status.total_files > 0 {
-                (status.indexed_files as f32 / status.total_files as f32).min(1.0)
+                (indexed_files as f32 / status.total_files as f32).min(1.0)
             } else {
                 0.0
             };
@@ -230,19 +246,21 @@ pub async fn get_index_status(
             let overall_progress =
                 parse_ratio * (PARSE_WEIGHT + embed_ratio * EMBED_WEIGHT) * 100.0;
 
-            let parsing_done = status.total_files > 0 && status.indexed_files >= status.total_files;
+            let parsing_done = status.total_files > 0 && indexed_files >= status.total_files;
 
             Ok(success_json(json!({
                 "project_id": status.project_id,
                 "status": status.status.to_string(),
+                "is_syncing": is_syncing,
+                "sync_queue_size": sync_queue_size,
                 "total_files": status.total_files,
-                "indexed_files": status.indexed_files,
+                "indexed_files": indexed_files,
                 "started_at": status.started_at,
                 "completed_at": status.completed_at,
 
                 "parsing": {
-                    "status": if status.indexed_files >= status.total_files { "completed" } else { "in_progress" },
-                    "progress": format!("{}/{}", status.indexed_files, status.total_files),
+                    "status": if indexed_files >= status.total_files { "completed" } else { "in_progress" },
+                    "progress": format!("{}/{}", indexed_files, status.total_files),
                     "current_file": current_file
                 },
 
@@ -400,6 +418,22 @@ pub async fn get_project_stats(
         .await
         .unwrap_or(0);
 
+    // Use manifest entry count as the authoritative "indexed files" number.
+    let indexed_files = state
+        .storage
+        .count_manifest_entries(&params.project_id)
+        .await
+        .unwrap_or(0) as u32;
+
+    // Sync queue status from shared AtomicUsize counter.
+    let sync_queue_size = {
+        let map = state.index_pending.read().await;
+        map.get(&params.project_id)
+            .map(|c| c.load(std::sync::atomic::Ordering::Relaxed))
+            .unwrap_or(0)
+    };
+    let is_syncing = sync_queue_size > 0;
+
     let vector_progress = if total_chunks > 0 {
         (embedded_chunks as f32 / total_chunks as f32) * 100.0
     } else {
@@ -416,7 +450,7 @@ pub async fn get_project_stats(
     const EMBED_WEIGHT: f32 = 0.30;
 
     let parse_ratio = if status.total_files > 0 {
-        (status.indexed_files as f32 / status.total_files as f32).min(1.0)
+        (indexed_files as f32 / status.total_files as f32).min(1.0)
     } else {
         0.0
     };
@@ -430,9 +464,11 @@ pub async fn get_project_stats(
     Ok(success_json(json!({
         "project_id": params.project_id,
         "status": status.status.to_string(),
+        "is_syncing": is_syncing,
+        "sync_queue_size": sync_queue_size,
         "files": {
             "total": status.total_files,
-            "indexed": status.indexed_files,
+            "indexed": indexed_files,
             "parse_percent": format!("{:.1}", parse_ratio * 100.0)
         },
         "chunks": {

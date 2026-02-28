@@ -72,7 +72,7 @@ pub(super) async fn update_symbol_embedding(
     id: &str,
     embedding: Vec<f32>,
 ) -> Result<()> {
-    let sql = "UPDATE code_symbols SET embedding = $embedding WHERE id = type::record($id)";
+    let sql = "UPDATE code_symbols SET embedding = $embedding WHERE id = type::thing($id)";
     let _ = db
         .query(sql)
         .bind(("embedding", embedding))
@@ -91,7 +91,7 @@ pub(super) async fn batch_update_symbol_embeddings(
 
     let sql = r#"
         FOR $u IN $updates {
-            UPDATE type::record($u.id) SET embedding = $u.embedding;
+            UPDATE type::thing($u.id) SET embedding = $u.embedding;
         };
     "#;
 
@@ -160,7 +160,7 @@ pub(super) async fn create_symbol_relations_batch(
 
     let sql = r#"
         FOR $r IN $relations {
-            RELATE type::record($r.from)->symbol_relation->type::record($r.to)
+            RELATE (type::thing($r.from))->symbol_relation->(type::thing($r.to))
             SET relation_type = $r.relation_type,
                 project_id = $r.project_id,
                 file_path = $r.file_path,

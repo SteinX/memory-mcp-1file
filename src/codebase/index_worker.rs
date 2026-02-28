@@ -16,6 +16,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -43,8 +44,56 @@ pub enum IndexJob {
     Delete(PathBuf),
 }
 
-/// Channel sender used to push jobs into the worker.
-pub type IndexJobSender = UnboundedSender<IndexJob>;
+/// Wrapper around [`UnboundedSender<IndexJob>`] that tracks how many jobs are
+/// currently pending (sent but not yet processed by the worker).
+///
+/// Callers use [`IndexJobSender::send`] instead of accessing the inner sender
+/// directly.  The worker decrements the counter via
+/// [`IndexJobSender::dec_pending`] as soon as it drains jobs from the channel.
+#[derive(Clone)]
+pub struct IndexJobSender {
+    tx: UnboundedSender<IndexJob>,
+    pending_count: Arc<AtomicUsize>,
+}
+
+impl IndexJobSender {
+    /// Create a new sender that shares `pending_count` with the caller.
+    ///
+    /// Pass the same `Arc<AtomicUsize>` that you store in `AppState::index_pending`
+    /// so both sides read/write the same counter.
+    pub fn new(tx: UnboundedSender<IndexJob>, pending_count: Arc<AtomicUsize>) -> Self {
+        Self { tx, pending_count }
+    }
+
+    /// Return a clone of the inner `Arc<AtomicUsize>` so it can be stored in
+    /// `AppState::index_pending` *after* the sender is constructed.
+    pub fn pending_arc(&self) -> Arc<AtomicUsize> {
+        self.pending_count.clone()
+    }
+
+    /// Send a job and increment the pending counter.
+    ///
+    /// Returns an error if the channel is closed (the worker has exited).
+    pub fn send(&self, job: IndexJob) -> std::result::Result<(), mpsc::error::SendError<IndexJob>> {
+        self.tx.send(job)?;
+        self.pending_count.fetch_add(1, Ordering::Relaxed);
+        Ok(())
+    }
+
+    /// Number of jobs that have been sent but not yet dequeued by the worker.
+    pub fn pending_count(&self) -> usize {
+        self.pending_count.load(Ordering::Relaxed)
+    }
+
+    /// Decrement the pending counter by `n`.
+    ///
+    /// Called by the worker immediately after it pulls `n` jobs from the
+    /// channel — *before* the (potentially slow) flush step so callers always
+    /// see an accurate "in-flight" count.
+    pub(super) fn dec_pending(&self, n: usize) {
+        self.pending_count.fetch_sub(n, Ordering::Relaxed);
+    }
+}
 
 // ── Worker ───────────────────────────────────────────────────────────────────
 
@@ -56,21 +105,33 @@ pub struct IndexWorker {
     state: Arc<AppState>,
     project_id: String,
     rx: UnboundedReceiver<IndexJob>,
+    /// Reference back to the sender so the worker can call `dec_pending`.
+    index_tx: IndexJobSender,
 }
 
 impl IndexWorker {
     /// Create an `IndexWorker` for `project_id`.
     ///
     /// Returns `(worker, sender)` — keep the sender alive and clone it for
-    /// every component that needs to push jobs.
+    /// every component that needs to push jobs.  After calling this, register
+    /// the sender's pending counter in `AppState::index_pending` so that the
+    /// HTTP status endpoints can read it:
+    ///
+    /// ```ignore
+    /// let (worker, tx) = IndexWorker::new(state.clone(), project_id);
+    /// state.index_pending.write().await.insert(project_id.to_string(), tx.pending_arc());
+    /// ```
     pub fn new(state: Arc<AppState>, project_id: impl Into<String>) -> (Self, IndexJobSender) {
         let (tx, rx) = mpsc::unbounded_channel();
+        let pending_count = Arc::new(AtomicUsize::new(0));
+        let sender = IndexJobSender::new(tx, pending_count);
         let worker = Self {
             state,
             project_id: project_id.into(),
             rx,
+            index_tx: sender.clone(),
         };
-        (worker, tx)
+        (worker, sender)
     }
 
     /// Spawn the worker's event loop in a background Tokio task.
@@ -114,13 +175,17 @@ impl IndexWorker {
             let mut upserts: HashMap<PathBuf, ()> = HashMap::new();
             let mut deletes: HashSet<PathBuf> = HashSet::new();
 
+            // Count how many raw jobs were dequeued from the channel so we can
+            // decrement `pending_count` by exactly that number — before the
+            // (potentially slow) flush, so callers see an accurate in-flight count.
+            let mut dequeued: usize = 1;
             Self::classify(first, &mut upserts, &mut deletes);
 
             let debounce_ms = self.state.config.index_debounce_ms;
             let batch_size = self.state.config.index_batch_size;
             let deadline = tokio::time::Instant::now() + Duration::from_millis(debounce_ms);
 
-            loop {
+            'drain: loop {
                 if upserts.len() + deletes.len() >= batch_size {
                     break; // batch full — flush immediately
                 }
@@ -132,17 +197,22 @@ impl IndexWorker {
 
                 tokio::select! {
                     job = self.rx.recv() => match job {
-                        Some(j) => Self::classify(j, &mut upserts, &mut deletes),
+                        Some(j) => {
+                            dequeued += 1;
+                            Self::classify(j, &mut upserts, &mut deletes);
+                        }
                         None => {
-                            // Channel closed — flush what we have, then exit
+                            // Channel closed — account for what we pulled, then flush.
+                            self.index_tx.dec_pending(dequeued);
                             self.flush(upserts, deletes).await;
                             return Ok(());
                         }
                     },
-                    _ = tokio::time::sleep(remaining) => break,
+                    _ = tokio::time::sleep(remaining) => break 'drain,
                     _ = shutdown_rx.changed() => {
                         if *shutdown_rx.borrow() {
                             // Flush pending work before honouring shutdown
+                            self.index_tx.dec_pending(dequeued);
                             self.flush(upserts, deletes).await;
                             return Ok(());
                         }
@@ -150,6 +220,9 @@ impl IndexWorker {
                 }
             }
 
+            // Decrement pending *before* the flush so the counter reflects
+            // "work not yet processed" rather than "work not yet flushed".
+            self.index_tx.dec_pending(dequeued);
             self.flush(upserts, deletes).await;
         }
     }

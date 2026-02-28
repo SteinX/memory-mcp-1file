@@ -117,3 +117,26 @@ pub(super) async fn delete_manifest_entry(
         .await?;
     Ok(())
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Count
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Return the number of manifest entries for a project without loading them.
+pub(super) async fn count_manifest_entries(db: &Surreal<Db>, project_id: &str) -> Result<usize> {
+    let sql = "SELECT count() FROM file_manifest WHERE project_id = $project_id GROUP ALL";
+    let mut response = db
+        .query(sql)
+        .bind(("project_id", project_id.to_string()))
+        .await?;
+
+    // `SELECT count() ... GROUP ALL` returns a single object with a `count` field.
+    // Use `serde_json::Value` because a plain struct doesn't implement `SurrealValue`.
+    let rows: Vec<serde_json::Value> = response.take(0).unwrap_or_default();
+    let count = rows
+        .first()
+        .and_then(|v| v.get("count"))
+        .and_then(|c| c.as_u64())
+        .unwrap_or(0) as usize;
+    Ok(count)
+}
