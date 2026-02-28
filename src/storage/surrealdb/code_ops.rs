@@ -358,7 +358,7 @@ pub(super) async fn update_chunk_embedding(
     id: &str,
     embedding: Vec<f32>,
 ) -> Result<()> {
-    let sql = "UPDATE code_chunks SET embedding = $embedding WHERE id = (type::thing($id))";
+    let sql = "UPDATE code_chunks SET embedding = $embedding WHERE id = (type::record($id))";
     let _ = db
         .query(sql)
         .bind(("embedding", embedding))
@@ -377,7 +377,7 @@ pub(super) async fn batch_update_chunk_embeddings(
 
     let sql = r#"
         FOR $u IN $updates {
-            UPDATE (type::thing($u.id)) SET embedding = $u.embedding;
+            UPDATE (type::record($u.id)) SET embedding = $u.embedding;
         };
     "#;
 
