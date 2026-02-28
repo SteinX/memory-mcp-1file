@@ -72,7 +72,7 @@ pub(super) async fn update_symbol_embedding(
     id: &str,
     embedding: Vec<f32>,
 ) -> Result<()> {
-    let sql = "UPDATE code_symbols SET embedding = $embedding WHERE id = type::thing($id)";
+    let sql = "UPDATE code_symbols SET embedding = $embedding WHERE id = (type::thing($id))";
     let _ = db
         .query(sql)
         .bind(("embedding", embedding))
@@ -91,7 +91,7 @@ pub(super) async fn batch_update_symbol_embeddings(
 
     let sql = r#"
         FOR $u IN $updates {
-            UPDATE type::thing($u.id) SET embedding = $u.embedding;
+            UPDATE (type::thing($u.id)) SET embedding = $u.embedding;
         };
     "#;
 
