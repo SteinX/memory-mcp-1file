@@ -37,7 +37,7 @@ impl MemoryMcpServer {
         }
     }
 
-    #[tool(description = "Store a new memory. Returns the memory ID.")]
+    #[tool(description = "Store a new memory.")]
     async fn store_memory(
         &self,
         params: Parameters<StoreMemoryParams>,
@@ -48,7 +48,7 @@ impl MemoryMcpServer {
     }
 
     #[tool(
-        description = "Get a memory by its ID. Returns the full memory object or an error if not found."
+        description = "Get full memory by ID."
     )]
     async fn get_memory(
         &self,
@@ -59,7 +59,7 @@ impl MemoryMcpServer {
             .map_err(to_rpc_error)
     }
 
-    #[tool(description = "Update an existing memory. Only provided fields will be updated.")]
+    #[tool(description = "Update memory fields.")]
     async fn update_memory(
         &self,
         params: Parameters<UpdateMemoryParams>,
@@ -69,7 +69,7 @@ impl MemoryMcpServer {
             .map_err(to_rpc_error)
     }
 
-    #[tool(description = "Delete a memory by its ID. Returns true if deleted, false if not found.")]
+    #[tool(description = "Delete memory by ID.")]
     async fn delete_memory(
         &self,
         params: Parameters<DeleteMemoryParams>,
@@ -80,7 +80,7 @@ impl MemoryMcpServer {
     }
 
     #[tool(
-        description = "List memories with pagination. Returns array of memories sorted by newest first."
+        description = "List memories (newest first)."
     )]
     async fn list_memories(
         &self,
@@ -92,7 +92,7 @@ impl MemoryMcpServer {
     }
 
     #[tool(
-        description = "Find memories by meaning. Fast single-source vector search. Use when speed matters or query is conceptual."
+        description = "Semantic vector search for memories."
     )]
     async fn search(&self, params: Parameters<SearchParams>) -> Result<CallToolResult, ErrorData> {
         logic::search::search(&self.state, params.0)
@@ -101,7 +101,7 @@ impl MemoryMcpServer {
     }
 
     #[tool(
-        description = "Find memories by exact keywords (BM25). Use when you know the specific term or phrase to match."
+        description = "Exact keyword (BM25) search for memories."
     )]
     async fn search_text(
         &self,
@@ -113,7 +113,7 @@ impl MemoryMcpServer {
     }
 
     #[tool(
-        description = "Best quality retrieval. Combines vector + keyword + graph context (RRF fusion). Use as default for any retrieval task."
+        description = "High-quality memory retrieval via vector+BM25+graph fusion. Default for memories."
     )]
     async fn recall(&self, params: Parameters<RecallParams>) -> Result<CallToolResult, ErrorData> {
         logic::search::recall(&self.state, params.0)
@@ -121,7 +121,7 @@ impl MemoryMcpServer {
             .map_err(to_rpc_error)
     }
 
-    #[tool(description = "Create a knowledge graph entity. Returns the entity ID.")]
+    #[tool(description = "Create KG entity.")]
     async fn create_entity(
         &self,
         params: Parameters<CreateEntityParams>,
@@ -131,7 +131,7 @@ impl MemoryMcpServer {
             .map_err(to_rpc_error)
     }
 
-    #[tool(description = "Create a relation between two entities.")]
+    #[tool(description = "Create KG relation.")]
     async fn create_relation(
         &self,
         params: Parameters<CreateRelationParams>,
@@ -141,7 +141,7 @@ impl MemoryMcpServer {
             .map_err(to_rpc_error)
     }
 
-    #[tool(description = "Get entities related to a given entity via graph traversal.")]
+    #[tool(description = "Get related KG entities via traversal.")]
     async fn get_related(
         &self,
         params: Parameters<GetRelatedParams>,
@@ -152,7 +152,7 @@ impl MemoryMcpServer {
     }
 
     #[tool(
-        description = "Get all currently valid memories. Returns memories where valid_until is not set or is in the future."
+        description = "Get valid memories (not superseded/deleted)."
     )]
     async fn get_valid(
         &self,
@@ -164,7 +164,7 @@ impl MemoryMcpServer {
     }
 
     #[tool(
-        description = "Get memories that were valid at a specific point in time. Timestamp in ISO 8601 format."
+        description = "Get memories valid at specific ISO 8601 timestamp."
     )]
     async fn get_valid_at(
         &self,
@@ -176,7 +176,7 @@ impl MemoryMcpServer {
     }
 
     #[tool(
-        description = "Invalidate (soft-delete) a memory. Sets valid_until to now and optionally links to replacement."
+        description = "Soft-delete memory, optionally linking replacement."
     )]
     async fn invalidate(
         &self,
@@ -188,7 +188,7 @@ impl MemoryMcpServer {
     }
 
     #[tool(
-        description = "Get server status and statistics. During startup, returns detailed loading progress (fetching, verifying, loading model)."
+        description = "Get system status and startup progress."
     )]
     async fn get_status(
         &self,
@@ -200,7 +200,7 @@ impl MemoryMcpServer {
     }
 
     #[tool(
-        description = "Index a project directory for code search. Returns status if already indexed. Use delete_project to re-index. TIP: Use path='/project' for Docker environments."
+        description = "Index codebase directory for code search."
     )]
     async fn index_project(
         &self,
@@ -212,7 +212,7 @@ impl MemoryMcpServer {
     }
 
     #[tool(
-        description = "Search indexed code using semantic similarity. Requires project to be fully indexed. Returns matching code chunks."
+        description = "Semantic code search."
     )]
     async fn search_code(
         &self,
@@ -224,7 +224,7 @@ impl MemoryMcpServer {
     }
 
     #[tool(
-        description = "Best quality code retrieval. Combines semantic vectors, keyword matching (BM25), and code symbol graph analysis (calls/imports/inheritance) using Reciprocal Rank Fusion. Returns ranked code chunks with score breakdown per channel. Use as default for any code retrieval task."
+        description = "High-quality code retrieval via vector+BM25+graph fusion. Default for codebase queries."
     )]
     async fn recall_code(
         &self,
@@ -236,7 +236,7 @@ impl MemoryMcpServer {
     }
 
     #[tool(
-        description = "Get indexing status for a project. Statuses: indexing, completed, failed."
+        description = "Get project indexing status."
     )]
     async fn get_index_status(
         &self,
@@ -256,7 +256,7 @@ impl MemoryMcpServer {
     }
 
     #[tool(
-        description = "List all indexed projects. Projects are persistent, auto-indexed on startup, and watched for changes. Check this first."
+        description = "List indexed projects."
     )]
     async fn list_projects(
         &self,
@@ -267,7 +267,7 @@ impl MemoryMcpServer {
             .map_err(to_rpc_error)
     }
 
-    #[tool(description = "Delete a project and all its indexed code chunks.")]
+    #[tool(description = "Delete indexed project.")]
     async fn delete_project(
         &self,
         params: Parameters<DeleteProjectParams>,
@@ -277,7 +277,7 @@ impl MemoryMcpServer {
             .map_err(to_rpc_error)
     }
 
-    #[tool(description = "Search for code symbols (functions, classes) by name.")]
+    #[tool(description = "Search code symbols by name.")]
     async fn search_symbols(
         &self,
         params: Parameters<SearchSymbolsParams>,
@@ -287,7 +287,7 @@ impl MemoryMcpServer {
             .map_err(to_rpc_error)
     }
 
-    #[tool(description = "Find all symbols that call a given symbol.")]
+    #[tool(description = "Find callers of a symbol.")]
     async fn get_callers(
         &self,
         params: Parameters<GetCallersParams>,
@@ -297,7 +297,7 @@ impl MemoryMcpServer {
             .map_err(to_rpc_error)
     }
 
-    #[tool(description = "Find all symbols called by a given symbol.")]
+    #[tool(description = "Find callees of a symbol.")]
     async fn get_callees(
         &self,
         params: Parameters<GetCalleesParams>,
@@ -307,7 +307,7 @@ impl MemoryMcpServer {
             .map_err(to_rpc_error)
     }
 
-    #[tool(description = "Get related symbols (functions, classes) via graph traversal.")]
+    #[tool(description = "Get related symbols via graph traversal.")]
     async fn get_related_symbols(
         &self,
         params: Parameters<GetRelatedSymbolsParams>,
@@ -318,7 +318,7 @@ impl MemoryMcpServer {
     }
 
     #[tool(
-        description = "Get detailed statistics for an indexed project including symbol/chunk counts and embedding progress."
+        description = "Get project indexing statistics."
     )]
     async fn get_project_stats(
         &self,
@@ -330,7 +330,7 @@ impl MemoryMcpServer {
     }
 
     #[tool(
-        description = "Reset all memory data. Requires confirm=true. DANGER: Deletes all memories, entities, relations, and code chunks."
+        description = "DANGER: Reset all database data (requires confirm=true)."
     )]
     async fn reset_all_memory(
         &self,
@@ -341,7 +341,7 @@ impl MemoryMcpServer {
             .map_err(to_rpc_error)
     }
 
-    #[tool(description = "Detect communities in the knowledge graph using the Leiden algorithm.")]
+    #[tool(description = "Detect KG communities (Leiden algorithm).")]
     async fn detect_communities(
         &self,
         params: Parameters<DetectCommunitiesParams>,

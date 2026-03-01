@@ -9,6 +9,7 @@ fn any_value_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[schemars(title = "")]
 pub struct StoreMemoryParams {
     pub content: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -21,11 +22,13 @@ pub struct StoreMemoryParams {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[schemars(title = "")]
 pub struct GetMemoryParams {
     pub id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[schemars(title = "")]
 pub struct UpdateMemoryParams {
     pub id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -38,11 +41,13 @@ pub struct UpdateMemoryParams {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[schemars(title = "")]
 pub struct DeleteMemoryParams {
     pub id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[schemars(title = "")]
 pub struct ListMemoriesParams {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub limit: Option<usize>,
@@ -52,6 +57,7 @@ pub struct ListMemoriesParams {
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
+#[schemars(title = "")]
 pub struct SearchParams {
     pub query: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -60,6 +66,7 @@ pub struct SearchParams {
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
+#[schemars(title = "")]
 pub struct RecallParams {
     pub query: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -74,36 +81,36 @@ pub struct RecallParams {
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
+#[schemars(title = "")]
 pub struct RecallCodeParams {
-    /// Natural language or keyword query for code search
     pub query: String,
-    /// Filter by project ID (if omitted, searches all projects)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub project_id: Option<String>,
-    /// Max results to return (default: 10)
+    /// Default: 10
     #[serde(skip_serializing_if = "Option::is_none")]
     pub limit: Option<usize>,
-    /// Weight for vector (semantic) channel (default: 0.50)
+    /// Vector weight (default: 0.50)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub vector_weight: Option<f32>,
-    /// Weight for BM25 (keyword) channel (default: 0.20)
+    /// BM25 weight (default: 0.20)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub bm25_weight: Option<f32>,
-    /// Weight for graph (PageRank) channel (default: 0.30)
+    /// Graph PPR weight (default: 0.30)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ppr_weight: Option<f32>,
-    /// Filter results to files matching this path prefix (e.g. "src/server/")
+    /// Path prefix filter
     #[serde(skip_serializing_if = "Option::is_none")]
     pub path_prefix: Option<String>,
-    /// Filter results to a specific language (e.g. "rust", "typescript")
+    /// Language filter
     #[serde(skip_serializing_if = "Option::is_none")]
     pub language: Option<String>,
-    /// Filter results to a specific chunk type (e.g. "function", "struct", "class")
+    /// Chunk type filter
     #[serde(skip_serializing_if = "Option::is_none")]
     pub chunk_type: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[schemars(title = "")]
 pub struct CreateEntityParams {
     pub name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -115,6 +122,7 @@ pub struct CreateEntityParams {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[schemars(title = "")]
 pub struct CreateRelationParams {
     pub from_entity: String,
     pub to_entity: String,
@@ -124,6 +132,7 @@ pub struct CreateRelationParams {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[schemars(title = "")]
 pub struct GetRelatedParams {
     pub entity_id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -133,6 +142,7 @@ pub struct GetRelatedParams {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[schemars(title = "")]
 pub struct GetValidParams {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub user_id: Option<String>,
@@ -141,6 +151,7 @@ pub struct GetValidParams {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[schemars(title = "")]
 pub struct GetValidAtParams {
     pub timestamp: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -150,6 +161,7 @@ pub struct GetValidAtParams {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[schemars(title = "")]
 pub struct InvalidateParams {
     pub id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -159,20 +171,23 @@ pub struct InvalidateParams {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[schemars(title = "")]
 pub struct GetStatusParams {
     #[serde(skip)]
     pub _placeholder: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[schemars(title = "")]
 pub struct IndexProjectParams {
     pub path: String,
-    /// Force full re-index even if project is already indexed (default: false)
+    /// Force re-index (default: false)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub force: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[schemars(title = "")]
 pub struct SearchCodeParams {
     pub query: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -182,33 +197,39 @@ pub struct SearchCodeParams {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[schemars(title = "")]
 pub struct GetIndexStatusParams {
     pub project_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[schemars(title = "")]
 pub struct ListProjectsParams {
     #[serde(skip)]
     pub _placeholder: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[schemars(title = "")]
 pub struct DeleteProjectParams {
     pub project_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[schemars(title = "")]
 pub struct ResetAllMemoryParams {
     pub confirm: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[schemars(title = "")]
 pub struct DetectCommunitiesParams {
     #[serde(skip)]
     pub _placeholder: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[schemars(title = "")]
 pub struct SearchSymbolsParams {
     pub query: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -224,16 +245,19 @@ pub struct SearchSymbolsParams {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[schemars(title = "")]
 pub struct GetCallersParams {
     pub symbol_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[schemars(title = "")]
 pub struct GetCalleesParams {
     pub symbol_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[schemars(title = "")]
 pub struct GetRelatedSymbolsParams {
     pub symbol_id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -243,6 +267,7 @@ pub struct GetRelatedSymbolsParams {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[schemars(title = "")]
 pub struct GetProjectStatsParams {
     pub project_id: String,
 }
