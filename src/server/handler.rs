@@ -92,7 +92,7 @@ impl MemoryMcpServer {
     }
 
     #[tool(
-        description = "Search memories. mode: vector (default) or bm25."
+        description = "Search memories (query, mode?: vector|bm25). Vector=semantic similarity, bm25=exact keyword match."
     )]
     async fn search_memory(
         &self,
@@ -110,7 +110,7 @@ impl MemoryMcpServer {
     }
 
     #[tool(
-        description = "High-quality memory retrieval via vector+BM25+graph fusion. Default for memories."
+        description = "Best memory retrieval (query). Combines vector+BM25+graph via RRF fusion. Use as default."
     )]
     async fn recall(&self, params: Parameters<RecallParams>) -> Result<CallToolResult, ErrorData> {
         logic::search::recall(&self.state, params.0)
@@ -119,7 +119,7 @@ impl MemoryMcpServer {
     }
 
     #[tool(
-        description = "Knowledge graph ops. action: create_entity|create_relation|get_related|detect_communities."
+        description = "Knowledge graph ops. Actions: create_entity(name, entity_type?, description?) | create_relation(from_entity, to_entity, relation_type, weight?) | get_related(entity_id, depth?, direction?) | detect_communities()"
     )]
     async fn knowledge_graph(
         &self,
@@ -257,7 +257,7 @@ impl MemoryMcpServer {
     }
 
     #[tool(
-        description = "Code retrieval. mode: vector|hybrid (default: hybrid). Hybrid uses vector+BM25+graph fusion."
+        description = "Code retrieval (query, mode?: vector|hybrid). Default hybrid = vector+BM25+graph fusion. Filters: path_prefix?, language?, chunk_type?"
     )]
     async fn recall_code(
         &self,
@@ -280,7 +280,7 @@ impl MemoryMcpServer {
     }
 
     #[tool(
-        description = "Project info. action: list|status|stats. project_id required for status/stats."
+        description = "Project info. Actions: list() | status(project_id) | stats(project_id)"
     )]
     async fn project_info(
         &self,
@@ -344,7 +344,7 @@ impl MemoryMcpServer {
             .map_err(to_rpc_error)
     }
 
-    #[tool(description = "Navigate symbol graph. action: callers|callees|related.")]
+    #[tool(        description = "Navigate symbol call graph. Actions: callers(symbol_id) | callees(symbol_id) | related(symbol_id, depth?, direction?)")]
     async fn symbol_graph(
         &self,
         params: Parameters<SymbolGraphParams>,

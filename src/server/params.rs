@@ -62,6 +62,7 @@ pub struct SearchParams {
     pub query: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub limit: Option<usize>,
+    /// vector|bm25 (default: vector)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub mode: Option<String>,
 }
@@ -71,12 +72,16 @@ pub struct SearchParams {
 #[schemars(title = "")]
 pub struct RecallParams {
     pub query: String,
+    /// Default: 10
     #[serde(skip_serializing_if = "Option::is_none")]
     pub limit: Option<usize>,
+    /// Tune RRF: vector channel (default: 0.50)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub vector_weight: Option<f32>,
+    /// Tune RRF: BM25 channel (default: 0.20)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub bm25_weight: Option<f32>,
+    /// Tune RRF: graph PPR channel (default: 0.30)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ppr_weight: Option<f32>,
 }
@@ -119,29 +124,37 @@ pub struct RecallCodeParams {
 pub struct KnowledgeGraphParams {
     /// create_entity|create_relation|get_related|detect_communities
     pub action: String,
-    // Entity fields
+    /// For: create_entity (required)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
+    /// For: create_entity
     #[serde(skip_serializing_if = "Option::is_none")]
     pub entity_type: Option<String>,
+    /// For: create_entity
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
+    /// For: create_entity
     #[serde(skip_serializing_if = "Option::is_none")]
     pub user_id: Option<String>,
-    // Relation fields
+    /// For: create_relation (required)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub from_entity: Option<String>,
+    /// For: create_relation (required)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub to_entity: Option<String>,
+    /// For: create_relation (required)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub relation_type: Option<String>,
+    /// For: create_relation
     #[serde(skip_serializing_if = "Option::is_none")]
     pub weight: Option<f32>,
-    // Traversal fields
+    /// For: get_related (required)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub entity_id: Option<String>,
+    /// For: get_related (default: 1)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub depth: Option<usize>,
+    /// For: get_related (in|out|both)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub direction: Option<String>,
 }
@@ -208,6 +221,7 @@ pub struct SearchCodeParams {
 pub struct ProjectInfoParams {
     /// list|status|stats
     pub action: String,
+    /// For: status, stats (required)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub project_id: Option<String>,
 }
@@ -253,8 +267,10 @@ pub struct SymbolGraphParams {
     pub symbol_id: String,
     /// callers|callees|related
     pub action: String,
+    /// For: related (default: 1, max: 5)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub depth: Option<usize>,
+    /// For: related (in|out|both)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub direction: Option<String>,
 }
