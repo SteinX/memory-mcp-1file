@@ -74,13 +74,14 @@ async fn check_and_complete_project(
                     project_id = %project_id,
                     indexed = status.indexed_files,
                     total = status.total_files,
-                    "Indexing stuck for 300s, marking as failed"
+                    stall_ticks = entry.2,
+                    "Indexing stuck for 1800s, marking as failed"
                 );
                 progress_map.remove(&key);
                 let mut updated_status = status.clone();
                 updated_status.status = IndexState::Failed;
                 updated_status.error_message = Some(format!(
-                    "Indexing stalled at {}/{} files for >300s",
+                    "Indexing stalled at {}/{} files for >1800s",
                     status.indexed_files, status.total_files
                 ));
                 state.storage.update_index_status(updated_status).await?;
