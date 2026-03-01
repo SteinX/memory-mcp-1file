@@ -4,9 +4,9 @@ pub enum EngineBackend {
     /// BERT-family encoder (e5, nomic-v1.5, bge-m3).
     Bert,
     /// Decoder-only Qwen3 backbone with last-token pooling.
-    #[default]
     Qwen3,
     /// Gemma3 text encoder.
+    #[default]
     Gemma,
     /// Hash-based deterministic stub for tests.
     Mock,
@@ -23,10 +23,9 @@ pub enum ModelType {
     /// BAAI/bge-m3 — 1024d, ~420 MB. Hybrid dense+sparse+colbert retrieval.
     BgeM3,
     /// Qwen/Qwen3-Embedding-0.6B — 1024d, ~1.2 GB. Top open-source 2026, MRL, 32K ctx.
-    #[default]
     Qwen3,
-    /// onnx-community/embeddinggemma-300m-ONNX — 768d, ~195 MB. Gemma license.
-    /// Lighter alternative with MRL. NOTE: Gemma license, not Apache 2.0.
+    /// unsloth/embeddinggemma-300m-qat-q4_0-unquantized — 2048d, ~545 MB. Default.
+    #[default]
     Gemma,
     Mock,
 }
@@ -39,7 +38,7 @@ impl ModelType {
             Self::Nomic => "nomic-ai/nomic-embed-text-v1.5",
             Self::BgeM3 => "BAAI/bge-m3",
             Self::Qwen3 => "Qwen/Qwen3-Embedding-0.6B",
-            Self::Gemma => "google/embeddinggemma-300m",
+            Self::Gemma => "unsloth/embeddinggemma-300m-qat-q4_0-unquantized",
             Self::Mock => "mock",
         }
     }
@@ -52,7 +51,7 @@ impl ModelType {
             Self::Nomic => 768,
             Self::BgeM3 => 1024,
             Self::Qwen3 => 1024,
-            Self::Gemma => 768,
+            Self::Gemma => 2048,
             Self::Mock => 768,
         }
     }
@@ -75,7 +74,7 @@ impl ModelType {
 
     /// True when the model's license requires explicit user acceptance (non-Apache/MIT).
     pub fn requires_license_agreement(&self) -> bool {
-        matches!(self, Self::Gemma)
+        false
     }
 
     /// Human-readable approximate download size.
@@ -84,7 +83,7 @@ impl ModelType {
             Self::E5Small => "~85 MB",
             Self::E5Multi => "~180 MB",
             Self::Nomic => "~270 MB",
-            Self::Gemma => "~195 MB",
+            Self::Gemma => "~545 MB",
             Self::BgeM3 => "~420 MB",
             Self::Qwen3 => "~1.2 GB",
             Self::Mock => "0 MB",
@@ -250,7 +249,7 @@ mod tests {
         assert_eq!(ModelType::E5Multi.base_dimensions(), 768);
         assert_eq!(ModelType::BgeM3.base_dimensions(), 1024);
         assert_eq!(ModelType::Qwen3.base_dimensions(), 1024);
-        assert_eq!(ModelType::Gemma.base_dimensions(), 768);
+        assert_eq!(ModelType::Gemma.base_dimensions(), 2048);
     }
 
     #[test]
@@ -263,21 +262,21 @@ mod tests {
 
     #[test]
     fn test_default_is_qwen3() {
-        assert_eq!(ModelType::default(), ModelType::Qwen3);
-        assert_eq!(EmbeddingConfig::default().model, ModelType::Qwen3);
+        assert_eq!(ModelType::default(), ModelType::Gemma);
+        assert_eq!(EmbeddingConfig::default().model, ModelType::Gemma);
     }
 
     #[test]
     fn test_output_dim() {
         let cfg = EmbeddingConfig {
-            model: ModelType::Qwen3,
+            model: ModelType::Gemma,
             mrl_dim: Some(512),
             ..Default::default()
         };
         assert_eq!(cfg.output_dim(), 512);
 
         let cfg2 = EmbeddingConfig::default();
-        assert_eq!(cfg2.output_dim(), 1024);
+        assert_eq!(cfg2.output_dim(), 2048);
     }
 
     #[test]
@@ -317,14 +316,14 @@ mod tests {
 
     #[test]
     fn test_gemma_license_flag() {
-        assert!(ModelType::Gemma.requires_license_agreement());
+        assert!(!ModelType::Gemma.requires_license_agreement());
         assert!(!ModelType::Qwen3.requires_license_agreement());
     }
 
     #[test]
     fn test_default_config() {
         let config = EmbeddingConfig::default();
-        assert_eq!(config.model, ModelType::Qwen3);
+        assert_eq!(config.model, ModelType::Gemma);
         assert_eq!(config.cache_size, 1000);
         assert!(config.mrl_dim.is_none());
     }

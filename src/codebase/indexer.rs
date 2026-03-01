@@ -114,7 +114,7 @@ async fn do_index_project(
 
     state.storage.update_index_status(status.clone()).await?;
 
-    let batch_size = 20;
+    let batch_size = 12;
     let mut chunk_buffer = Vec::with_capacity(batch_size);
     let mut symbol_buffer = Vec::with_capacity(batch_size);
     let mut symbol_index = SymbolIndex::new();

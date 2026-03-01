@@ -4,6 +4,7 @@ use anyhow::{anyhow, Result};
 use candle_core::{DType, Device, Tensor};
 use candle_nn::VarBuilder;
 use candle_transformers::models::bert::{BertModel, Config as BertConfig};
+use candle_transformers::models::gemma2::{Config as Gemma2Config, Model as Gemma2Model};
 use candle_transformers::models::qwen3::{Config as Qwen3Config, Model as Qwen3Model};
 use hf_hub::api::sync::Api;
 use tokenizers::Tokenizer;
@@ -18,8 +19,7 @@ use super::config::{EmbeddingConfig, EngineBackend};
 enum InnerModel {
     Bert(BertModel),
     Qwen3(std::sync::Mutex<Qwen3Model>),
-    #[allow(dead_code)]
-    Gemma, // Placeholder
+    Gemma(std::sync::Mutex<Gemma2Model>),
     Mock,
 }
 
@@ -111,7 +111,12 @@ impl EmbeddingEngine {
                 InnerModel::Qwen3(std::sync::Mutex::new(Qwen3Model::new(&qwen_cfg, vb_fixed)?))
             }
             EngineBackend::Gemma => {
-                anyhow::bail!("Gemma backend is not yet implemented. The referenced model uses ONNX format which requires the `ort` runtime. Use --model qwen3 for a similar MRL-capable model.");
+                let gemma_cfg: Gemma2Config = serde_json::from_slice(&std::fs::read(config_path)?)?;
+                let vb_fixed = vb
+                    .rename_f(|name: &str| name.strip_prefix("model.").unwrap_or(name).to_string());
+                InnerModel::Gemma(std::sync::Mutex::new(Gemma2Model::new(
+                    false, &gemma_cfg, vb_fixed,
+                )?))
             }
             EngineBackend::Mock => InnerModel::Mock,
         };
@@ -145,6 +150,7 @@ impl EmbeddingEngine {
                 let mut token_ids = tokens.get_ids().to_vec();
                 let max_len = match self.inner {
                     InnerModel::Qwen3(_) => MAX_SEQ_LEN_QWEN3,
+                    InnerModel::Gemma(_) => 512,
                     _ => MAX_SEQ_LEN_BERT,
                 };
 
@@ -188,6 +194,24 @@ impl EmbeddingEngine {
                         let vec = normalized.squeeze(0)?.to_vec1::<f32>()?;
                         self.apply_mrl(vec)
                     }
+                    InnerModel::Gemma(model_mutex) => {
+                        let input_ids = Tensor::new(vec![token_ids.clone()], &self.device)?;
+                        let mut model_mut = model_mutex
+                            .lock()
+                            .map_err(|_| anyhow::anyhow!("Mutex poisoned"))?;
+                        model_mut.clear_kv_cache();
+                        // Use forward_embeds to get hidden states [b, seq_len, hidden_size]
+                        // instead of forward which returns lm_head logits [b, 1, vocab_size].
+                        let hidden = model_mut.forward_embeds(&input_ids, 0)?;
+
+                        let seq_len = hidden.dim(1)?;
+                        let embedding = hidden.narrow(1, seq_len - 1, 1)?.squeeze(1)?;
+
+                        let normalized = l2_normalize(&embedding)?;
+
+                        let vec = normalized.squeeze(0)?.to_vec1::<f32>()?;
+                        self.apply_mrl(vec)
+                    }
                     _ => unreachable!(),
                 }
             }
@@ -215,6 +239,7 @@ impl EmbeddingEngine {
 
                 let max_len = match self.inner {
                     InnerModel::Qwen3(_) => MAX_SEQ_LEN_QWEN3,
+                    InnerModel::Gemma(_) => 512,
                     _ => MAX_SEQ_LEN_BERT,
                 };
 
@@ -286,6 +311,31 @@ impl EmbeddingEngine {
                             model_mut.clear_kv_cache();
                             let input = Tensor::new(ids.as_slice(), &self.device)?.unsqueeze(0)?;
                             let hidden = model_mut.forward(&input, 0)?;
+
+                            if actual_len == 0 {
+                                return Err(anyhow::anyhow!("Cannot embed empty token sequence"));
+                            }
+                            let embedding = hidden.narrow(1, actual_len - 1, 1)?.squeeze(1)?;
+                            let normalized = l2_normalize(&embedding)?;
+                            let vec = normalized.squeeze(0)?.to_vec1::<f32>()?;
+                            results.push(self.apply_mrl(vec)?);
+                        }
+                        Ok(results)
+                    }
+                    InnerModel::Gemma(model_mutex) => {
+                        let mut model_mut = model_mutex
+                            .lock()
+                            .map_err(|_| anyhow::anyhow!("Mutex poisoned"))?;
+
+                        let mut results = Vec::with_capacity(texts.len());
+                        for (ids, &actual_len) in
+                            unpadded_token_ids.iter().zip(actual_lengths.iter())
+                        {
+                            model_mut.clear_kv_cache();
+                            let input = Tensor::new(ids.as_slice(), &self.device)?.unsqueeze(0)?;
+                            // Use forward_embeds to get hidden states [b, seq_len, hidden_size]
+                            // instead of forward which returns lm_head logits [b, 1, vocab_size].
+                            let hidden = model_mut.forward_embeds(&input, 0)?;
 
                             if actual_len == 0 {
                                 return Err(anyhow::anyhow!("Cannot embed empty token sequence"));

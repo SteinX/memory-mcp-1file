@@ -260,11 +260,7 @@ impl CodeSearchEngine {
     /// Internal: build a `ProjectIndex` from pre-assembled (meta, content) pairs
     /// and store it.  Uses `into_iter()` to consume `pairs` so each Document is
     /// built and the pair dropped, rather than keeping both alive simultaneously.
-    async fn rebuild_project_from_pairs(
-        &self,
-        project_id: &str,
-        pairs: Vec<(ChunkMeta, String)>,
-    ) {
+    async fn rebuild_project_from_pairs(&self, project_id: &str, pairs: Vec<(ChunkMeta, String)>) {
         // Move all CPU-bound work (document preparation + engine build) off the
         // async thread.
         let (engine, meta) = tokio::task::spawn_blocking(move || {
@@ -275,7 +271,10 @@ impl CodeSearchEngine {
             let mut meta_map: HashMap<String, ChunkMeta> = HashMap::with_capacity(pairs.len());
 
             for (chunk, content) in pairs {
-                documents.push(Document::new(chunk.id.clone(), make_document_text(&chunk, &content)));
+                documents.push(Document::new(
+                    chunk.id.clone(),
+                    make_document_text(&chunk, &content),
+                ));
                 // `content` is dropped here — not stored in meta_map
                 meta_map.insert(chunk.id.clone(), chunk);
             }

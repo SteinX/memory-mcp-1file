@@ -4,6 +4,10 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
+#[cfg(all(not(target_env = "msvc"), not(target_os = "windows")))]
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 use memory_mcp::codebase::{CodebaseManager, IndexWorker};
 use memory_mcp::config::{AppConfig, AppState};
 use memory_mcp::embedding::{
@@ -20,7 +24,7 @@ struct Cli {
     #[arg(long, env, default_value_os_t = default_data_dir())]
     data_dir: PathBuf,
 
-    #[arg(long, env = "EMBEDDING_MODEL", default_value = "qwen3")]
+    #[arg(long, env = "EMBEDDING_MODEL", default_value = "gemma")]
     model: String,
 
     #[arg(long, env, default_value = "1000")]

@@ -47,9 +47,7 @@ impl MemoryMcpServer {
             .map_err(to_rpc_error)
     }
 
-    #[tool(
-        description = "Get full memory by ID."
-    )]
+    #[tool(description = "Get full memory by ID.")]
     async fn get_memory(
         &self,
         params: Parameters<GetMemoryParams>,
@@ -79,9 +77,7 @@ impl MemoryMcpServer {
             .map_err(to_rpc_error)
     }
 
-    #[tool(
-        description = "List memories (newest first)."
-    )]
+    #[tool(description = "List memories (newest first).")]
     async fn list_memories(
         &self,
         params: Parameters<ListMemoriesParams>,
@@ -220,9 +216,7 @@ impl MemoryMcpServer {
         }
     }
 
-    #[tool(
-        description = "Soft-delete memory, optionally linking replacement."
-    )]
+    #[tool(description = "Soft-delete memory, optionally linking replacement.")]
     async fn invalidate(
         &self,
         params: Parameters<InvalidateParams>,
@@ -232,9 +226,7 @@ impl MemoryMcpServer {
             .map_err(to_rpc_error)
     }
 
-    #[tool(
-        description = "Get system status and startup progress."
-    )]
+    #[tool(description = "Get system status and startup progress.")]
     async fn get_status(
         &self,
         params: Parameters<GetStatusParams>,
@@ -244,9 +236,7 @@ impl MemoryMcpServer {
             .map_err(to_rpc_error)
     }
 
-    #[tool(
-        description = "Index codebase directory for code search."
-    )]
+    #[tool(description = "Index codebase directory for code search.")]
     async fn index_project(
         &self,
         params: Parameters<IndexProjectParams>,
@@ -279,16 +269,16 @@ impl MemoryMcpServer {
         }
     }
 
-    #[tool(
-        description = "Project info. Actions: list() | status(project_id) | stats(project_id)"
-    )]
+    #[tool(description = "Project info. Actions: list() | status(project_id) | stats(project_id)")]
     async fn project_info(
         &self,
         params: Parameters<ProjectInfoParams>,
     ) -> Result<CallToolResult, ErrorData> {
         match params.0.action.as_str() {
             "list" => {
-                let list_params = ListProjectsParams { _placeholder: false };
+                let list_params = ListProjectsParams {
+                    _placeholder: false,
+                };
                 logic::code::list_projects(&self.state, list_params)
                     .await
                     .map_err(to_rpc_error)
@@ -344,7 +334,9 @@ impl MemoryMcpServer {
             .map_err(to_rpc_error)
     }
 
-    #[tool(        description = "Navigate symbol call graph. Actions: callers(symbol_id) | callees(symbol_id) | related(symbol_id, depth?, direction?)")]
+    #[tool(
+        description = "Navigate symbol call graph. Actions: callers(symbol_id) | callees(symbol_id) | related(symbol_id, depth?, direction?)"
+    )]
     async fn symbol_graph(
         &self,
         params: Parameters<SymbolGraphParams>,
@@ -354,9 +346,7 @@ impl MemoryMcpServer {
             .map_err(to_rpc_error)
     }
 
-    #[tool(
-        description = "DANGER: Reset all database data (requires confirm=true)."
-    )]
+    #[tool(description = "DANGER: Reset all database data (requires confirm=true).")]
     async fn reset_all_memory(
         &self,
         params: Parameters<ResetAllMemoryParams>,
