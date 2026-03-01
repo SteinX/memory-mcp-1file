@@ -75,32 +75,53 @@ pub(super) async fn bm25_search(
     limit: usize,
 ) -> Result<Vec<SearchResult>> {
     // SurrealDB v3.0.0: search::score() is broken (bug #6852/#6946).
-    // We use CONTAINS for filtering (substring match), then score in Rust using
-    // term-frequency counting as a proxy for BM25 relevance.
-    // Fetch 3x limit to allow Rust-side reranking, then truncate.
+    // We split query into words and require ALL words present (AND logic),
+    // then score in Rust using term-frequency counting as a proxy for BM25.
     let fetch_limit = (limit * 3).max(limit);
-    let sql = r#"
+
+    // Split query into individual words for multi-word matching
+    let words: Vec<&str> = query.split_whitespace().filter(|w| w.len() >= 2).collect();
+    if words.is_empty() {
+        return Ok(vec![]);
+    }
+
+    // Build WHERE clause: each word must be present (AND)
+    let conditions: Vec<String> = words
+        .iter()
+        .enumerate()
+        .map(|(i, _)| format!("string::lowercase(content) CONTAINS string::lowercase($w{i})"))
+        .collect();
+    let where_clause = conditions.join(" AND ");
+
+    let sql = format!(
+        r#"
         SELECT meta::id(id) AS id, content, memory_type, 1.0f AS score, metadata
         FROM memories
-        WHERE string::lowercase(content) CONTAINS string::lowercase($query)
+        WHERE {where_clause}
           AND (valid_until IS NONE OR valid_until > time::now())
         LIMIT $limit
-    "#;
-    let mut response = db
-        .query(sql)
-        .bind(("query", query.to_string()))
-        .bind(("limit", fetch_limit))
-        .await?;
+    "#
+    );
+
+    let mut query_builder = db.query(&sql);
+    for (i, word) in words.iter().enumerate() {
+        query_builder = query_builder.bind((format!("w{i}"), word.to_string()));
+    }
+    let mut response = query_builder.bind(("limit", fetch_limit)).await?;
     let mut results: Vec<SearchResult> = response.take(0)?;
 
     // Compute relevance score in Rust: normalized term frequency.
-    // score = occurrences / (content_len + 1) * 1000, capped at 1.0.
     let query_lower = query.to_lowercase();
+    let query_words: Vec<&str> = query_lower.split_whitespace().collect();
     for r in &mut results {
         let content_lower = r.content.to_lowercase();
-        let count = content_lower.matches(query_lower.as_str()).count() as f32;
-        // TF-like score: more occurrences in shorter content = higher relevance.
-        let tf = count / (content_lower.len() as f32 + 1.0) * 1000.0;
+        let mut total_tf: f32 = 0.0;
+        for qw in &query_words {
+            let count = content_lower.matches(qw).count() as f32;
+            total_tf += count;
+        }
+        // TF-like score: more word hits in shorter content = higher relevance.
+        let tf = total_tf / (content_lower.len() as f32 + 1.0) * 1000.0;
         r.score = tf.clamp(0.01, 1.0);
     }
 

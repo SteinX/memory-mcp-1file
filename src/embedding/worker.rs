@@ -25,6 +25,7 @@ pub struct EmbeddingWorker {
     engine: Arc<tokio::sync::RwLock<Option<Arc<EmbeddingEngine>>>>,
     store: Arc<EmbeddingStore>,
     storage: Arc<crate::storage::SurrealStorage>,
+    metrics: Arc<super::metrics::EmbeddingMetrics>,
 }
 
 impl EmbeddingWorker {
@@ -34,11 +35,13 @@ impl EmbeddingWorker {
         store: Arc<EmbeddingStore>,
         state: Arc<crate::config::AppState>,
     ) -> Self {
+        let metrics = state.embedding_queue.metrics_arc();
         Self {
             queue,
             engine,
             store,
             storage: state.storage.clone(),
+            metrics,
         }
     }
 
@@ -181,6 +184,7 @@ impl EmbeddingWorker {
         let mut chunk_updates: Vec<(String, Vec<f32>)> = Vec::new();
 
         for (req, emb_opt) in batch.drain(..).zip(final_embeddings) {
+            self.metrics.dec_queue();
             if let Some(emb) = emb_opt {
                 if let Some(tx) = req.responder {
                     let _ = tx.send(emb.clone());

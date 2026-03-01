@@ -92,6 +92,10 @@ impl AdaptiveEmbeddingQueue {
         &self.metrics
     }
 
+    pub fn metrics_arc(&self) -> Arc<EmbeddingMetrics> {
+        Arc::clone(&self.metrics)
+    }
+
     pub fn utilization(&self) -> f32 {
         self.metrics.get_queue_depth() as f32 / self.config.capacity as f32
     }
