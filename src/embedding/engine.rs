@@ -11,7 +11,7 @@ use tokenizers::Tokenizer;
 /// Maximum token sequence length for BERT models.
 /// Attention is O(n²) — exceeding this causes massive memory usage.
 const MAX_SEQ_LEN_BERT: usize = 512;
-const MAX_SEQ_LEN_QWEN3: usize = 512; // MRL capable Qwen3
+const MAX_SEQ_LEN_QWEN3: usize = 256; // MRL capable Qwen3; most code chunks < 256 tokens
 
 use super::config::{EmbeddingConfig, EngineBackend};
 
@@ -178,7 +178,6 @@ impl EmbeddingEngine {
                         // `broadcast_add` to fail: the attention mask is (b,1,L,L) but
                         // the KV scores are (b,H,L,N+L) after N cached tokens.
                         model_mut.clear_kv_cache();
-                        model_mut.clear_kv_cache();
                         let hidden = model_mut.forward(&input_ids, 0)?;
 
                         let seq_len = hidden.dim(1)?;
@@ -273,27 +272,26 @@ impl EmbeddingEngine {
                         Ok(results)
                     }
                     InnerModel::Qwen3(model_mutex) => {
-                        let mut results = Vec::with_capacity(texts.len());
                         let mut model_mut = model_mutex
                             .lock()
                             .map_err(|_| anyhow::anyhow!("Mutex poisoned"))?;
+
+                        // Qwen3 is decoder-only — causal mask in candle does NOT
+                        // support batch dim > 1. Process items sequentially but
+                        // keep KV cache cleared between items.
+                        let mut results = Vec::with_capacity(texts.len());
                         for (ids, &actual_len) in
                             unpadded_token_ids.iter().zip(actual_lengths.iter())
                         {
                             model_mut.clear_kv_cache();
                             let input = Tensor::new(ids.as_slice(), &self.device)?.unsqueeze(0)?;
-                            // Reset KV cache before each item — every embedding is
-                            // independent; stale cached tokens would corrupt the mask.
-                            model_mut.clear_kv_cache();
                             let hidden = model_mut.forward(&input, 0)?;
 
                             if actual_len == 0 {
                                 return Err(anyhow::anyhow!("Cannot embed empty token sequence"));
                             }
                             let embedding = hidden.narrow(1, actual_len - 1, 1)?.squeeze(1)?;
-
                             let normalized = l2_normalize(&embedding)?;
-
                             let vec = normalized.squeeze(0)?.to_vec1::<f32>()?;
                             results.push(self.apply_mrl(vec)?);
                         }

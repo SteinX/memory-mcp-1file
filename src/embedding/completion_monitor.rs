@@ -67,8 +67,9 @@ async fn check_and_complete_project(
             .or_insert((status.indexed_files, 0, 0));
         if entry.0 == status.indexed_files {
             entry.2 += 1;
-            if entry.2 >= 30 {
-                // 30 ticks × 10s = 300s with no progress
+            if entry.2 >= 180 {
+                // 180 ticks × 10s = 1800s (30 min) with no progress
+                // Qwen3 on CPU: ~20s/batch of 8, queue throttle can block indexer
                 tracing::warn!(
                     project_id = %project_id,
                     indexed = status.indexed_files,

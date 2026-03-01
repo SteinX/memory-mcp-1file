@@ -4,8 +4,8 @@ COPY Cargo.toml /tmp/Cargo.toml
 RUN grep '^version' /tmp/Cargo.toml | head -1 | cut -d'"' -f2 > /tmp/VERSION
 
 ## -- Stage 2: Runtime image --
-# Recommended: run with --memory 6g for production workloads
-# Minimum: 3g for small codebases, 6g for large (50K+ chunks)
+# Recommended: run with --memory 4g
+# Minimum: 2g for small codebases (<1K files), 4g for medium (1-10K files)
 FROM alpine:3.23
 
 ARG VERSION
@@ -31,12 +31,17 @@ RUN VERSION=${VERSION:-$(cat /tmp/VERSION)} && \
 RUN mkdir -p /data /project
 ENV DATA_DIR=/data
 ENV LOG_LEVEL=info
-# SurrealKV WAL recovery uses deep recursion on large datasets;
-# 16 MB prevents stack overflow in spawn_blocking threads.
-ENV RUST_MIN_STACK=16777216
+# SurrealKV WAL recovery needs extra stack. 8MB is sufficient since
+# HNSW indexes use IF NOT EXISTS (no O(n log n) rebuild on startup).
+ENV RUST_MIN_STACK=8388608
 # Limit glibc malloc arenas to reduce memory fragmentation in containers.
 # Without this, glibc can create up to 8×CPU arenas, wasting hundreds of MB.
 ENV MALLOC_ARENA_MAX=2
+# Let candle/rayon use all available cores for GEMM during inference
+ENV RAYON_NUM_THREADS=0
+# SurrealKV auto-sets block cache to (total_memory/2 - 1GB) which is 2GB at --memory 6g.
+# Cap at 256MB to leave room for embedding model (1.2GB) + HNSW indexes + BM25.
+ENV SURREAL_SURREALKV_BLOCK_CACHE_CAPACITY=268435456
 
 # Persist data and allow project mounting
 VOLUME ["/data", "/project"]

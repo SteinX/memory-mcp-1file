@@ -617,4 +617,106 @@ get_related(entity_id="WP:WP01", depth=2, direction="both")
 
 ---
 
-*Last updated: 2026-02-28*
+## 🐳 Docker Local Debug Protocol
+
+<docker_debug>
+Інструкція для локального тестування Memory MCP через Docker.
+</docker_debug>
+
+### Quick Start
+
+```bash
+# 1. Build binary (fast profile = debug-friendly, ~30s)
+cargo build --profile fast
+
+# 2. Build Docker image
+docker build -f Dockerfile.fast -t memory-mcp:dev .
+
+# 3. Run container (4GB limit, persistent data volume)
+docker run -d \
+  --name memory-mcp-dev \
+  --memory 4g \
+  -v /home/unnamed/project:/project \
+  -v memory-mcp-data:/data \
+  -e RUST_LOG=info \
+  -e RUST_BACKTRACE=1 \
+  memory-mcp:dev \
+  sh -c 'tail -f /dev/null | /usr/local/bin/memory-mcp 2>&1'
+```
+
+### Важливі нюанси
+
+| Аспект | Правильно | Неправильно |
+|--------|-----------|-------------|
+| **stdin** | `tail -f /dev/null \| memory-mcp` | `cat /dev/zero \| memory-mcp` (**OOM!** нескінченний бінарний потік) |
+| **Volume для /data** | `-v memory-mcp-data:/data` (named volume, persist між rm/run) | без volume (модель ~800MB качається з мережі щоразу) |
+| **Memory limit** | `--memory 4g` (мінімум для Qwen3 1024d) | без ліміту (SurrealKV block cache з'їсть RAM/2-1GB) |
+
+### Моніторинг
+
+```bash
+# Статус контейнера (OOM check)
+docker inspect memory-mcp-dev --format '{{.State.Status}} OOM:{{.State.OOMKilled}}'
+
+# RAM + CPU в реальному часі
+docker stats memory-mcp-dev --no-stream --format "MEM: {{.MemUsage}} ({{.MemPerc}}) | CPU: {{.CPUPerc}}"
+
+# Прогрес індексації
+docker logs memory-mcp-dev 2>&1 | grep -c "Indexing file"
+
+# Помилки
+docker logs memory-mcp-dev 2>&1 | grep -iE "panic|error|OOM|failed" | tail -10
+
+# Останні логи
+docker logs memory-mcp-dev 2>&1 | tail -20
+
+# Kernel OOM killer (якщо контейнер зник)
+dmesg | grep -iE "oom|killed|memory-mcp" | tail -10
+```
+
+### Rebuild цикл
+
+```bash
+# Повний цикл: build → image → restart (зберігає /data volume!)
+cargo build --profile fast && \
+docker rm -f memory-mcp-dev && \
+docker build -f Dockerfile.fast -t memory-mcp:dev . && \
+docker run -d \
+  --name memory-mcp-dev \
+  --memory 4g \
+  -v /home/unnamed/project:/project \
+  -v memory-mcp-data:/data \
+  -e RUST_LOG=info \
+  -e RUST_BACKTRACE=1 \
+  memory-mcp:dev \
+  sh -c 'tail -f /dev/null | /usr/local/bin/memory-mcp 2>&1'
+```
+
+### Memory Budget (Qwen3 1024d, 4GB limit)
+
+```
+SurrealKV block cache:  256MB  (env SURREAL_SURREALKV_BLOCK_CACHE_CAPACITY)
+Qwen3 model (mmap):   1200MB  (поступово page-in)
+HNSW indexes (4×):      60MB  (~10K vectors)
+BM25 engine:            40MB  (streaming rebuild)
+Runtime + stacks:      100MB  (8MB per thread)
+─────────────────────────────
+Steady state:         ~1700MB
++ Indexing peak:       +400MB
+─────────────────────────────
+Peak:                 ~2100MB  (headroom ~1900MB при 4GB)
+```
+
+### Відомі проблеми
+
+| Проблема | Причина | Рішення |
+|----------|---------|---------|
+| "Previous indexing interrupted" | Попередній контейнер був OOM-killed під час індексації | Нормально — перезапуск індексації |
+| Модель качається з мережі | `/data` volume не збережений | Використовувати named volume `-v memory-mcp-data:/data` |
+| OOM при 4GB | SurrealKV block cache авто = RAM/2-1GB | ENV `SURREAL_SURREALKV_BLOCK_CACHE_CAPACITY=268435456` (256MB) |
+| Індексація "failed" після 300с | completion_monitor stall timeout занадто короткий | Збільшено до 1800с (30 хв) для Qwen3 CPU |
+| CPU лише 130% | `RAYON_NUM_THREADS` не встановлено | ENV `RAYON_NUM_THREADS=0` (авто-detect всі ядра) |
+
+---
+
+*Last updated: 2026-03-01*
