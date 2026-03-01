@@ -168,7 +168,7 @@ jobs:
           case "${{ matrix.os }}" in
             ubuntu-*)  FEATURES="" ;;
             windows-*) FEATURES="" ;;
-            macos-*)   FEATURES="--features accelerate" ;;
+            macos-*)   FEATURES="" ;;
           esac
 
           if [ "${{ matrix.use_cross }}" = "true" ]; then

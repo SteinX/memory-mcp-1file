@@ -1,5 +1,5 @@
-use std::path::Path;
 use num_cpus;
+use std::path::Path;
 use std::sync::Arc;
 
 use tokio::fs;
@@ -125,7 +125,6 @@ async fn do_index_project(
     let mut hash_buffer: Vec<(String, String)> = Vec::with_capacity(batch_size);
     const HASH_FLUSH_SIZE: usize = 50;
 
-
     // Issue 4 fix: Parse files with bounded concurrency using JoinSet instead of
     // sequential spawn_blocking. Up to max_concurrent_parses files are parsed on
     // the blocking thread pool simultaneously.
@@ -143,7 +142,7 @@ async fn do_index_project(
     // Expands in place so it can mutate surrounding locals and use `.await`.
     macro_rules! drain_one_parse {
         ($join_result:expr) => {{
-            let (mut chunks, symbols, references, fp_str) = $join_result
+            let (chunks, symbols, references, fp_str) = $join_result
                 .map_err(|e| crate::AppError::Internal(
                     format!("parse/chunk panicked: {e}").into(),
                 ))?;
@@ -288,7 +287,7 @@ async fn do_index_project(
                     path = ?file_path,
                     size_kb = meta.len() / 1024,
                     "Large file detected (>1MB), might take a while to parse",
-                    
+
                 );
             }
         }
