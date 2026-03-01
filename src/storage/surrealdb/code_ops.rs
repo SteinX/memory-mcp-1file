@@ -321,6 +321,7 @@ pub(super) async fn bm25_search_code(
             end_line,
             chunk_type,
             name,
+            context_path,
             1.0f AS score
         FROM code_chunks
         WHERE string::lowercase(content) CONTAINS string::lowercase($query)

@@ -91,27 +91,40 @@ pub async fn get_related_symbols(
     state: &Arc<AppState>,
     params: crate::server::params::GetRelatedSymbolsParams,
 ) -> anyhow::Result<CallToolResult> {
+    use crate::graph::{SymbolGraphTraverser, TraversalConfig};
     use crate::types::Direction;
 
-    let depth = params.depth.unwrap_or(1).min(3);
+    let depth = params.depth.unwrap_or(1).min(5);
     let direction: Direction = params
         .direction
         .as_ref()
         .and_then(|s| s.parse().ok())
         .unwrap_or_default();
 
-    match state
-        .storage
-        .get_related_symbols(&params.symbol_id, depth, direction)
+    let config = TraversalConfig {
+        max_depth: 5,
+        max_entities_per_level: 50,
+        max_total_entities: 200,
+    };
+
+    let traverser = SymbolGraphTraverser::with_config(state.storage.as_ref(), config);
+
+    match traverser
+        .traverse(&params.symbol_id, depth, direction)
         .await
     {
-        Ok((mut symbols, relations)) => {
+        Ok(result) => {
+            let mut symbols = result.symbols;
             strip_symbol_embeddings(&mut symbols);
             Ok(success_json(json!({
                 "symbols": symbols,
-                "relations": relations,
+                "relations": result.relations,
                 "symbol_count": symbols.len(),
-                "relation_count": relations.len()
+                "relation_count": result.relations.len(),
+                "depth_reached": result.depth_reached,
+                "truncated": result.truncated,
+                "deferred_count": result.deferred_count,
+                "frontier": result.frontier
             })))
         }
         Err(e) => Ok(error_response(e)),

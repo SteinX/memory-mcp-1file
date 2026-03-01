@@ -50,5 +50,8 @@ pub struct ScoredCodeChunk {
     pub chunk_type: ChunkType,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
+    /// Hierarchical breadcrumb path from AST (e.g. "impl:AuthService > fn:login")
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub context_path: Option<String>,
     pub score: f32,
 }

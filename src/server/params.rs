@@ -92,6 +92,15 @@ pub struct RecallCodeParams {
     /// Weight for graph (PageRank) channel (default: 0.30)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ppr_weight: Option<f32>,
+    /// Filter results to files matching this path prefix (e.g. "src/server/")
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub path_prefix: Option<String>,
+    /// Filter results to a specific language (e.g. "rust", "typescript")
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub language: Option<String>,
+    /// Filter results to a specific chunk type (e.g. "function", "struct", "class")
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub chunk_type: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]

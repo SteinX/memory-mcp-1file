@@ -1,9 +1,13 @@
 //! Shared logic for creating symbol relations.
 
+use std::collections::HashMap;
+
 use crate::codebase::symbol_index::{ResolutionContext, SymbolIndex};
 use crate::storage::StorageBackend;
 use crate::types::safe_thing;
-use crate::types::symbol::{CodeReference, SymbolRef, SymbolRelation};
+use crate::types::symbol::{
+    CodeReference, CodeRelationType, CodeSymbol, SymbolRef, SymbolRelation,
+};
 
 /// Statistics from relation creation.
 #[derive(Debug, Default)]
@@ -99,4 +103,79 @@ pub async fn create_symbol_relations(
     }
 
     stats
+}
+
+/// Detect containment (parent→child) relationships between symbols in the same file.
+///
+/// Two symbols have a containment relationship when one's line range fully
+/// encloses the other's. For example, an `impl` block (lines 10-50) contains
+/// a `fn` (lines 15-25). Only the **tightest** (most specific) parent is
+/// linked to avoid redundant transitive edges.
+///
+/// Returns `CodeReference` entries with `relation_type: Contains` that can be
+/// fed into the standard `create_symbol_relations` pipeline.
+pub fn detect_containment_references(symbols: &[CodeSymbol]) -> Vec<CodeReference> {
+    if symbols.len() < 2 {
+        return vec![];
+    }
+
+    // Group by file_path (containment is intra-file only)
+    let mut by_file: HashMap<&str, Vec<&CodeSymbol>> = HashMap::new();
+    for sym in symbols {
+        by_file.entry(&sym.file_path).or_default().push(sym);
+    }
+
+    let mut refs = Vec::new();
+
+    for (file_path, mut file_syms) in by_file {
+        if file_syms.len() < 2 {
+            continue;
+        }
+
+        // Sort by (start_line ASC, end_line DESC) so parents appear before
+        // children. When two symbols start at the same line, the wider one
+        // (larger end_line) comes first — that's the parent.
+        file_syms.sort_by(|a, b| {
+            a.start_line
+                .cmp(&b.start_line)
+                .then(b.end_line.cmp(&a.end_line))
+        });
+
+        // Stack of potential parents (index into file_syms).
+        // Invariant: stack entries have non-increasing end_line (nesting order).
+        let mut stack: Vec<usize> = Vec::new();
+
+        for (i, sym) in file_syms.iter().enumerate() {
+            // Pop stack entries that don't contain the current symbol
+            while let Some(&top_idx) = stack.last() {
+                let parent = file_syms[top_idx];
+                if parent.end_line >= sym.end_line {
+                    break; // parent still encloses current symbol
+                }
+                stack.pop();
+            }
+
+            // If there's a parent on the stack, emit a Contains edge
+            if let Some(&parent_idx) = stack.last() {
+                let parent = file_syms[parent_idx];
+                // Skip self-containment (same line range = same symbol)
+                if parent.start_line != sym.start_line || parent.end_line != sym.end_line {
+                    refs.push(CodeReference {
+                        name: format!("{}→{}", parent.name, sym.name),
+                        from_symbol: parent.name.clone(),
+                        from_symbol_line: parent.start_line,
+                        to_symbol: sym.name.clone(),
+                        relation_type: CodeRelationType::Contains,
+                        file_path: file_path.to_string(),
+                        line: sym.start_line,
+                        column: 0,
+                    });
+                }
+            }
+
+            stack.push(i);
+        }
+    }
+
+    refs
 }

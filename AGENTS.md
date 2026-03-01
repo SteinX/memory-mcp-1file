@@ -1,3 +1,93 @@
+# 🤖 AGENTS.md — AI Agent Master Protocol (MCP + VIDA Thinking)
+
+<identity>
+You are an AI agent operating with the **Memory MCP** and **VIDA Thinking Framework**.
+You must adhere to strict workflows, utilize specialized tools, and maintain context across sessions.
+Communication language with the user: Ukrainian.
+</identity>
+
+---
+
+## ⛔ L0 INVARIANTS (Never violate under any circumstance)
+
+<!-- SURVIVE_COMPRESSION: These rules MUST survive context window clearing -->
+1. **[MUST]** After ANY context compression/clearing, your FIRST action must be to read `AGENTS.md`.
+2. **[MUST NOT]** Never perform auto-commits without explicit user permission.
+3. **[MUST NOT]** Never propose or implement "hotfixes". Demand root-cause solutions.
+4. **[MUST NOT]** Never delete files or code blocks without explicit discussion.
+5. **[MUST]** Always use `/vida-think` for architectural decisions, debugging, or complex refactoring.
+
+---
+
+## 🔄 POST-COMPRESSION BOOT SEQUENCE (⛔ CRITICAL BLOCKER — NO EXCEPTIONS)
+
+<!-- SURVIVE_COMPRESSION: This entire section MUST be executed after every compression event -->
+
+### ⛔ THIS IS A HARD STOP. DO NOT RESPOND TO THE USER, DO NOT CONTINUE ANY TASK, DO NOT ANSWER ANY QUESTION UNTIL ALL STEPS BELOW ARE FULLY EXECUTED WITH `Read` TOOL CALLS.
+
+When context is compressed or cleared, you MUST execute this sequence **before ANY other action**.
+**Violation = immediate protocol failure. No shortcuts. No "I already know". No skipping.**
+
+1. **Read `AGENTS.md`** — this file (full, not partial). Re-internalize all L0 invariants and protocols.
+2. **Read all `/vida-think` algorithm files** — required for architectural decisions:
+   - `_vida/algorithms/meta-analysis.md`
+   - `_vida/algorithms/pr-cot.md`
+   - `_vida/algorithms/mar.md`
+   - `_vida/algorithms/5-solutions.md`
+   - `_vida/shared/reasoning-modules.md`
+3. **Read `_vida/shared/beads-protocol.md`** — state management protocol.
+4. **Read the context summary** — if one exists in the compressed context, use it to orient.
+5. **Do NOT continue work** until steps 1-3 are complete.
+
+### Detection heuristic
+If your first tool call after compression is NOT `Read AGENTS.md` — you are violating this protocol.
+If you skip ANY file from step 2 — you are violating this protocol.
+If you respond to the user before completing step 3 — you are violating this protocol.
+
+**Why**: Algorithms define HOW to think. Without them, `/vida-think` produces shallow analysis
+that violates L0 #5. Compression strips algorithm knowledge — it must be reloaded explicitly.
+
+**Anti-pattern**: Proceeding with tasks using "remembered" algorithm steps from pre-compression.
+This leads to incomplete META-analysis, skipped PR-CoT passes, or fabricated MAR scores.
+
+---
+
+## 🔀 PHASE TRANSITION ROUTING (⛔ BLOCKING)
+
+> ⛔ STOP. Before starting ANY new phase of work, you MUST execute the MANDATORY BOOT PROTOCOL.
+> Your output is VOID if this gate is not passed. "I already know how to code" is NOT an excuse.
+
+### GATE-0: Phase Identification & Loading
+
+Before ANY output, when a user requests a phase transition, you MUST:
+
+1. **Classify** the user's message against the `PHASE_ROUTING_TABLE` (see below).
+2. **IF** a phase is identified:
+   - State explicitly: `[ROUTER] Phase detected: vida_{phase_name}`
+   - State explicitly: `[ROUTER] Loading: _vida/commands/vida-{phase}.md`
+   - Call the `Read` tool on `_vida/commands/vida-{phase}.md` as your FIRST action.
+   - **WAIT** for the tool result.
+   - Proceed ONLY after executing the `PROOF-OF-LOAD` requirement.
+3. **IF** no phase is identified but a transition is suspected:
+   - Default to `/vida-status` to orient.
+
+### 🧾 PROOF-OF-LOAD REQUIREMENT (CRITICAL)
+
+After the `Read` tool call, your NEXT output line MUST be:
+```
+[PROOF-OF-LOAD] Loaded: _vida/commands/vida-{phase}.md
+Summary of first 3 lines: {actual content extracted directly from the tool result}
+```
+**⛔ If you cannot produce this exact summary from the tool result — you did NOT load the file. STOP. Do not generate code. Retry the tool call.**
+
+---
+
+
+
+---
+
+---
+
 # 🧠 Memory Protocol (Memory MCP)
 
 <critical>
@@ -55,195 +145,11 @@ User message BEFORE showing TASK — is NOT a confirmation!
 
 ---
 
-## 📐 Record Structures
 
-### TASK (Work Package) — most important for recovery
-
-```
-TASK: {WP-id}-{short-description}
-ID: {WP-id}
-Type: standard | ad_hoc  <-- NEW
-Status: in_progress | blocked | completed | paused
-Lane: planned | in_progress | review | done
-Feature: {feature-id}
-Path: {path to WP file, e.g. kitty-specs/.../tasks/WP01-xxx.md}
-Updated: {ISO 8601 timestamp}
-
-Command: {recovery command, e.g. /spec-kitty.implement WP01}
-Agent: {executing agent, e.g. spec-kitty}
-
-Subtasks:
-- [x] T001: {description} - {result}
-- [ ] T002: {description}
-- [ ] T003: {description}
-
-AC (Acceptance Criteria):
-- [x] {criterion 1}
-- [ ] {criterion 2}
-
-Current: {current subtask, e.g. T002}
-CurrentFile: {file being worked on}
-Blockers: {None | blocker description}
-
-Context:
-- {important information for continuation}
-- {changes that were made}
-```
-
-<important>
-**Command** and **Agent** — REQUIRED fields for automatic recovery after compaction.
-</important>
-
-### EPIC (Feature/WP group)
-
-```
-EPIC: {feature-id}
-ID: {feature-id}
-Status: active | paused | completed
-Path: {path to kitty-specs/{feature-id}/}
-Updated: {ISO 8601 timestamp}
-
-Work Packages: {total} total
-Progress: {completed}/{total} completed
-Current WP: {WP-id} ({name})
-
-Dependency Chain:
-{WP01 → WP02 → ...}
-
-Next: {what to do after current WP}
-```
-
-### PROJECT
-
-```
-PROJECT: {project name}
-ID: {project-id}
-Status: active | paused | completed
-Path: {project root}
-Branch: {git branch}
-Updated: {ISO 8601 timestamp}
-
-Tech Stack: {key technologies}
-Current Epic: {feature-id} | None
-Last Completed: {last completed epic}
-Next Steps: {what to do next}
-```
-
-### DECISION
-
-```
-DECISION: {short decision description}
-ID: {DEC-xxx}
-Feature: {feature-id}
-Updated: {ISO 8601 timestamp}
-
-REASON: {why this decision was made}
-ALTERNATIVES_REJECTED:
-- {alternative 1}: {why rejected}
-- {alternative 2}: {why rejected}
-IMPLICATIONS: {consequences of the decision}
-```
-
-### RESEARCH
-
-```
-RESEARCH: {Research Topic}
-ID: {RES-date-topic}
-Status: active | completed | paused
-Goal: {What do we want to find out?}
-Path: {path to doc/research/...md}
-Updated: {ISO 8601 timestamp}
-
-Open Questions:
-- [ ] {Question 1}
-- [ ] {Question 2}
-
-Conclusions (Findings):
-- {Key finding 1}
-- {Key finding 2}
-
-Approved Decisions:
-- {Decision 1} (create DECISION record if important)
-```
 
 ---
 
-## 🚀 SESSION_START: Session Startup Algorithm
 
-<session_start priority="BLOCKING">
-EXECUTE IMMEDIATELY on first user message.
-No other actions BEFORE completing this protocol.
-</session_start>
-
-<checklist id="session_start">
-- [ ] `search_text("Status: in_progress", limit=5)`
-- [ ] `search_text("TASK:", limit=5)`
-- [ ] `search_text("EPIC:", limit=3)`
-- [ ] `search_text("PROJECT:", limit=3)`
-- [ ] Determined scenario (active/paused/new)
-- [ ] Executed AUTO_CONTINUE if found TASK
-</checklist>
-
-### Algorithm
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│                    SESSION_START                            │
-├─────────────────────────────────────────────────────────────┤
-│ STEP 1: Search for active tasks (BM25 — exact match)        │
-│                                                             │
-│   search_text(query="Status: in_progress", limit=5)         │
-│   search_text(query="TASK:", limit=5)                       │
-│   search_text(query="EPIC:", limit=3)                       │
-│   search_text(query="PROJECT:", limit=3)                    │
-│                                                             │
-├─────────────────────────────────────────────────────────────┤
-│ STEP 2: Decision tree                                       │
-│                                                             │
-│   IF found TASK with Status=in_progress:                    │
-│      → Show task state to user                              │
-│      → Execute AUTO_CONTINUE protocol (see below)           │
-│      → Wait for confirmation OR 30 sec timer                │
-│                                                             │
-│   ELSE IF found TASK with Status=paused/blocked:            │
-│      → Show context and Blockers                            │
-│      → Ask: "Continue {TASK}?"                              │
-│                                                             │
-│   ELSE IF found EPIC with Status=active:                    │
-│      → Show Progress and Current WP                         │
-│      → Ask: "Start {next WP}?"                              │
-│                                                             │
-│   ELSE IF found PROJECT:                                    │
-│      → Show project state                                   │
-│      → Ask: "What are we working on?"                       │
-│                                                             │
-│   ELSE:                                                     │
-│      → COLD START — ask user for context                    │
-│                                                             │
-├─────────────────────────────────────────────────────────────┤
-│ STEP 3: After recovery                                      │
-│                                                             │
-│   - DO NOT update memory (only on state change)             │
-│   - Load file from Path for full context                    │
-│   - Check git status to understand changes                  │
-└─────────────────────────────────────────────────────────────┘
-```
-
-<error_handling id="session_start">
-
-| Error | Fallback |
-|-------|----------|
-| `search_text` → 0 results | Execute `get_valid(limit=10)`, search by content |
-| Memory MCP unavailable | Ask user for context directly |
-| TASK.Path file doesn't exist | Show TASK from memory, ask for current path |
-
-</error_handling>
-
-<constraints type="session_start">
-- FORBIDDEN to start work WITHOUT searching memory
-- FORBIDDEN to continue work WITHOUT executing AUTO_CONTINUE protocol
-- FORBIDDEN to ignore found active records
-</constraints>
 
 ---
 
@@ -395,48 +301,7 @@ _(auto-continue in 30 seconds if no response)_
 
 ---
 
-## 🔄 SYNC_PROTOCOL: Status Synchronization
 
-<sync_protocol priority="CRITICAL">
-MANDATORY to execute on EVERY status change or task completion.
-Ensures consistency between Memory, Task Tools, and Reality.
-</sync_protocol>
-
-### ⚠️ TRIPLE OBLIGATION Rule (for Standard Tasks)
-
-<critical_rule>
-**"NO TODO = NO WORK"**
-It is physically impossible to start work without a Todo item.
-Memory MCP records are for *history/context*. Todo items are for *execution*.
-One does not replace the other.
-</critical_rule>
-
-For standard development flow, you must synchronize **ALL THREE** systems immediately.
-
-| System | Action | Criticality |
-|--------|--------|-------------|
-| **1. Memory (MCP)** | `store_memory` / `update_memory` | 🔴 **MANDATORY** (Context) |
-| **2. Task Tool (Todo)** | `todowrite` (Create/Update) | 🔴 **MANDATORY** (Execution Trigger) |
-| **3. Documents** | Update markdown files (Task/Epic) | 🔴 **MANDATORY** (Standard Flow) |
-
-**Anti-Tunneling Protocol:**
-If you encounter an unexpected error (e.g. path not found) that requires >1 step to fix:
-1. STOP immediately.
-2. Create/Update Todo: "Fix unexpected error X".
-3. ONLY THEN proceed with technical fix.
-4. Record technical details in Memory.
-
-<checklist id="sync_protocol">
-- [ ] **Task Tool**: Created/Updated Todo item (FIRST action)
-- [ ] **Memory**: Updated Status, Current, or Blockers
-- [ ] **Documents**: Updated relevant .md files
-</checklist>
-
-<constraints type="sync_protocol">
-- FORBIDDEN to update only one system
-- FORBIDDEN to delay synchronization (MUST be immediate)
-- FORBIDDEN to proceed without updating Documents (for Standard Tasks)
-</constraints>
 
 ---
 
@@ -737,17 +602,19 @@ get_related(entity_id="WP:WP01", depth=2, direction="both")
 
 ---
 
+---
+
 ## 📋 Rules Summary
 
 | Rule | Description |
 |------|-------------|
-| **External repositories** | Only in `_tmp/` directory |
-| **Package installation** | Use `cargo add`, don't edit `Cargo.toml` manually |
 | **Communication language** | Ukrainian only |
 | **Memory: start** | REQUIRED `search_text` + show to user |
 | **Memory: completion** | REQUIRED `invalidate` + `store_memory` |
 | **Memory: deletion** | FORBIDDEN `delete_memory`, only `invalidate` |
+| **Thinking: Boot** | REQUIRED to read algorithms after context wipe |
+| **Thinking: Routing** | REQUIRED to identify phases and load specific commands |
 
 ---
 
-*Last updated: 2026-01-06*
+*Last updated: 2026-02-28*

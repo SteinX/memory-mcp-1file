@@ -191,6 +191,8 @@ pub struct ChunkMeta {
     pub end_line: u32,
     pub chunk_type: crate::types::ChunkType,
     pub name: Option<String>,
+    /// Hierarchical breadcrumb path from AST (e.g. "impl:AuthService > fn:login")
+    pub context_path: Option<String>,
     pub project_id: String,
 }
 
@@ -216,6 +218,7 @@ impl ChunkMeta {
             end_line: chunk.end_line,
             chunk_type: chunk.chunk_type.clone(),
             name: chunk.name.clone(),
+            context_path: chunk.context_path.clone(),
             project_id,
         };
         Some((meta, chunk.content.clone()))
@@ -427,6 +430,7 @@ impl CodeSearchEngine {
                     end_line: meta.end_line,
                     chunk_type: meta.chunk_type,
                     name: meta.name,
+                    context_path: meta.context_path,
                     score,
                 }
             })
@@ -579,6 +583,20 @@ fn make_document_text(chunk: &ChunkMeta, content: &str) -> String {
         text.push(' ');
     }
 
+    // ── context_path (breadcrumbs) ─────────────────────────────────────────
+    // Adds hierarchical scope info so queries like "AuthService login" match
+    // a chunk with context_path "impl:AuthService > fn:login" even if the
+    // chunk content itself only contains the function body.
+    if let Some(ref ctx) = chunk.context_path {
+        // Raw form preserves the structured breadcrumb for exact-match
+        text.push_str(ctx);
+        text.push(' ');
+        // Normalised form: replace delimiters with spaces so each scope
+        // component ("impl", "AuthService", "fn", "login") is a separate token
+        text.push_str(&ctx.replace(['>', ':', '.', '/'], " "));
+        text.push(' ');
+    }
+
     // ── code content ───────────────────────────────────────────────────────
     text.push_str(content);
     text
@@ -636,6 +654,7 @@ mod tests {
                 end_line: 3,
                 chunk_type: crate::types::ChunkType::Function,
                 name: None,
+                context_path: None,
                 embedding: None,
                 content_hash: String::new(),
                 project_id: Some("proj".to_string()),
@@ -980,6 +999,27 @@ mod tests {
         async fn shutdown(&self) -> crate::Result<()> {
             unreachable!()
         }
+        async fn upsert_manifest_entry(&self, _: &str, _: &str) -> crate::Result<()> {
+            unreachable!()
+        }
+        async fn upsert_manifest_entries(&self, _: &str, _: &[String]) -> crate::Result<()> {
+            unreachable!()
+        }
+        async fn get_manifest_entries(
+            &self,
+            _: &str,
+        ) -> crate::Result<Vec<crate::types::ManifestEntry>> {
+            unreachable!()
+        }
+        async fn delete_manifest_entries(&self, _: &str) -> crate::Result<()> {
+            unreachable!()
+        }
+        async fn delete_manifest_entry(&self, _: &str, _: &str) -> crate::Result<()> {
+            unreachable!()
+        }
+        async fn count_manifest_entries(&self, _: &str) -> crate::Result<usize> {
+            unreachable!()
+        }
     }
 
     // ── Helper to build (ChunkMeta, content) pairs for test index construction ──
@@ -1000,6 +1040,7 @@ mod tests {
                 end_line: 3,
                 chunk_type: crate::types::ChunkType::Function,
                 name: name.map(|s| s.to_string()),
+                context_path: None,
                 project_id: project_id.to_string(),
             },
             content.to_string(),
@@ -1176,6 +1217,7 @@ mod tests {
             end_line: 1,
             chunk_type: crate::types::ChunkType::Other,
             name: Some("MyModule::my_fn".to_string()),
+            context_path: None,
             project_id: "p".to_string(),
         };
         let content = "some content here";

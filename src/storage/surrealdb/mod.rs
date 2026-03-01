@@ -6,7 +6,7 @@ use surrealdb::engine::local::{Db, SurrealKv};
 use surrealdb::Surreal;
 
 use super::StorageBackend;
-use crate::graph::GraphTraversalStorage;
+use crate::graph::{GraphTraversalStorage, SymbolGraphTraversalStorage};
 use crate::types::{
     CodeChunk, CodeSymbol, Direction, Entity, IndexStatus, ManifestEntry, Memory, MemoryUpdate,
     Relation, ScoredCodeChunk, SearchResult, SymbolRelation,
@@ -224,6 +224,119 @@ impl GraphTraversalStorage for SurrealStorage {
         }
 
         Ok((entities, relations))
+    }
+}
+
+// ---------------------------------------------------------------------------
+// SymbolGraphTraversalStorage — needed by the symbol graph traversal engine
+// ---------------------------------------------------------------------------
+
+impl SymbolGraphTraversalStorage for SurrealStorage {
+    async fn get_direct_symbol_relations(
+        &self,
+        symbol_id: &str,
+        direction: Direction,
+    ) -> Result<(Vec<CodeSymbol>, Vec<SymbolRelation>)> {
+        // Delegate to the existing single-hop implementation
+        symbol_ops::get_related_symbols(&self.db, symbol_id, 1, direction).await
+    }
+
+    async fn get_direct_symbol_relations_batch(
+        &self,
+        symbol_ids: &[String],
+        direction: Direction,
+    ) -> Result<(Vec<CodeSymbol>, Vec<SymbolRelation>)> {
+        if symbol_ids.is_empty() {
+            return Ok((vec![], vec![]));
+        }
+
+        // Build Thing IDs for the batch query
+        let things: Vec<crate::types::Thing> = symbol_ids
+            .iter()
+            .filter_map(|id| {
+                let (table, key) = if let Some(idx) = id.find(':') {
+                    (&id[..idx], &id[idx + 1..])
+                } else {
+                    ("code_symbols", id.as_str())
+                };
+                use crate::types::ThingId;
+                ThingId::new(table, key).ok().map(|t| t.to_thing())
+            })
+            .collect();
+
+        if things.is_empty() {
+            return Ok((vec![], vec![]));
+        }
+
+        let sql = match direction {
+            Direction::Outgoing => "SELECT * FROM symbol_relation WHERE `in` IN $ids",
+            Direction::Incoming => "SELECT * FROM symbol_relation WHERE `out` IN $ids",
+            Direction::Both => "SELECT * FROM symbol_relation WHERE `in` IN $ids OR `out` IN $ids",
+        };
+
+        let mut response = self.db.query(sql).bind(("ids", things)).await?;
+
+        let raw: surrealdb_types::Value = response.take(0)?;
+        let relations = helpers::value_to_symbol_relations(raw);
+
+        // Collect target symbol IDs from relations (excluding source IDs)
+        let source_set: std::collections::HashSet<&String> = symbol_ids.iter().collect();
+        let mut target_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+        for rel in &relations {
+            let from_str = format!(
+                "{}:{}",
+                rel.from_symbol.table.as_str(),
+                crate::types::record_key_to_string(&rel.from_symbol.key)
+            );
+            let to_str = format!(
+                "{}:{}",
+                rel.to_symbol.table.as_str(),
+                crate::types::record_key_to_string(&rel.to_symbol.key)
+            );
+
+            match direction {
+                Direction::Outgoing => {
+                    if !source_set.contains(&to_str) {
+                        target_ids.insert(to_str);
+                    }
+                }
+                Direction::Incoming => {
+                    if !source_set.contains(&from_str) {
+                        target_ids.insert(from_str);
+                    }
+                }
+                Direction::Both => {
+                    if !source_set.contains(&from_str) {
+                        target_ids.insert(from_str);
+                    }
+                    if !source_set.contains(&to_str) {
+                        target_ids.insert(to_str);
+                    }
+                }
+            }
+        }
+
+        // Batch-fetch symbols
+        let symbols: Vec<CodeSymbol> = if target_ids.is_empty() {
+            vec![]
+        } else {
+            let record_list: Vec<String> = target_ids
+                .into_iter()
+                .map(|sid| {
+                    if sid.contains(':') {
+                        sid
+                    } else {
+                        format!("code_symbols:{}", sid)
+                    }
+                })
+                .collect();
+            let sql = format!("SELECT * FROM {}", record_list.join(", "));
+            let mut response = self.db.query(sql).await?;
+            response.take(0).unwrap_or_default()
+        };
+
+        Ok((symbols, relations))
     }
 }
 
@@ -935,6 +1048,7 @@ mod tests {
                 end_line: 3,
                 chunk_type: ChunkType::Function,
                 name: Some(format!("test_{}", i)),
+                context_path: None,
                 embedding: Some(vec![0.1; 768]),
                 content_hash: format!("hash_{}", i),
                 project_id: Some("test_project".to_string()),
@@ -969,6 +1083,7 @@ mod tests {
                 end_line: 3,
                 chunk_type: ChunkType::Function,
                 name: Some(format!("embed_{}", i)),
+                context_path: None,
                 embedding: None,
                 content_hash: format!("embed_hash_{}", i),
                 project_id: Some("embed_project".to_string()),
@@ -1119,6 +1234,7 @@ mod tests {
                 end_line: 3,
                 chunk_type: ChunkType::Function,
                 name: Some(format!("alpha_function_{}", i)),
+                context_path: None,
                 embedding: Some(vec![0.1; 768]),
                 content_hash: format!("hash_a_{}", i),
                 project_id: Some("project_alpha".to_string()),
@@ -1136,6 +1252,7 @@ mod tests {
                 end_line: 3,
                 chunk_type: ChunkType::Function,
                 name: Some(format!("alpha_function_{}", i)),
+                context_path: None,
                 embedding: Some(vec![0.1; 768]),
                 content_hash: format!("hash_b_{}", i),
                 project_id: Some("project_beta".to_string()),

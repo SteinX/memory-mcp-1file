@@ -106,7 +106,6 @@ pub async fn recall_code(
     let query_embedding = state.embedding.embed(&params.query).await?;
 
     let limit = normalize_limit(params.limit);
-    let fetch_limit = limit * 3;
 
     let vector_weight = params.vector_weight.unwrap_or(DEFAULT_CODE_VECTOR_WEIGHT);
     let bm25_weight = params.bm25_weight.unwrap_or(DEFAULT_CODE_BM25_WEIGHT);
@@ -114,15 +113,58 @@ pub async fn recall_code(
 
     let project_id = params.project_id.as_deref();
 
+    // ── Pre-filter configuration ───────────────────────────────────────────
+    // Each channel is filtered independently BEFORE RRF merge so that
+    // irrelevant results don't occupy rank slots and dilute precision.
+    let path_prefix = params.path_prefix.as_deref();
+    let language_filter = params.language.as_deref();
+    let chunk_type_filter = params.chunk_type.as_deref();
+    let has_filters =
+        path_prefix.is_some() || language_filter.is_some() || chunk_type_filter.is_some();
+
+    let matches_filters = |chunk: &crate::types::ScoredCodeChunk| -> bool {
+        if let Some(prefix) = path_prefix {
+            if !chunk.file_path.starts_with(prefix) {
+                return false;
+            }
+        }
+        if let Some(lang) = language_filter {
+            // Language enum uses serde rename_all = "lowercase"
+            let chunk_lang = serde_json::to_string(&chunk.language)
+                .unwrap_or_default()
+                .trim_matches('"')
+                .to_string();
+            if !chunk_lang.eq_ignore_ascii_case(lang) {
+                return false;
+            }
+        }
+        if let Some(ct) = chunk_type_filter {
+            let chunk_ct = serde_json::to_string(&chunk.chunk_type)
+                .unwrap_or_default()
+                .trim_matches('"')
+                .to_string();
+            if !chunk_ct.eq_ignore_ascii_case(ct) {
+                return false;
+            }
+        }
+        true
+    };
+
+    // When filters are active, over-fetch to compensate for post-filter attrition
+    let fetch_limit = if has_filters { limit * 6 } else { limit * 3 };
+
     // 1. Vector search on code_chunks
-    let vector_results = state
+    let vector_results: Vec<_> = state
         .storage
         .vector_search_code(&query_embedding, project_id, fetch_limit)
         .await
-        .unwrap_or_default();
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|r| matches_filters(r))
+        .collect();
 
     // 2. BM25 search via in-memory engine (replaces DB-based CONTAINS fallback)
-    let bm25_results = state
+    let bm25_results: Vec<_> = state
         .code_search
         .search(
             &params.query,
@@ -130,7 +172,10 @@ pub async fn recall_code(
             fetch_limit,
             state.storage.as_ref(),
         )
-        .await;
+        .await
+        .into_iter()
+        .filter(|r| matches_filters(r))
+        .collect();
 
     let vector_tuples: Vec<_> = vector_results
         .iter()
@@ -223,14 +268,23 @@ pub async fn recall_code(
                         // Run shared PPR + hub-dampening kernel
                         let ppr_scores = run_ppr(&graph, &seed_nodes);
 
-                        // Map symbol PPR scores → chunk IDs by file_path
+                        // ── Chunk-level PPR mapping ────────────────────────────
+                        // Instead of collapsing PPR scores to file_path (lossy),
+                        // map each symbol's PPR score to chunks whose line range
+                        // overlaps the symbol's line range within the same file.
                         let reverse_map: HashMap<NodeIndex, String> = node_map
                             .iter()
                             .map(|(id, idx)| (*idx, id.clone()))
                             .collect();
 
-                        // Build file_path → max PPR score
-                        let mut file_scores: HashMap<String, f32> = HashMap::new();
+                        // Collect (file_path, start_line, end_line, ppr_score) for each symbol
+                        struct SymbolPpr {
+                            file_path: String,
+                            start_line: u32,
+                            end_line: u32,
+                            score: f32,
+                        }
+                        let mut symbol_pprs: Vec<SymbolPpr> = Vec::new();
                         for (idx, score) in &ppr_scores {
                             if let Some(sym_id) = reverse_map.get(idx) {
                                 if let Some(sym) = symbols.iter().find(|s| {
@@ -242,20 +296,34 @@ pub async fn recall_code(
                                         )
                                     }) == Some(sym_id.clone())
                                 }) {
-                                    let entry =
-                                        file_scores.entry(sym.file_path.clone()).or_insert(0.0);
-                                    if *score > *entry {
-                                        *entry = *score;
-                                    }
+                                    symbol_pprs.push(SymbolPpr {
+                                        file_path: sym.file_path.clone(),
+                                        start_line: sym.start_line,
+                                        end_line: sym.end_line,
+                                        score: *score,
+                                    });
                                 }
                             }
                         }
 
-                        // Map file PPR scores to chunk IDs
+                        // Map symbol PPR scores to chunks by line-range overlap.
+                        // A chunk overlaps a symbol when they share the same file
+                        // AND their line ranges intersect:
+                        //   chunk.start_line <= sym.end_line && sym.start_line <= chunk.end_line
                         let mut tuples: Vec<(String, f32)> = Vec::new();
                         for chunk in vector_results.iter().chain(bm25_results.iter()) {
-                            if let Some(&score) = file_scores.get(&chunk.file_path) {
-                                tuples.push((chunk.id.clone(), score));
+                            let mut best_score: f32 = 0.0;
+                            for sp in &symbol_pprs {
+                                if sp.file_path == chunk.file_path
+                                    && chunk.start_line <= sp.end_line
+                                    && sp.start_line <= chunk.end_line
+                                    && sp.score > best_score
+                                {
+                                    best_score = sp.score;
+                                }
+                            }
+                            if best_score > 0.0 {
+                                tuples.push((chunk.id.clone(), best_score));
                             }
                         }
                         tuples.sort_by(|a, b| {
@@ -309,6 +377,7 @@ pub async fn recall_code(
                     "end_line": chunk.end_line,
                     "chunk_type": chunk.chunk_type,
                     "name": chunk.name,
+                    "context_path": chunk.context_path,
                     "score": scores.combined_score,
                     "vector_score": scores.vector_score,
                     "bm25_score": scores.bm25_score,

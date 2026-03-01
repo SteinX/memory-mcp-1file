@@ -649,6 +649,7 @@ pub(super) async fn vector_search_code(
             end_line,
             chunk_type,
             name,
+            context_path,
             vector::similarity::cosine(embedding, $vec) AS score 
         FROM code_chunks
         WHERE embedding <|{knn_k},{ef}|> $vec

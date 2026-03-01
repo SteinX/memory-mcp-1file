@@ -72,6 +72,7 @@ DEFINE FIELD start_line       ON code_chunks TYPE int;
 DEFINE FIELD end_line         ON code_chunks TYPE int;
 DEFINE FIELD chunk_type       ON code_chunks TYPE string DEFAULT 'other';
 DEFINE FIELD name             ON code_chunks TYPE option<string>;
+DEFINE FIELD context_path     ON code_chunks TYPE option<string>;
 DEFINE FIELD embedding        ON code_chunks TYPE option<array<float>>;
 DEFINE FIELD content_hash     ON code_chunks TYPE string;
 DEFINE FIELD project_id       ON code_chunks TYPE option<string>;

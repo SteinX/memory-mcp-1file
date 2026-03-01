@@ -25,6 +25,10 @@ pub struct CodeChunk {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
 
+    /// Hierarchical breadcrumb path from AST (e.g. "impl:AuthService > fn:login")
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub context_path: Option<String>,
+
     #[serde(skip_serializing_if = "Option::is_none")]
     pub embedding: Option<Vec<f32>>,
 

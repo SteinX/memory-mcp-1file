@@ -17,5 +17,6 @@ pub use rrf::{
     DEFAULT_CODE_VECTOR_WEIGHT, DEFAULT_PPR_WEIGHT, DEFAULT_VECTOR_WEIGHT, RRF_K,
 };
 pub use traversal::{
-    GraphTraversalStorage, GraphTraverser, TraversalConfig, TraversalResult, TraversalStrategy,
+    GraphTraversalStorage, GraphTraverser, SymbolGraphTraversalStorage, SymbolGraphTraverser,
+    SymbolTraversalResult, TraversalConfig, TraversalResult, TraversalStrategy,
 };

@@ -50,50 +50,216 @@ fn chunk_by_ast(
 
     let mut chunks = Vec::new();
     let root = tree.root_node();
+    let source = content.as_bytes();
 
-    let mut cursor = root.walk();
-    for child in root.children(&mut cursor) {
-        let start_byte = child.start_byte();
-        let end_byte = child.end_byte();
-
-        let node_text = content.get(start_byte..end_byte).unwrap_or("");
-
-        if node_text.len() < MIN_CHUNK_CHARS {
-            continue;
-        }
-
-        if node_text.len() <= MAX_CHUNK_CHARS {
-            let chunk_type = detect_chunk_type(&child);
-            let line_count = child.end_position().row - child.start_position().row + 1;
-            if chunk_type == ChunkType::Other && line_count < MIN_OTHER_CHUNK_LINES {
-                continue; // Skip noise
-            }
-            chunks.push(create_chunk(
-                node_text,
-                file_path,
-                project_id,
-                language.clone(),
-                child.start_position().row as u32 + 1,
-                child.end_position().row as u32 + 1,
-                chunk_type,
-            ));
-        } else {
-            let sub_chunks = split_large_node(
-                node_text,
-                file_path,
-                project_id,
-                language.clone(),
-                child.start_position().row as u32 + 1,
-            );
-            chunks.extend(sub_chunks);
-        }
-    }
+    // Recursively walk the AST to find chunk-worthy nodes at any depth
+    walk_ast_recursive(
+        root,
+        source,
+        content,
+        file_path,
+        project_id,
+        &language,
+        &mut chunks,
+    );
 
     if chunks.is_empty() {
         return chunk_by_structure(content, file_path, project_id, language);
     }
 
     chunks
+}
+
+/// Recursively walk the AST tree, chunking definitions at any nesting depth.
+/// Builds hierarchical context_path (breadcrumbs) for each chunk.
+fn walk_ast_recursive(
+    node: tree_sitter::Node,
+    source: &[u8],
+    content: &str,
+    file_path: &str,
+    project_id: &str,
+    language: &Language,
+    chunks: &mut Vec<CodeChunk>,
+) {
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        let start_byte = child.start_byte();
+        let end_byte = child.end_byte();
+        let node_text = content.get(start_byte..end_byte).unwrap_or("");
+
+        if node_text.len() < MIN_CHUNK_CHARS {
+            continue;
+        }
+
+        let chunk_type = detect_chunk_type(&child);
+        let is_named_scope = is_scope_node(child.kind());
+
+        if is_chunk_worthy(&child, chunk_type.clone()) {
+            let context_path = build_context_path(child, source);
+
+            if node_text.len() <= MAX_CHUNK_CHARS {
+                let line_count = child.end_position().row - child.start_position().row + 1;
+                if chunk_type == ChunkType::Other && line_count < MIN_OTHER_CHUNK_LINES {
+                    // Skip noise, but still recurse into named scopes
+                    if is_named_scope {
+                        walk_ast_recursive(
+                            child, source, content, file_path, project_id, language, chunks,
+                        );
+                    }
+                    continue;
+                }
+                chunks.push(create_chunk(
+                    node_text,
+                    file_path,
+                    project_id,
+                    language.clone(),
+                    child.start_position().row as u32 + 1,
+                    child.end_position().row as u32 + 1,
+                    chunk_type,
+                    context_path,
+                ));
+            } else {
+                let sub_chunks = split_large_node(
+                    node_text,
+                    file_path,
+                    project_id,
+                    language.clone(),
+                    child.start_position().row as u32 + 1,
+                    context_path,
+                );
+                chunks.extend(sub_chunks);
+            }
+
+            // Also recurse into this node to find nested definitions
+            // (e.g. methods inside impl blocks, nested classes)
+            if is_named_scope {
+                walk_ast_recursive(
+                    child, source, content, file_path, project_id, language, chunks,
+                );
+            }
+        } else if is_named_scope {
+            // Not chunk-worthy itself, but may contain chunk-worthy children
+            walk_ast_recursive(
+                child, source, content, file_path, project_id, language, chunks,
+            );
+        }
+    }
+}
+
+/// Check if a node is chunk-worthy (definition that should become a chunk)
+fn is_chunk_worthy(node: &tree_sitter::Node, chunk_type: ChunkType) -> bool {
+    // Top-level items and named definitions are always chunk-worthy
+    chunk_type != ChunkType::Other || node.parent().is_none_or(|p| p.parent().is_none())
+}
+
+/// Check if a node kind represents a named scope that may contain nested definitions.
+fn is_scope_node(kind: &str) -> bool {
+    matches!(
+        kind,
+        "impl_item"
+            | "trait_item"
+            | "mod_item"
+            | "module"
+            | "class_definition"
+            | "class_declaration"
+            | "class_body"
+            | "declaration_list"
+            | "block"
+            | "namespace_definition"
+            | "interface_declaration"
+            | "enum_item"
+    )
+}
+
+/// Build a hierarchical context path (breadcrumbs) by walking UP from a node
+/// to the root, collecting named scope ancestors.
+///
+/// Example output: "mod:codebase > impl:ChunkerService > fn:process_file"
+fn build_context_path(node: tree_sitter::Node, source: &[u8]) -> Option<String> {
+    let mut parts = Vec::new();
+    let mut current = node.parent();
+
+    while let Some(parent) = current {
+        if is_named_scope_for_path(parent.kind()) {
+            if let Some(name) = extract_scope_name(parent, source) {
+                parts.push(format!("{}:{}", simplify_kind(parent.kind()), name));
+            }
+        }
+        current = parent.parent();
+    }
+
+    if parts.is_empty() {
+        return None;
+    }
+    parts.reverse();
+    Some(parts.join(" > "))
+}
+
+/// Node kinds that contribute to context_path breadcrumbs.
+fn is_named_scope_for_path(kind: &str) -> bool {
+    matches!(
+        kind,
+        "mod_item"
+            | "impl_item"
+            | "trait_item"
+            | "class_definition"
+            | "class_declaration"
+            | "module"
+            | "namespace_definition"
+            | "interface_declaration"
+            | "function_item"
+            | "function_definition"
+            | "method_definition"
+    )
+}
+
+/// Simplify tree-sitter node kind to a short label for breadcrumbs.
+fn simplify_kind(kind: &str) -> &str {
+    match kind {
+        "mod_item" | "module" => "mod",
+        "impl_item" => "impl",
+        "trait_item" => "trait",
+        "class_definition" | "class_declaration" => "class",
+        "function_item" | "function_definition" | "method_definition" => "fn",
+        "namespace_definition" => "ns",
+        "interface_declaration" => "iface",
+        _ => kind,
+    }
+}
+
+/// Extract the name of a scope node from its AST children.
+/// Tries `child_by_field_name("name")` first, then specific patterns.
+fn extract_scope_name(node: tree_sitter::Node, source: &[u8]) -> Option<String> {
+    // Try the standard "name" field first (works for most languages)
+    if let Some(name_node) = node.child_by_field_name("name") {
+        return source
+            .get(name_node.byte_range())
+            .and_then(|b| std::str::from_utf8(b).ok())
+            .map(|s| s.to_string());
+    }
+
+    // For Rust impl blocks: `impl Type { ... }` — look for type child
+    if node.kind() == "impl_item" {
+        if let Some(type_node) = node.child_by_field_name("type") {
+            return source
+                .get(type_node.byte_range())
+                .and_then(|b| std::str::from_utf8(b).ok())
+                .map(|s| s.to_string());
+        }
+    }
+
+    // Fallback: find first identifier/type_identifier child
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        if child.kind() == "identifier" || child.kind() == "type_identifier" {
+            return source
+                .get(child.byte_range())
+                .and_then(|b| std::str::from_utf8(b).ok())
+                .map(|s| s.to_string());
+        }
+    }
+
+    None
 }
 
 fn chunk_by_structure(
@@ -121,6 +287,7 @@ fn chunk_by_structure(
                 current_start_line,
                 end_line,
                 ChunkType::Other,
+                None, // no context_path for structure-based chunking
             ));
             current_chunk.clear();
             current_start_line = line_counter;
@@ -142,6 +309,7 @@ fn chunk_by_structure(
             current_start_line,
             line_counter,
             ChunkType::Other,
+            None, // no context_path for structure-based chunking
         ));
     }
 
@@ -154,6 +322,7 @@ fn split_large_node(
     project_id: &str,
     language: Language,
     base_line: u32,
+    context_path: Option<String>,
 ) -> Vec<CodeChunk> {
     let lines: Vec<&str> = text.lines().collect();
     let mut chunks = Vec::new();
@@ -173,6 +342,7 @@ fn split_large_node(
                 base_line + current_start as u32,
                 base_line + end as u32,
                 ChunkType::Other,
+                context_path.clone(), // propagate parent context_path to sub-chunks
             ));
         }
 
@@ -182,6 +352,7 @@ fn split_large_node(
     chunks
 }
 
+#[allow(clippy::too_many_arguments)]
 fn create_chunk(
     content: &str,
     file_path: &str,
@@ -190,6 +361,7 @@ fn create_chunk(
     start_line: u32,
     end_line: u32,
     chunk_type: ChunkType,
+    context_path: Option<String>,
 ) -> CodeChunk {
     let content_hash = blake3::hash(content.as_bytes()).to_hex().to_string();
 
@@ -202,6 +374,7 @@ fn create_chunk(
         end_line,
         chunk_type,
         name: None,
+        context_path,
         embedding: None,
         content_hash,
         project_id: Some(project_id.to_string()),

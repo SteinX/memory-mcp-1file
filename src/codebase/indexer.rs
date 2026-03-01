@@ -10,7 +10,7 @@ use crate::Result;
 
 use super::chunker::chunk_file;
 use super::parser::CodeParser;
-use super::relations::{create_symbol_relations, RelationStats};
+use super::relations::{create_symbol_relations, detect_containment_references, RelationStats};
 use super::scanner::scan_directory;
 use super::symbol_index::SymbolIndex;
 
@@ -189,6 +189,11 @@ async fn do_index_project(
                 symbol_index.add(symbol);
             }
 
+            // Detect containment (parent→child) relations from symbol line ranges
+            // BEFORE consuming `symbols` into the buffer. This produces Contains
+            // edges (e.g. impl→fn, class→method) that tree-sitter doesn't emit.
+            let containment_refs = detect_containment_references(&symbols);
+
             for symbol in symbols {
                 symbol_buffer.push(symbol);
                 status.total_symbols += 1;
@@ -227,6 +232,7 @@ async fn do_index_project(
 
             // Buffer references for deferred processing (after ALL symbols are indexed)
             relation_buffer.extend(references);
+            relation_buffer.extend(containment_refs);
 
             status.indexed_files += 1;
             monitor
@@ -523,7 +529,12 @@ pub async fn incremental_index(
             }
 
             // Create relations using project-wide symbol index for cross-file resolution
-            if !references.is_empty() {
+            // Also detect containment edges from symbol nesting within this file.
+            let containment_refs = detect_containment_references(&symbols);
+            let mut all_refs = references;
+            all_refs.extend(containment_refs);
+
+            if !all_refs.is_empty() {
                 let mut symbol_index = SymbolIndex::new();
                 if let Ok(all_symbols) = state.storage.get_project_symbols(project_id).await {
                     symbol_index.add_batch(&all_symbols);
@@ -532,7 +543,7 @@ pub async fn incremental_index(
                 let _stats = create_symbol_relations(
                     state.storage.as_ref(),
                     project_id,
-                    &references,
+                    &all_refs,
                     &symbol_index,
                 )
                 .await;

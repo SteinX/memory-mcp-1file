@@ -62,6 +62,11 @@ impl TestContext {
             log_level: "debug".to_string(),
             // Tests use Mock model which is always instantly ready; any value works.
             model_load_timeout_ms: 30_000,
+            embedding_queue_capacity: 256,
+            embedding_batch_size: 8,
+            index_batch_size: 20,
+            index_debounce_ms: 2_000,
+            manifest_diff_interval_mins: 10,
         };
 
         let (shutdown_tx, _) = tokio::sync::watch::channel(false);
