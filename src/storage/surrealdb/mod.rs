@@ -499,6 +499,15 @@ impl StorageBackend for SurrealStorage {
         code_ops::get_all_chunks_for_project(&self.db, project_id).await
     }
 
+    async fn get_chunks_paginated(
+        &self,
+        project_id: &str,
+        limit: usize,
+        offset: usize,
+    ) -> Result<Vec<CodeChunk>> {
+        code_ops::get_chunks_paginated(&self.db, project_id, limit, offset).await
+    }
+
     async fn get_chunks_by_ids(&self, ids: &[String]) -> Result<Vec<CodeChunk>> {
         code_ops::get_chunks_by_ids(&self.db, ids).await
     }

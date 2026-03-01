@@ -254,13 +254,31 @@ impl CodeSearchEngine {
     /// `spawn_blocking` thread so the async executor is not blocked.  The
     /// `RwLock` is only acquired for the final `HashMap` insertion.
     pub async fn rebuild_project(&self, project_id: &str, chunks: Vec<(ChunkMeta, String)>) {
+        self.rebuild_project_from_pairs(project_id, chunks).await
+    }
+
+    /// Internal: build a `ProjectIndex` from pre-assembled (meta, content) pairs
+    /// and store it.  Uses `into_iter()` to consume `pairs` so each Document is
+    /// built and the pair dropped, rather than keeping both alive simultaneously.
+    async fn rebuild_project_from_pairs(
+        &self,
+        project_id: &str,
+        pairs: Vec<(ChunkMeta, String)>,
+    ) {
         // Move all CPU-bound work (document preparation + engine build) off the
         // async thread.
         let (engine, meta) = tokio::task::spawn_blocking(move || {
-            let documents: Vec<Document<String>> = chunks
-                .iter()
-                .map(|(c, content)| Document::new(c.id.clone(), make_document_text(c, content)))
-                .collect();
+            // Consume pairs with into_iter() so each (ChunkMeta, String) is
+            // dropped as soon as we extract what we need — avoids holding the
+            // full content Vec alive while also building the documents Vec.
+            let mut documents: Vec<Document<String>> = Vec::with_capacity(pairs.len());
+            let mut meta_map: HashMap<String, ChunkMeta> = HashMap::with_capacity(pairs.len());
+
+            for (chunk, content) in pairs {
+                documents.push(Document::new(chunk.id.clone(), make_document_text(&chunk, &content)));
+                // `content` is dropped here — not stored in meta_map
+                meta_map.insert(chunk.id.clone(), chunk);
+            }
 
             let engine: InnerEngine = if documents.is_empty() {
                 // Build an empty engine with a reasonable avgdl
@@ -273,15 +291,10 @@ impl CodeSearchEngine {
                 .build()
             };
 
-            let meta: HashMap<String, ChunkMeta> = chunks
-                .into_iter()
-                .map(|(c, _content)| (c.id.clone(), c))
-                .collect();
-
-            (engine, meta)
+            (engine, meta_map)
         })
         .await
-        .expect("BM25 rebuild_project: spawn_blocking panicked");
+        .expect("BM25 rebuild_project_from_pairs: spawn_blocking panicked");
 
         // Only hold the lock for the map insertion – no CPU work here.
         let mut projects = self.projects.write().await;
@@ -454,6 +467,10 @@ impl CodeSearchEngine {
 
     /// Load all chunks for all indexed projects from storage into the BM25 index.
     /// Called once at startup to warm the in-memory index.
+    ///
+    /// Uses paginated fetching (1000 chunks per page) so at most one page of
+    /// raw `CodeChunk` rows (~2 MB) is alive at any time instead of loading the
+    /// entire project into RAM.
     pub async fn load_all_from_storage(
         &self,
         storage: &impl crate::storage::StorageBackend,
@@ -480,15 +497,9 @@ impl CodeSearchEngine {
                 _ => continue,
             }
 
-            match storage.get_all_chunks_for_project(project_id).await {
-                Ok(chunks) => {
-                    let pairs: Vec<(ChunkMeta, String)> = chunks
-                        .iter()
-                        .filter_map(ChunkMeta::from_code_chunk)
-                        .collect();
-                    let count = pairs.len();
+            match self.rebuild_project_streaming(storage, project_id).await {
+                Ok(count) => {
                     if count > 0 {
-                        self.rebuild_project(project_id, pairs).await;
                         tracing::info!(
                             project_id = %project_id,
                             chunks = count,
@@ -510,21 +521,60 @@ impl CodeSearchEngine {
         total
     }
 
+    /// Stream-load chunks for a single project from storage page by page,
+    /// building up the BM25 (meta, content) pairs without ever holding more
+    /// than one page of raw `CodeChunk` rows in memory.
+    ///
+    /// Returns the number of chunks indexed.
+    async fn rebuild_project_streaming(
+        &self,
+        storage: &impl crate::storage::StorageBackend,
+        project_id: &str,
+    ) -> crate::Result<usize> {
+        const PAGE_SIZE: usize = 1000;
+        let mut all_pairs: Vec<(ChunkMeta, String)> = Vec::new();
+        let mut offset = 0usize;
+
+        loop {
+            let chunks = storage
+                .get_chunks_paginated(project_id, PAGE_SIZE, offset)
+                .await?;
+            if chunks.is_empty() {
+                break;
+            }
+            let page_len = chunks.len();
+            // Consume `chunks` (not borrow) so the Vec<CodeChunk> is freed as
+            // we iterate — only `all_pairs` accumulates.
+            for chunk in chunks {
+                if let Some(pair) = ChunkMeta::from_code_chunk(&chunk) {
+                    all_pairs.push(pair);
+                }
+            }
+            offset += page_len;
+            if page_len < PAGE_SIZE {
+                break;
+            }
+        }
+
+        let count = all_pairs.len();
+        if count > 0 {
+            self.rebuild_project_from_pairs(project_id, all_pairs).await;
+        }
+        Ok(count)
+    }
+
     /// Rebuild the BM25 index for a single project from storage.
     /// Called after indexing completes.
+    ///
+    /// Uses the same streaming paginated fetch as `load_all_from_storage` to
+    /// avoid a transient memory spike.
     pub async fn rebuild_from_storage(
         &self,
         storage: &impl crate::storage::StorageBackend,
         project_id: &str,
     ) {
-        match storage.get_all_chunks_for_project(project_id).await {
-            Ok(chunks) => {
-                let pairs: Vec<(ChunkMeta, String)> = chunks
-                    .iter()
-                    .filter_map(ChunkMeta::from_code_chunk)
-                    .collect();
-                let count = pairs.len();
-                self.rebuild_project(project_id, pairs).await;
+        match self.rebuild_project_streaming(storage, project_id).await {
+            Ok(count) => {
                 tracing::info!(
                     project_id = %project_id,
                     chunks = count,

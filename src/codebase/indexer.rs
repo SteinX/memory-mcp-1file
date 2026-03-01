@@ -234,6 +234,23 @@ async fn do_index_project(
             relation_buffer.extend(references);
             relation_buffer.extend(containment_refs);
 
+            // Mid-flight flush: avoid unbounded growth of relation_buffer on
+            // large codebases.  5000 relations ≈ ~2 MB (each CodeReference is
+            // small), so flushing at this threshold keeps peak RSS low.
+            if relation_buffer.len() >= 5000 {
+                let batch = std::mem::take(&mut relation_buffer);
+                let stats = create_symbol_relations(
+                    state.storage.as_ref(),
+                    project_id,
+                    &batch,
+                    &symbol_index,
+                )
+                .await;
+                total_relation_stats.created += stats.created;
+                total_relation_stats.failed += stats.failed;
+                total_relation_stats.unresolved += stats.unresolved;
+            }
+
             status.indexed_files += 1;
             monitor
                 .indexed_files

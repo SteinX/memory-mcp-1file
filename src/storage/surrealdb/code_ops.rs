@@ -93,6 +93,9 @@ pub(super) async fn get_chunks_by_path(
     Ok(chunks)
 }
 
+/// Returns all chunks for a project without embedding data.
+/// Kept for backward compat with callers that still need the full set.
+#[allow(dead_code)]
 pub(super) async fn get_all_chunks_for_project(
     db: &Surreal<Db>,
     project_id: &str,
@@ -104,6 +107,31 @@ pub(super) async fn get_all_chunks_for_project(
     let mut response = db
         .query(sql)
         .bind(("project_id", project_id.to_string()))
+        .await?;
+    let chunks: Vec<CodeChunk> = response.take(0).unwrap_or_default();
+    Ok(chunks)
+}
+
+/// Paginated variant of `get_all_chunks_for_project` to avoid materialising
+/// the entire chunk set into a single `Vec`.  Callers iterate pages until an
+/// empty page is returned.
+///
+/// `limit`  – page size (number of rows per page)
+/// `offset` – zero-based row offset (i.e. `page * limit`)
+pub(super) async fn get_chunks_paginated(
+    db: &Surreal<Db>,
+    project_id: &str,
+    limit: usize,
+    offset: usize,
+) -> Result<Vec<CodeChunk>> {
+    let sql = "SELECT * OMIT embedding FROM code_chunks \
+               WHERE project_id = $project_id \
+               LIMIT $limit START $offset";
+    let mut response = db
+        .query(sql)
+        .bind(("project_id", project_id.to_string()))
+        .bind(("limit", limit))
+        .bind(("offset", offset))
         .await?;
     let chunks: Vec<CodeChunk> = response.take(0).unwrap_or_default();
     Ok(chunks)

@@ -391,8 +391,10 @@ pub(super) async fn get_code_subgraph(
         return Ok((vec![], vec![]));
     }
 
-    // Fetch all relations where in OR out is in our symbol set
-    let sql = "SELECT * FROM symbol_relation WHERE `in` IN $ids OR `out` IN $ids";
+    // Fetch all relations where in OR out is in our symbol set.
+    // LIMIT 500 prevents hub symbols (e.g. `log`, `Result`) from returning
+    // thousands of relations and causing a memory spike.
+    let sql = "SELECT * FROM symbol_relation WHERE `in` IN $ids OR `out` IN $ids LIMIT 500";
     let mut response = db.query(sql).bind(("ids", things)).await?;
     let raw: surrealdb_types::Value = response.take(0)?;
     let relations = value_to_symbol_relations(raw);

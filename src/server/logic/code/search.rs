@@ -187,13 +187,7 @@ pub async fn recall_code(
         .collect();
 
     // 3. Graph component: find related symbols → PPR
-    let _all_chunk_ids: Vec<String> = vector_results
-        .iter()
-        .chain(bm25_results.iter())
-        .map(|r| r.id.clone())
-        .collect::<std::collections::HashSet<_>>()
-        .into_iter()
-        .collect();
+    // (removed: _all_chunk_ids — HashSet+Vec was built but never read)
 
     let ppr_tuples: Vec<(String, f32)> = if ppr_weight > 0.0 {
         // Find semantically similar symbols via vector search
@@ -221,8 +215,10 @@ pub async fn recall_code(
                 Ok((symbols, relations)) if !symbols.is_empty() => {
                     let mut graph: DiGraph<String, f32> = DiGraph::new();
                     let mut node_map: HashMap<String, NodeIndex> = HashMap::new();
-                    // Map: symbol file_path → symbol node ID (for chunk→symbol mapping)
-                    let mut file_to_symbols: HashMap<String, Vec<String>> = HashMap::new();
+
+                    // Pre-build O(1) lookup: symbol ID string → &CodeSymbol
+                    // Avoids the O(n²) `.find()` scan in the PPR mapping loop below.
+                    let mut sym_by_id: HashMap<String, &crate::types::CodeSymbol> = HashMap::new();
 
                     for sym in &symbols {
                         if let Some(ref id) = sym.id {
@@ -233,10 +229,7 @@ pub async fn recall_code(
                             );
                             let idx = graph.add_node(id_str.clone());
                             node_map.insert(id_str.clone(), idx);
-                            file_to_symbols
-                                .entry(sym.file_path.clone())
-                                .or_default()
-                                .push(id_str);
+                            sym_by_id.insert(id_str, sym);
                         }
                     }
 
@@ -277,7 +270,8 @@ pub async fn recall_code(
                             .map(|(id, idx)| (*idx, id.clone()))
                             .collect();
 
-                        // Collect (file_path, start_line, end_line, ppr_score) for each symbol
+                        // Collect (file_path, start_line, end_line, ppr_score) for each symbol.
+                        // O(1) lookup via pre-built HashMap instead of O(n) .find() scan.
                         struct SymbolPpr {
                             file_path: String,
                             start_line: u32,
@@ -287,15 +281,7 @@ pub async fn recall_code(
                         let mut symbol_pprs: Vec<SymbolPpr> = Vec::new();
                         for (idx, score) in &ppr_scores {
                             if let Some(sym_id) = reverse_map.get(idx) {
-                                if let Some(sym) = symbols.iter().find(|s| {
-                                    s.id.as_ref().map(|id| {
-                                        format!(
-                                            "{}:{}",
-                                            id.table.as_str(),
-                                            crate::types::record_key_to_string(&id.key)
-                                        )
-                                    }) == Some(sym_id.clone())
-                                }) {
+                                if let Some(sym) = sym_by_id.get(sym_id) {
                                     symbol_pprs.push(SymbolPpr {
                                         file_path: sym.file_path.clone(),
                                         start_line: sym.start_line,

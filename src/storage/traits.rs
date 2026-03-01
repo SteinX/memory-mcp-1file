@@ -164,6 +164,17 @@ pub trait StorageBackend: Send + Sync {
     /// Get all code chunks for a project (used to build in-memory BM25 index)
     async fn get_all_chunks_for_project(&self, project_id: &str) -> Result<Vec<CodeChunk>>;
 
+    /// Paginated code-chunk fetch used by the streaming BM25 warm-up.
+    /// Returns up to `limit` chunks starting from row `offset` (zero-based).
+    /// When the returned `Vec` is shorter than `limit` (or empty) the caller
+    /// knows it has reached the last page.
+    async fn get_chunks_paginated(
+        &self,
+        project_id: &str,
+        limit: usize,
+        offset: usize,
+    ) -> Result<Vec<CodeChunk>>;
+
     /// Fetch specific code chunks by their string IDs (e.g. "abc123").
     /// Used by the BM25 search to hydrate content for top-N results without
     /// keeping all chunk content in RAM.

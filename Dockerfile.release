@@ -4,6 +4,8 @@ COPY Cargo.toml /tmp/Cargo.toml
 RUN grep '^version' /tmp/Cargo.toml | head -1 | cut -d'"' -f2 > /tmp/VERSION
 
 ## -- Stage 2: Runtime image --
+# Recommended: run with --memory 6g for production workloads
+# Minimum: 3g for small codebases, 6g for large (50K+ chunks)
 FROM alpine:3.23
 
 ARG VERSION
@@ -32,6 +34,9 @@ ENV LOG_LEVEL=info
 # SurrealKV WAL recovery uses deep recursion on large datasets;
 # 16 MB prevents stack overflow in spawn_blocking threads.
 ENV RUST_MIN_STACK=16777216
+# Limit glibc malloc arenas to reduce memory fragmentation in containers.
+# Without this, glibc can create up to 8×CPU arenas, wasting hundreds of MB.
+ENV MALLOC_ARENA_MAX=2
 
 # Persist data and allow project mounting
 VOLUME ["/data", "/project"]
