@@ -294,54 +294,45 @@ Or with Docker:
 
 ## 🛠️ Tools Available
 
-The server exposes **27 tools** to the AI model, organized into logical categories.
+The server exposes **18 tools** to the AI model, organized into logical categories.
 
 ### 🧠 Core Memory Management
 | Tool | Description |
 |------|-------------|
 | `store_memory` | Store a new memory with content and optional metadata. |
-| `update_memory` | Update an existing memory (only provided fields). |
-| `delete_memory` | Delete a memory by its ID. |
-| `list_memories` | List memories with pagination (newest first). |
-| `get_memory` | Get a specific memory by ID. |
-| `invalidate` | Soft-delete a memory (mark as invalid). |
-| `get_valid` | Get currently active memories (filters out expired ones). |
-| `get_valid_at` | Get memories that were valid at a specific past timestamp. |
+| `update_memory` | Update memory fields. |
+| `delete_memory` | Delete memory by ID. |
+| `list_memories` | List memories (newest first). |
+| `get_memory` | Get full memory by ID. |
+| `invalidate` | Soft-delete memory, optionally linking replacement. |
+| `get_valid` | Get valid memories. Optional `timestamp` (ISO 8601) for point-in-time query. |
 
 ### 🔎 Search & Retrieval
 | Tool | Description |
 |------|-------------|
-| `recall` | **Hybrid search** (Vector + Keyword + Graph). Best for general questions. |
-| `search` | Pure semantic vector search. |
-| `search_text` | Exact keyword match (BM25). |
+| `recall` | **Hybrid search** (Vector + Keyword + Graph via RRF). Default for memories. |
+| `search_memory` | Search memories. `mode`: `vector` (default) or `bm25`. |
 
 ### 🕸️ Knowledge Graph
 | Tool | Description |
 |------|-------------|
-| `create_entity` | Define a node (e.g., "React", "Authentication"). |
-| `create_relation` | Link nodes (e.g., "Project" -> "uses" -> "React"). |
-| `get_related` | Find connected concepts via graph traversal. |
-| `detect_communities` | Detect communities in the graph using Leiden algorithm. |
+| `knowledge_graph` | Unified KG operations. `action`: `create_entity` \| `create_relation` \| `get_related` \| `detect_communities`. |
 
 ### 💻 Codebase Intelligence
 | Tool | Description |
 |------|-------------|
-| `index_project` | Scan and index a local folder for code search. |
-| `get_index_status` | Check if indexing is in progress or failed. |
-| `list_projects` | List all indexed projects. |
-| `delete_project` | Remove a project and its code chunks from the index. |
-| `search_code` | Semantic search over code chunks. |
-| `recall_code` | **Hybrid code search** (Vector + BM25 + Symbol Graph PageRank via RRF). Best quality code retrieval. |
-| `search_symbols` | Search for functions/classes by name. |
-| `get_callers` | Find functions that call a given symbol. |
-| `get_callees` | Find functions called by a given symbol. |
-| `get_related_symbols` | Get related symbols via graph traversal (calls, extends, implements). |
+| `index_project` | Index codebase directory for code search. |
+| `delete_project` | Delete indexed project. |
+| `recall_code` | Code retrieval. `mode`: `vector` or `hybrid` (default). Hybrid uses vector+BM25+graph fusion. |
+| `search_symbols` | Search code symbols by name. |
+| `symbol_graph` | Navigate symbol graph. `action`: `callers` \| `callees` \| `related`. |
+| `project_info` | Project info. `action`: `list` \| `status` \| `stats`. |
 
 ### ⚙️ System & Maintenance
 | Tool | Description |
 |------|-------------|
-| `get_status` | Get server health and loading status. |
-| `reset_all_memory` | **DANGER**: Wipes all data (memories, graph, code). |
+| `get_status` | Get system status and startup progress. |
+| `reset_all_memory` | **DANGER**: Reset all database data (requires `confirm=true`). |
 
 ---
 

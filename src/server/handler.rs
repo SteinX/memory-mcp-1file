@@ -92,24 +92,21 @@ impl MemoryMcpServer {
     }
 
     #[tool(
-        description = "Semantic vector search for memories."
+        description = "Search memories. mode: vector (default) or bm25."
     )]
-    async fn search(&self, params: Parameters<SearchParams>) -> Result<CallToolResult, ErrorData> {
-        logic::search::search(&self.state, params.0)
-            .await
-            .map_err(to_rpc_error)
-    }
-
-    #[tool(
-        description = "Exact keyword (BM25) search for memories."
-    )]
-    async fn search_text(
+    async fn search_memory(
         &self,
         params: Parameters<SearchParams>,
     ) -> Result<CallToolResult, ErrorData> {
-        logic::search::search_text(&self.state, params.0)
-            .await
-            .map_err(to_rpc_error)
+        if params.0.mode.as_deref() == Some("bm25") {
+            logic::search::search_text(&self.state, params.0)
+                .await
+                .map_err(to_rpc_error)
+        } else {
+            logic::search::search(&self.state, params.0)
+                .await
+                .map_err(to_rpc_error)
+        }
     }
 
     #[tool(
@@ -121,58 +118,106 @@ impl MemoryMcpServer {
             .map_err(to_rpc_error)
     }
 
-    #[tool(description = "Create KG entity.")]
-    async fn create_entity(
+    #[tool(
+        description = "Knowledge graph ops. action: create_entity|create_relation|get_related|detect_communities."
+    )]
+    async fn knowledge_graph(
         &self,
-        params: Parameters<CreateEntityParams>,
+        params: Parameters<KnowledgeGraphParams>,
     ) -> Result<CallToolResult, ErrorData> {
-        logic::graph::create_entity(&self.state, params.0)
-            .await
-            .map_err(to_rpc_error)
-    }
-
-    #[tool(description = "Create KG relation.")]
-    async fn create_relation(
-        &self,
-        params: Parameters<CreateRelationParams>,
-    ) -> Result<CallToolResult, ErrorData> {
-        logic::graph::create_relation(&self.state, params.0)
-            .await
-            .map_err(to_rpc_error)
-    }
-
-    #[tool(description = "Get related KG entities via traversal.")]
-    async fn get_related(
-        &self,
-        params: Parameters<GetRelatedParams>,
-    ) -> Result<CallToolResult, ErrorData> {
-        logic::graph::get_related(&self.state, params.0)
-            .await
-            .map_err(to_rpc_error)
+        match params.0.action.as_str() {
+            "create_entity" => {
+                let name = params.0.name.ok_or_else(|| ErrorData {
+                    code: ErrorCode(-32602),
+                    message: "name required for create_entity".into(),
+                    data: None,
+                })?;
+                let entity_params = CreateEntityParams {
+                    name,
+                    entity_type: params.0.entity_type,
+                    description: params.0.description,
+                    user_id: params.0.user_id,
+                };
+                logic::graph::create_entity(&self.state, entity_params)
+                    .await
+                    .map_err(to_rpc_error)
+            }
+            "create_relation" => {
+                let from_entity = params.0.from_entity.ok_or_else(|| ErrorData {
+                    code: ErrorCode(-32602),
+                    message: "from_entity required for create_relation".into(),
+                    data: None,
+                })?;
+                let to_entity = params.0.to_entity.ok_or_else(|| ErrorData {
+                    code: ErrorCode(-32602),
+                    message: "to_entity required for create_relation".into(),
+                    data: None,
+                })?;
+                let relation_type = params.0.relation_type.ok_or_else(|| ErrorData {
+                    code: ErrorCode(-32602),
+                    message: "relation_type required for create_relation".into(),
+                    data: None,
+                })?;
+                let relation_params = CreateRelationParams {
+                    from_entity,
+                    to_entity,
+                    relation_type,
+                    weight: params.0.weight,
+                };
+                logic::graph::create_relation(&self.state, relation_params)
+                    .await
+                    .map_err(to_rpc_error)
+            }
+            "get_related" => {
+                let entity_id = params.0.entity_id.ok_or_else(|| ErrorData {
+                    code: ErrorCode(-32602),
+                    message: "entity_id required for get_related".into(),
+                    data: None,
+                })?;
+                let related_params = GetRelatedParams {
+                    entity_id,
+                    depth: params.0.depth,
+                    direction: params.0.direction,
+                };
+                logic::graph::get_related(&self.state, related_params)
+                    .await
+                    .map_err(to_rpc_error)
+            }
+            "detect_communities" => {
+                let community_params = DetectCommunitiesParams { _placeholder: false };
+                logic::graph::detect_communities(&self.state, community_params)
+                    .await
+                    .map_err(to_rpc_error)
+            }
+            other => Err(ErrorData {
+                code: ErrorCode(-32602),
+                message: format!("Invalid action '{}'. Use: create_entity, create_relation, get_related, detect_communities", other).into(),
+                data: None,
+            }),
+        }
     }
 
     #[tool(
-        description = "Get valid memories (not superseded/deleted)."
+        description = "Get valid memories. Optional timestamp (ISO 8601) for point-in-time query."
     )]
     async fn get_valid(
         &self,
         params: Parameters<GetValidParams>,
     ) -> Result<CallToolResult, ErrorData> {
-        logic::memory::get_valid(&self.state, params.0)
-            .await
-            .map_err(to_rpc_error)
-    }
-
-    #[tool(
-        description = "Get memories valid at specific ISO 8601 timestamp."
-    )]
-    async fn get_valid_at(
-        &self,
-        params: Parameters<GetValidAtParams>,
-    ) -> Result<CallToolResult, ErrorData> {
-        logic::memory::get_valid_at(&self.state, params.0)
-            .await
-            .map_err(to_rpc_error)
+        if let Some(ref ts) = params.0.timestamp {
+            let at_params = GetValidAtParams {
+                timestamp: ts.clone(),
+                user_id: params.0.user_id.clone(),
+                limit: params.0.limit,
+            };
+            logic::memory::get_valid_at(&self.state, at_params)
+                .await
+                .map_err(to_rpc_error)
+        } else {
+            logic::memory::get_valid(&self.state, params.0)
+                .await
+                .map_err(to_rpc_error)
+        }
     }
 
     #[tool(
@@ -212,59 +257,71 @@ impl MemoryMcpServer {
     }
 
     #[tool(
-        description = "Semantic code search."
-    )]
-    async fn search_code(
-        &self,
-        params: Parameters<SearchCodeParams>,
-    ) -> Result<CallToolResult, ErrorData> {
-        logic::code::search_code(&self.state, params.0)
-            .await
-            .map_err(to_rpc_error)
-    }
-
-    #[tool(
-        description = "High-quality code retrieval via vector+BM25+graph fusion. Default for codebase queries."
+        description = "Code retrieval. mode: vector|hybrid (default: hybrid). Hybrid uses vector+BM25+graph fusion."
     )]
     async fn recall_code(
         &self,
         params: Parameters<RecallCodeParams>,
     ) -> Result<CallToolResult, ErrorData> {
-        logic::code::recall_code(&self.state, params.0)
-            .await
-            .map_err(to_rpc_error)
+        if params.0.mode.as_deref() == Some("vector") {
+            let search_params = SearchCodeParams {
+                query: params.0.query,
+                project_id: params.0.project_id,
+                limit: params.0.limit,
+            };
+            logic::code::search_code(&self.state, search_params)
+                .await
+                .map_err(to_rpc_error)
+        } else {
+            logic::code::recall_code(&self.state, params.0)
+                .await
+                .map_err(to_rpc_error)
+        }
     }
 
     #[tool(
-        description = "Get project indexing status."
+        description = "Project info. action: list|status|stats. project_id required for status/stats."
     )]
-    async fn get_index_status(
+    async fn project_info(
         &self,
-        params: Parameters<GetIndexStatusParams>,
+        params: Parameters<ProjectInfoParams>,
     ) -> Result<CallToolResult, ErrorData> {
-        let status = logic::code::get_index_status(&self.state, params.0)
-            .await
-            .map_err(to_rpc_error)?;
-
-        // Mix in real-time monitor stats if available and matching project
-        // Note: logic::code::get_index_status returns CallToolResult (JSON), not IndexStatus struct directly.
-        // We need to parse the JSON content to modify it, or modify logic::code::get_index_status instead.
-        // Modifying the logic layer is cleaner.
-        // Let's modify src/server/logic/code.rs instead of handler.rs for this logic.
-
-        Ok(status)
-    }
-
-    #[tool(
-        description = "List indexed projects."
-    )]
-    async fn list_projects(
-        &self,
-        params: Parameters<ListProjectsParams>,
-    ) -> Result<CallToolResult, ErrorData> {
-        logic::code::list_projects(&self.state, params.0)
-            .await
-            .map_err(to_rpc_error)
+        match params.0.action.as_str() {
+            "list" => {
+                let list_params = ListProjectsParams { _placeholder: false };
+                logic::code::list_projects(&self.state, list_params)
+                    .await
+                    .map_err(to_rpc_error)
+            }
+            "status" => {
+                let project_id = params.0.project_id.ok_or_else(|| ErrorData {
+                    code: ErrorCode(-32602),
+                    message: "project_id required for status action".into(),
+                    data: None,
+                })?;
+                let status_params = GetIndexStatusParams { project_id };
+                let status = logic::code::get_index_status(&self.state, status_params)
+                    .await
+                    .map_err(to_rpc_error)?;
+                Ok(status)
+            }
+            "stats" => {
+                let project_id = params.0.project_id.ok_or_else(|| ErrorData {
+                    code: ErrorCode(-32602),
+                    message: "project_id required for stats action".into(),
+                    data: None,
+                })?;
+                let stats_params = GetProjectStatsParams { project_id };
+                logic::code::get_project_stats(&self.state, stats_params)
+                    .await
+                    .map_err(to_rpc_error)
+            }
+            other => Err(ErrorData {
+                code: ErrorCode(-32602),
+                message: format!("Invalid action '{}'. Use: list, status, stats", other).into(),
+                data: None,
+            }),
+        }
     }
 
     #[tool(description = "Delete indexed project.")]
@@ -287,44 +344,12 @@ impl MemoryMcpServer {
             .map_err(to_rpc_error)
     }
 
-    #[tool(description = "Find callers of a symbol.")]
-    async fn get_callers(
+    #[tool(description = "Navigate symbol graph. action: callers|callees|related.")]
+    async fn symbol_graph(
         &self,
-        params: Parameters<GetCallersParams>,
+        params: Parameters<SymbolGraphParams>,
     ) -> Result<CallToolResult, ErrorData> {
-        logic::code::get_callers(&self.state, params.0)
-            .await
-            .map_err(to_rpc_error)
-    }
-
-    #[tool(description = "Find callees of a symbol.")]
-    async fn get_callees(
-        &self,
-        params: Parameters<GetCalleesParams>,
-    ) -> Result<CallToolResult, ErrorData> {
-        logic::code::get_callees(&self.state, params.0)
-            .await
-            .map_err(to_rpc_error)
-    }
-
-    #[tool(description = "Get related symbols via graph traversal.")]
-    async fn get_related_symbols(
-        &self,
-        params: Parameters<GetRelatedSymbolsParams>,
-    ) -> Result<CallToolResult, ErrorData> {
-        logic::code::get_related_symbols(&self.state, params.0)
-            .await
-            .map_err(to_rpc_error)
-    }
-
-    #[tool(
-        description = "Get project indexing statistics."
-    )]
-    async fn get_project_stats(
-        &self,
-        params: Parameters<GetProjectStatsParams>,
-    ) -> Result<CallToolResult, ErrorData> {
-        logic::code::get_project_stats(&self.state, params.0)
+        logic::code::symbol_graph(&self.state, params.0)
             .await
             .map_err(to_rpc_error)
     }
@@ -337,16 +362,6 @@ impl MemoryMcpServer {
         params: Parameters<ResetAllMemoryParams>,
     ) -> Result<CallToolResult, ErrorData> {
         logic::system::reset_all_memory(&self.state, params.0)
-            .await
-            .map_err(to_rpc_error)
-    }
-
-    #[tool(description = "Detect KG communities (Leiden algorithm).")]
-    async fn detect_communities(
-        &self,
-        params: Parameters<DetectCommunitiesParams>,
-    ) -> Result<CallToolResult, ErrorData> {
-        logic::graph::detect_communities(&self.state, params.0)
             .await
             .map_err(to_rpc_error)
     }

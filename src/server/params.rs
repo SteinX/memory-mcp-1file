@@ -62,6 +62,8 @@ pub struct SearchParams {
     pub query: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub limit: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mode: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -89,6 +91,9 @@ pub struct RecallCodeParams {
     /// Default: 10
     #[serde(skip_serializing_if = "Option::is_none")]
     pub limit: Option<usize>,
+    /// vector|hybrid (default: hybrid)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mode: Option<String>,
     /// Vector weight (default: 0.50)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub vector_weight: Option<f32>,
@@ -111,30 +116,30 @@ pub struct RecallCodeParams {
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[schemars(title = "")]
-pub struct CreateEntityParams {
-    pub name: String,
+pub struct KnowledgeGraphParams {
+    /// create_entity|create_relation|get_related|detect_communities
+    pub action: String,
+    // Entity fields
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub entity_type: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub user_id: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-#[schemars(title = "")]
-pub struct CreateRelationParams {
-    pub from_entity: String,
-    pub to_entity: String,
-    pub relation_type: String,
+    // Relation fields
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub from_entity: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub to_entity: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub relation_type: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub weight: Option<f32>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-#[schemars(title = "")]
-pub struct GetRelatedParams {
-    pub entity_id: String,
+    // Traversal fields
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub entity_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub depth: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -144,6 +149,8 @@ pub struct GetRelatedParams {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[schemars(title = "")]
 pub struct GetValidParams {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timestamp: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub user_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -198,15 +205,11 @@ pub struct SearchCodeParams {
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[schemars(title = "")]
-pub struct GetIndexStatusParams {
-    pub project_id: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-#[schemars(title = "")]
-pub struct ListProjectsParams {
-    #[serde(skip)]
-    pub _placeholder: bool,
+pub struct ProjectInfoParams {
+    /// list|status|stats
+    pub action: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub project_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -246,20 +249,10 @@ pub struct SearchSymbolsParams {
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[schemars(title = "")]
-pub struct GetCallersParams {
+pub struct SymbolGraphParams {
     pub symbol_id: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-#[schemars(title = "")]
-pub struct GetCalleesParams {
-    pub symbol_id: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-#[schemars(title = "")]
-pub struct GetRelatedSymbolsParams {
-    pub symbol_id: String,
+    /// callers|callees|related
+    pub action: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub depth: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -270,4 +263,40 @@ pub struct GetRelatedSymbolsParams {
 #[schemars(title = "")]
 pub struct GetProjectStatsParams {
     pub project_id: String,
+}
+
+// --- Internal params (used by logic layer, not exposed as MCP tools) ---
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GetIndexStatusParams {
+    pub project_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ListProjectsParams {
+    #[serde(skip)]
+    pub _placeholder: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CreateEntityParams {
+    pub name: String,
+    pub entity_type: Option<String>,
+    pub description: Option<String>,
+    pub user_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CreateRelationParams {
+    pub from_entity: String,
+    pub to_entity: String,
+    pub relation_type: String,
+    pub weight: Option<f32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GetRelatedParams {
+    pub entity_id: String,
+    pub depth: Option<usize>,
+    pub direction: Option<String>,
 }

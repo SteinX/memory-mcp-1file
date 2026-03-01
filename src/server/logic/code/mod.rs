@@ -13,7 +13,7 @@ pub use indexing::{
     delete_project, get_index_status, get_project_stats, index_project, list_projects,
 };
 pub use search::{recall_code, search_code};
-pub use symbols::{get_callees, get_callers, get_related_symbols, search_symbols};
+pub use symbols::{search_symbols, symbol_graph};
 
 #[cfg(test)]
 mod tests {
