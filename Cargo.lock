@@ -3126,6 +3126,7 @@ dependencies = [
  "mimalloc",
  "moka",
  "notify",
+ "num_cpus",
  "petgraph",
  "rayon",
  "redb",

@@ -1,4 +1,5 @@
 use std::path::Path;
+use num_cpus;
 use std::sync::Arc;
 
 use tokio::fs;
@@ -114,7 +115,7 @@ async fn do_index_project(
 
     state.storage.update_index_status(status.clone()).await?;
 
-    let batch_size = 12;
+    let batch_size = 100;
     let mut chunk_buffer = Vec::with_capacity(batch_size);
     let mut symbol_buffer = Vec::with_capacity(batch_size);
     let mut symbol_index = SymbolIndex::new();
@@ -124,13 +125,12 @@ async fn do_index_project(
     let mut hash_buffer: Vec<(String, String)> = Vec::with_capacity(batch_size);
     const HASH_FLUSH_SIZE: usize = 50;
 
-    const MAX_CHUNKS_PER_FILE: usize = 50;
 
     // Issue 4 fix: Parse files with bounded concurrency using JoinSet instead of
-    // sequential spawn_blocking. Up to MAX_CONCURRENT_PARSES files are parsed on
+    // sequential spawn_blocking. Up to max_concurrent_parses files are parsed on
     // the blocking thread pool simultaneously.
     #[allow(clippy::type_complexity)]
-    const MAX_CONCURRENT_PARSES: usize = 4;
+    let max_concurrent_parses = std::cmp::max(4, num_cpus::get() / 2);
     #[allow(clippy::type_complexity)]
     let mut parse_set: tokio::task::JoinSet<(
         Vec<CodeChunk>,
@@ -148,15 +148,6 @@ async fn do_index_project(
                     format!("parse/chunk panicked: {e}").into(),
                 ))?;
 
-            if chunks.len() > MAX_CHUNKS_PER_FILE {
-                tracing::info!(
-                    path = %fp_str,
-                    total = chunks.len(),
-                    kept = MAX_CHUNKS_PER_FILE,
-                    "Capping chunks for large file"
-                );
-                chunks.truncate(MAX_CHUNKS_PER_FILE);
-            }
             for chunk in chunks {
                 chunk_buffer.push(chunk);
                 status.total_chunks += 1;
@@ -296,8 +287,8 @@ async fn do_index_project(
                 tracing::warn!(
                     path = ?file_path,
                     size_kb = meta.len() / 1024,
-                    "Large file detected (>1MB), will cap at {} chunks",
-                    MAX_CHUNKS_PER_FILE
+                    "Large file detected (>1MB), might take a while to parse",
+                    
                 );
             }
         }
@@ -339,7 +330,7 @@ async fn do_index_project(
 
         // Issue 4 fix: Bounded-concurrency parsing via JoinSet.
         // Drain one completed parse result before spawning if at capacity.
-        if parse_set.len() >= MAX_CONCURRENT_PARSES {
+        if parse_set.len() >= max_concurrent_parses {
             if let Some(join_result) = parse_set.join_next().await {
                 drain_one_parse!(join_result);
             }
@@ -479,7 +470,7 @@ pub async fn incremental_index(
     }
 
     // Issue 4 fix: Bounded-concurrency parsing via JoinSet (same pattern as do_index_project).
-    const MAX_CONCURRENT_PARSES: usize = 4;
+    let max_concurrent_parses = std::cmp::max(4, num_cpus::get() / 2);
     // Return type: (chunks, symbols, references, path_str, new_hash)
     type IncrResult = (
         Vec<CodeChunk>,
@@ -630,7 +621,7 @@ pub async fn incremental_index(
             .await;
 
         // Issue 4 fix: Drain one completed parse before spawning if at capacity.
-        if parse_set.len() >= MAX_CONCURRENT_PARSES {
+        if parse_set.len() >= max_concurrent_parses {
             if let Some(join_result) = parse_set.join_next().await {
                 drain_one_incr!(join_result);
             }

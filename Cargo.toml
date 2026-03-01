@@ -3,7 +3,7 @@ name = "memory-mcp"
 
 
 
-version = "0.8.0"
+version = "0.8.1"
 
 edition = "2021"
 description = "MCP memory server for AI agents"
@@ -85,6 +85,7 @@ regex = "1.12.3"
 convert_case = "0.11.0"
 bm-25 = { version = "3.0.0", default-features = false, features = ["parallelism"] }
 mimalloc = "0.1.48"
+num_cpus = "1.17.0"
 
 
 # Local patch to expose `Model::clear_kv_cache()` as `pub` so we can reset
