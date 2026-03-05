@@ -95,37 +95,64 @@ impl EmbeddingEngine {
             unsafe { VarBuilder::from_mmaped_safetensors(&[weights_path], DType::F32, &device)? };
 
         let backend = config.model.engine_backend();
-        let inner = match backend {
+        let (inner, actual_dim) = match backend {
             EngineBackend::Bert => {
                 let bert_cfg: BertConfig = serde_json::from_slice(&std::fs::read(config_path)?)?;
-                InnerModel::Bert(BertModel::load(vb, &bert_cfg)?)
+                let dim = bert_cfg.hidden_size;
+                (InnerModel::Bert(BertModel::load(vb, &bert_cfg)?), dim)
             }
             EngineBackend::Qwen3 => {
                 let qwen_cfg: Qwen3Config = serde_json::from_slice(&std::fs::read(config_path)?)?;
+                let dim = qwen_cfg.hidden_size;
                 // Qwen3-Embedding-0.6B safetensors stores tensors WITHOUT "model." prefix
                 // (e.g. "embed_tokens.weight" instead of "model.embed_tokens.weight"),
                 // but candle's Qwen3Model::new() internally uses vb.pp("model.embed_tokens").
                 // Fix: strip the "model." prefix that candle adds during lookup.
                 let vb_fixed = vb
                     .rename_f(|name: &str| name.strip_prefix("model.").unwrap_or(name).to_string());
-                InnerModel::Qwen3(std::sync::Mutex::new(Qwen3Model::new(&qwen_cfg, vb_fixed)?))
+                (
+                    InnerModel::Qwen3(std::sync::Mutex::new(Qwen3Model::new(&qwen_cfg, vb_fixed)?)),
+                    dim,
+                )
             }
             EngineBackend::Gemma => {
                 let gemma_cfg: Gemma2Config = serde_json::from_slice(&std::fs::read(config_path)?)?;
+                let dim = gemma_cfg.hidden_size;
                 let vb_fixed = vb
                     .rename_f(|name: &str| name.strip_prefix("model.").unwrap_or(name).to_string());
-                InnerModel::Gemma(std::sync::Mutex::new(Gemma2Model::new(
-                    false, &gemma_cfg, vb_fixed,
-                )?))
+                (
+                    InnerModel::Gemma(std::sync::Mutex::new(Gemma2Model::new(
+                        false, &gemma_cfg, vb_fixed,
+                    )?)),
+                    dim,
+                )
             }
-            EngineBackend::Mock => InnerModel::Mock,
+            EngineBackend::Mock => (InnerModel::Mock, config.model.base_dimensions()),
         };
+
+        let expected_dim = config.model.base_dimensions();
+        if actual_dim != expected_dim {
+            tracing::error!(
+                model = %config.model,
+                actual_dim,
+                expected_dim,
+                "Model hidden_size does not match base_dimensions(). \
+                 Update ModelType::base_dimensions() to return {}.",
+                actual_dim
+            );
+            anyhow::bail!(
+                "Dimension mismatch: model {} has hidden_size={} but base_dimensions()={}",
+                config.model,
+                actual_dim,
+                expected_dim
+            );
+        }
 
         Ok(Self {
             inner,
             tokenizer: Some(tokenizer),
             device,
-            dimensions: config.model.base_dimensions(),
+            dimensions: actual_dim,
             mrl_dim: config.mrl_dim,
         })
     }
@@ -204,8 +231,12 @@ impl EmbeddingEngine {
                         // instead of forward which returns lm_head logits [b, 1, vocab_size].
                         let hidden = model_mut.forward_embeds(&input_ids, 0)?;
 
-                        let seq_len = hidden.dim(1)?;
-                        let embedding = hidden.narrow(1, seq_len - 1, 1)?.squeeze(1)?;
+                        // Mean pooling: average all token hidden states.
+                        // EmbeddingGemma is designed for mean pooling (not last-token),
+                        // per Google's ablation studies. Last-token without EOS produces
+                        // degenerate embeddings for short code chunks.
+                        let (_n_batch, n_tokens, _hidden_size) = hidden.dims3()?;
+                        let embedding = (hidden.sum(1)? / (n_tokens as f64))?;
 
                         let normalized = l2_normalize(&embedding)?;
 
@@ -218,7 +249,62 @@ impl EmbeddingEngine {
         }
     }
 
-    pub fn embed_batch(&self, texts: &[String]) -> Result<Vec<Vec<f32>>> {
+    pub fn embed_batch(&self, texts: &[String]) -> Result<Vec<Option<Vec<f32>>>> {
+        if texts.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        // Dynamic chunk sizing based on actual sequence length in this batch.
+        // Goal: keep peak RAM from forward pass within 800MB budget.
+        //
+        // RAM model per item: max_seq × hidden × layers × bytes × safety_factor
+        //   Gemma2: 768 hidden, 26 layers, factor=5 (hidden + KV + FFN + grad buffers)
+        //   For max_seq=512: ~49MB/item → safe_chunk = 800MB/49MB ≈ 16 → clamp 8
+        //   For max_seq=256: ~24MB/item → safe_chunk ≈ 33 → clamp 8
+        //   For max_seq=128: ~12MB/item → safe_chunk ≈ 64 → clamp 8
+        //
+        // Baseline container: ~1.7GB. Budget 800MB → peak ≤ 2.5GB (safe within 4GB).
+
+        let safe_chunk = if let Some(tokenizer) = &self.tokenizer {
+            // Estimate max_seq from first item (cheap, single encode)
+            let sample = texts.first().map(|s| s.as_str()).unwrap_or("");
+            let est_seq = tokenizer
+                .encode(sample, true)
+                .map(|enc| enc.get_ids().len().min(512))
+                .unwrap_or(256);
+
+            let hidden = self.dimensions();
+            let layers: usize = match &self.inner {
+                InnerModel::Gemma(_) => 26,
+                InnerModel::Qwen3(_) => 28,
+                _ => 12,
+            };
+            let bytes_per_item = est_seq * hidden * layers * 5; // factor=5 safety
+            let ram_budget: usize = 800 * 1024 * 1024; // 800MB
+            (ram_budget / bytes_per_item.max(1)).clamp(1, 8)
+        } else {
+            // Mock model — no real tensors, no OOM risk
+            texts.len()
+        };
+
+        if texts.len() > safe_chunk {
+            tracing::debug!(
+                total = texts.len(),
+                safe_chunk,
+                "embed_batch: dynamic chunking to prevent OOM"
+            );
+            let mut all_results = Vec::with_capacity(texts.len());
+            for chunk in texts.chunks(safe_chunk) {
+                let chunk_results = self.embed_batch_inner(chunk)?;
+                all_results.extend(chunk_results);
+            }
+            return Ok(all_results);
+        }
+
+        self.embed_batch_inner(texts)
+    }
+
+    fn embed_batch_inner(&self, texts: &[String]) -> Result<Vec<Option<Vec<f32>>>> {
         if texts.is_empty() {
             return Ok(Vec::new());
         }
@@ -227,7 +313,7 @@ impl EmbeddingEngine {
             InnerModel::Mock => {
                 let mut results = Vec::with_capacity(texts.len());
                 for text in texts {
-                    results.push(self.embed(text)?);
+                    results.push(Some(self.embed(text)?));
                 }
                 Ok(results)
             }
@@ -292,7 +378,7 @@ impl EmbeddingEngine {
                         let mut results = Vec::with_capacity(texts.len());
                         for i in 0..texts.len() {
                             let vec = normalized.get(i)?.to_vec1::<f32>()?;
-                            results.push(self.apply_mrl(vec)?);
+                            results.push(Some(self.apply_mrl(vec)?));
                         }
                         Ok(results)
                     }
@@ -308,17 +394,19 @@ impl EmbeddingEngine {
                         for (ids, &actual_len) in
                             unpadded_token_ids.iter().zip(actual_lengths.iter())
                         {
+                            if actual_len == 0 {
+                                tracing::warn!("Skipping empty token sequence in Qwen3 batch");
+                                results.push(None);
+                                continue;
+                            }
                             model_mut.clear_kv_cache();
                             let input = Tensor::new(ids.as_slice(), &self.device)?.unsqueeze(0)?;
                             let hidden = model_mut.forward(&input, 0)?;
 
-                            if actual_len == 0 {
-                                return Err(anyhow::anyhow!("Cannot embed empty token sequence"));
-                            }
                             let embedding = hidden.narrow(1, actual_len - 1, 1)?.squeeze(1)?;
                             let normalized = l2_normalize(&embedding)?;
                             let vec = normalized.squeeze(0)?.to_vec1::<f32>()?;
-                            results.push(self.apply_mrl(vec)?);
+                            results.push(Some(self.apply_mrl(vec)?));
                         }
                         Ok(results)
                     }
@@ -327,23 +415,69 @@ impl EmbeddingEngine {
                             .lock()
                             .map_err(|_| anyhow::anyhow!("Mutex poisoned"))?;
 
-                        let mut results = Vec::with_capacity(texts.len());
-                        for (ids, &actual_len) in
-                            unpadded_token_ids.iter().zip(actual_lengths.iter())
-                        {
-                            model_mut.clear_kv_cache();
-                            let input = Tensor::new(ids.as_slice(), &self.device)?.unsqueeze(0)?;
-                            // Use forward_embeds to get hidden states [b, seq_len, hidden_size]
-                            // instead of forward which returns lm_head logits [b, 1, vocab_size].
-                            let hidden = model_mut.forward_embeds(&input, 0)?;
-
-                            if actual_len == 0 {
-                                return Err(anyhow::anyhow!("Cannot embed empty token sequence"));
+                        // Handle edge case: any empty sequences → sequential fallback
+                        if actual_lengths.contains(&0) {
+                            let mut results = Vec::with_capacity(texts.len());
+                            for (ids, &actual_len) in
+                                unpadded_token_ids.iter().zip(actual_lengths.iter())
+                            {
+                                if actual_len == 0 {
+                                    tracing::warn!("Skipping empty token sequence in Gemma batch");
+                                    results.push(None);
+                                    continue;
+                                }
+                                model_mut.clear_kv_cache();
+                                let input =
+                                    Tensor::new(ids.as_slice(), &self.device)?.unsqueeze(0)?;
+                                let hidden = model_mut.forward_embeds(&input, 0)?;
+                                let hidden_unpadded = hidden.narrow(1, 0, actual_len)?;
+                                let embedding = (hidden_unpadded.sum(1)? / (actual_len as f64))?;
+                                let normalized = l2_normalize(&embedding)?;
+                                let vec = normalized.squeeze(0)?.to_vec1::<f32>()?;
+                                results.push(Some(self.apply_mrl(vec)?));
                             }
-                            let embedding = hidden.narrow(1, actual_len - 1, 1)?.squeeze(1)?;
-                            let normalized = l2_normalize(&embedding)?;
-                            let vec = normalized.squeeze(0)?.to_vec1::<f32>()?;
-                            results.push(self.apply_mrl(vec)?);
+                            return Ok(results);
+                        }
+
+                        // True batch forward: single forward pass for all items.
+                        // Gemma2 forward_embeds supports [B, seq_len] input — causal mask
+                        // is created per-batch internally. Mean pooling makes this safe:
+                        // each real token gets identical hidden state regardless of batch size,
+                        // and padding tokens are excluded via attention mask.
+                        model_mut.clear_kv_cache();
+
+                        // Build attention mask: 1 for real tokens, 0 for padding
+                        let attention_mask: Vec<Vec<u32>> = actual_lengths
+                            .iter()
+                            .map(|&len| {
+                                (0..max_seq_len_in_batch)
+                                    .map(|i| if i < len { 1 } else { 0 })
+                                    .collect()
+                            })
+                            .collect();
+
+                        let token_ids_tensor = Tensor::new(token_ids, &self.device)?;
+                        let attention_mask_tensor = Tensor::new(attention_mask, &self.device)?;
+
+                        // Single forward pass: [B, seq] → [B, seq, hidden]
+                        let hidden = model_mut.forward_embeds(&token_ids_tensor, 0)?;
+
+                        // Masked mean pooling (same strategy as BERT path)
+                        let mask_expanded = attention_mask_tensor
+                            .unsqueeze(2)?
+                            .broadcast_as(hidden.shape())?
+                            .to_dtype(DType::F32)?;
+                        let hidden_masked = (hidden * &mask_expanded)?;
+                        let sum_hidden = hidden_masked.sum(1)?;
+                        let sum_mask = mask_expanded.sum(1)?.clamp(1e-9, f64::MAX)?;
+                        let mean_pooled = (sum_hidden / sum_mask)?;
+
+                        let normalized = l2_normalize(&mean_pooled)?;
+
+                        let mut results = Vec::with_capacity(texts.len());
+                        for i in 0..texts.len() {
+                            let vec = normalized.get(i)?.to_vec1::<f32>()?;
+                            results.push(Some(self.apply_mrl(vec)?));
                         }
                         Ok(results)
                     }

@@ -138,17 +138,23 @@ async fn check_and_complete_project(
                 );
             } else if entry.2 >= 60 && embedded_chunks == 0 && embedded_symbols == 0 {
                 // 600 seconds with zero embeddings = engine not ready yet, reset and wait
-                if entry.2 % 60 == 0 {
+                if entry.2.is_multiple_of(60) {
                     tracing::info!(
                         project_id = %project_id,
                         stuck_ticks = entry.2,
                         "Embedding engine not ready yet (0 embeddings), waiting..."
                     );
                 }
-            } else if entry.2 % 6 == 0 && entry.2 > 0 {
-                // Log every 60s while waiting
-                let pct = if total_chunks > 0 {
+            } else if entry.2 > 0 && entry.2.is_multiple_of(6) {
+                // Log every 60s while waiting.
+                // Cast to wider integer to avoid u8 overflow in stall_secs.
+                let chunk_pct = if total_chunks > 0 {
                     (embedded_chunks as f64 / total_chunks as f64 * 100.0) as u32
+                } else {
+                    0
+                };
+                let symbol_pct = if total_symbols > 0 {
+                    (embedded_symbols as f64 / total_symbols as f64 * 100.0) as u32
                 } else {
                     0
                 };
@@ -156,8 +162,11 @@ async fn check_and_complete_project(
                     project_id = %project_id,
                     embedded_chunks,
                     total_chunks,
-                    pct = pct,
-                    stall_secs = entry.2 * 10,
+                    chunk_pct,
+                    embedded_symbols,
+                    total_symbols,
+                    symbol_pct,
+                    stall_secs = u32::from(entry.2) * 10,
                     "Embedding in progress, waiting for next batch..."
                 );
             }

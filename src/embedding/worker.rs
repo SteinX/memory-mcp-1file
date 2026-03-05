@@ -66,7 +66,7 @@ impl EmbeddingWorker {
                     match recv_result {
                         Some(req) => {
                             total_received += 1;
-                            if total_received == 1 || total_received % 500 == 0 {
+                            if total_received == 1 || total_received.is_multiple_of(500) {
                                 tracing::info!(total_received, batch_size = batch.len(), "Embedding worker receiving items");
                             }
                             batch.push(req);
@@ -76,7 +76,9 @@ impl EmbeddingWorker {
                                     processed_count += n;
                                 } else {
                                     engine_not_ready_count += 1;
-                                    if engine_not_ready_count <= 5 || engine_not_ready_count % 100 == 0 {
+                                    if engine_not_ready_count <= 5
+                                        || engine_not_ready_count.is_multiple_of(100)
+                                    {
                                         tracing::warn!(engine_not_ready_count, batch_pending = batch.len(), "Engine not ready, items accumulating");
                                     }
                                 }
@@ -107,7 +109,9 @@ impl EmbeddingWorker {
                             }
                         } else {
                             engine_not_ready_count += 1;
-                            if engine_not_ready_count <= 5 || engine_not_ready_count % 100 == 0 {
+                            if engine_not_ready_count <= 5
+                                || engine_not_ready_count.is_multiple_of(100)
+                            {
                                 tracing::warn!(engine_not_ready_count, batch_pending = batch.len(), "Engine not ready on deadline flush");
                             }
                         }
@@ -132,7 +136,12 @@ impl EmbeddingWorker {
         const MIN_EMBED_CHARS: usize = 50;
         let mut skipped_short = 0usize;
         for req in batch.iter_mut() {
-            if req.text.len() < MIN_EMBED_CHARS && req.target.is_some() {
+            // IMPORTANT: short-text skipping applies only to code chunks.
+            // Symbols are often short (e.g. "id", "new", "run"), and skipping
+            // them keeps `embedding IS NONE`, which can block completion_monitor.
+            let skip_short_chunk = matches!(req.target, Some(EmbeddingTarget::Chunk(_)))
+                && req.text.len() < MIN_EMBED_CHARS;
+            if skip_short_chunk {
                 // Mark as "no embedding needed" by clearing target —
                 // the DB update loop below will simply skip it.
                 skipped_short += 1;
@@ -144,7 +153,11 @@ impl EmbeddingWorker {
         }
         // Remove skipped items so they don't go through inference
         if skipped_short > 0 {
-            tracing::debug!(skipped_short, min_chars = MIN_EMBED_CHARS, "Skipped short chunks from embedding");
+            tracing::debug!(
+                skipped_short,
+                min_chars = MIN_EMBED_CHARS,
+                "Skipped short chunks from embedding"
+            );
             batch.retain(|r| r.target.is_some() || r.responder.is_some());
             if batch.is_empty() {
                 return true;
@@ -183,7 +196,11 @@ impl EmbeddingWorker {
         }
 
         // ── PHASE 3: Offload inference to blocking pool (no lock, no block_in_place) ──
-        tracing::debug!(cache_hits = batch.len() - misses_texts.len(), cache_misses = misses_texts.len(), "Phase 2 cache results");
+        tracing::debug!(
+            cache_hits = batch.len() - misses_texts.len(),
+            cache_misses = misses_texts.len(),
+            "Phase 2 cache results"
+        );
         if !misses_texts.is_empty() {
             let engine_for_blocking = Arc::clone(&engine);
             let embed_result =
@@ -215,8 +232,12 @@ impl EmbeddingWorker {
                                     text: req.text.clone(),
                                     responder: None,
                                     target: match &req.target {
-                                        Some(EmbeddingTarget::Symbol(id)) => Some(EmbeddingTarget::Symbol(id.clone())),
-                                        Some(EmbeddingTarget::Chunk(id)) => Some(EmbeddingTarget::Chunk(id.clone())),
+                                        Some(EmbeddingTarget::Symbol(id)) => {
+                                            Some(EmbeddingTarget::Symbol(id.clone()))
+                                        }
+                                        Some(EmbeddingTarget::Chunk(id)) => {
+                                            Some(EmbeddingTarget::Chunk(id.clone()))
+                                        }
                                         None => None,
                                     },
                                     retry_count: req.retry_count + 1,
@@ -250,8 +271,12 @@ impl EmbeddingWorker {
                                 text: req.text.clone(),
                                 responder: None,
                                 target: match &req.target {
-                                    Some(EmbeddingTarget::Symbol(id)) => Some(EmbeddingTarget::Symbol(id.clone())),
-                                    Some(EmbeddingTarget::Chunk(id)) => Some(EmbeddingTarget::Chunk(id.clone())),
+                                    Some(EmbeddingTarget::Symbol(id)) => {
+                                        Some(EmbeddingTarget::Symbol(id.clone()))
+                                    }
+                                    Some(EmbeddingTarget::Chunk(id)) => {
+                                        Some(EmbeddingTarget::Chunk(id.clone()))
+                                    }
                                     None => None,
                                 },
                                 retry_count: req.retry_count + 1,

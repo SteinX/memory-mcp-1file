@@ -414,10 +414,7 @@ impl CodeSearchEngine {
                         }
                     }
                 } else {
-                    tracing::warn!(
-                        project_id = pid,
-                        "BM25 search: project NOT FOUND in index"
-                    );
+                    tracing::warn!(project_id = pid, "BM25 search: project NOT FOUND in index");
                 }
             }
 
@@ -1043,6 +1040,21 @@ mod tests {
         ) -> crate::Result<(Vec<crate::types::CodeSymbol>, u32)> {
             unreachable!()
         }
+        async fn replace_symbol_chunk_map(
+            &self,
+            _: &str,
+            _: &[(String, String, f32)],
+        ) -> crate::Result<u32> {
+            unreachable!()
+        }
+        async fn get_mapped_chunks_for_symbols(
+            &self,
+            _: &str,
+            _: &[String],
+            _: usize,
+        ) -> crate::Result<Vec<(String, f32)>> {
+            unreachable!()
+        }
         async fn count_symbols(&self, _: &str) -> crate::Result<u32> {
             unreachable!()
         }
@@ -1055,10 +1067,16 @@ mod tests {
         async fn count_embedded_chunks(&self, _: &str) -> crate::Result<u32> {
             unreachable!()
         }
-        async fn get_unembedded_chunks(&self, _project_id: &str) -> crate::Result<Vec<(String, String)>> {
+        async fn get_unembedded_chunks(
+            &self,
+            _project_id: &str,
+        ) -> crate::Result<Vec<(String, String)>> {
             Ok(vec![])
         }
-        async fn get_unembedded_symbols(&self, _project_id: &str) -> crate::Result<Vec<(String, String)>> {
+        async fn get_unembedded_symbols(
+            &self,
+            _project_id: &str,
+        ) -> crate::Result<Vec<(String, String)>> {
             Ok(vec![])
         }
         async fn count_symbol_relations(&self, _: &str) -> crate::Result<u32> {
@@ -1069,6 +1087,13 @@ mod tests {
             _: &str,
             _: &str,
         ) -> crate::Result<Option<crate::types::CodeSymbol>> {
+            unreachable!()
+        }
+        async fn find_symbols_by_names(
+            &self,
+            _: &str,
+            _: &[String],
+        ) -> crate::Result<Vec<crate::types::CodeSymbol>> {
             unreachable!()
         }
         async fn find_symbol_by_name_with_context(
