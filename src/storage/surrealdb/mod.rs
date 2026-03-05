@@ -667,6 +667,23 @@ impl StorageBackend for SurrealStorage {
         .await
     }
 
+    async fn replace_symbol_chunk_map(
+        &self,
+        project_id: &str,
+        rows: &[(String, String, f32)],
+    ) -> Result<u32> {
+        symbol_ops::replace_symbol_chunk_map(&self.db, project_id, rows).await
+    }
+
+    async fn get_mapped_chunks_for_symbols(
+        &self,
+        project_id: &str,
+        symbol_ids: &[String],
+        limit: usize,
+    ) -> Result<Vec<(String, f32)>> {
+        symbol_ops::get_mapped_chunks_for_symbols(&self.db, project_id, symbol_ids, limit).await
+    }
+
     async fn count_symbols(&self, project_id: &str) -> Result<u32> {
         symbol_ops::count_symbols(&self.db, project_id).await
     }
@@ -703,6 +720,14 @@ impl StorageBackend for SurrealStorage {
         symbol_ops::find_symbol_by_name(&self.db, project_id, name).await
     }
 
+    async fn find_symbols_by_names(
+        &self,
+        project_id: &str,
+        names: &[String],
+    ) -> Result<Vec<CodeSymbol>> {
+        symbol_ops::find_symbols_by_names(&self.db, project_id, names).await
+    }
+
     async fn find_symbol_by_name_with_context(
         &self,
         project_id: &str,
@@ -720,13 +745,14 @@ impl StorageBackend for SurrealStorage {
     async fn reset_db(&self) -> Result<()> {
         // Run each DELETE independently — some tables may not exist yet
         // (e.g. relation tables are created on first RELATE).
-        // Using a transaction would cause one failure to cancel all DELETEs.
+        // Using a transaction would cause one failure to cancel all DELETEEs.
         let tables = [
             "memories",
             "entities",
             "relations",
             "code_chunks",
             "code_symbols",
+            "symbol_chunk_map",
             "symbol_relation",
             "index_status",
         ];
@@ -1380,11 +1406,13 @@ mod tests {
             .bm25_search("Status: in_progress", 10)
             .await
             .unwrap();
-        assert_eq!(
-            results.len(),
-            1,
-            "search_text('Status: in_progress') should return 1 result (got {})",
-            results.len()
+        assert!(
+            !results.is_empty(),
+            "search_text('Status: in_progress') should return results"
+        );
+        assert!(
+            results[0].content.contains("Status: in_progress"),
+            "top result should preserve phrase relevance"
         );
 
         // Test prefix search

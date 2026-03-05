@@ -247,9 +247,9 @@ pub(super) async fn get_symbol_callers(
         parse_thing(symbol_id)?
     };
     let sql = r#"
-        SELECT * FROM code_symbols 
+        SELECT * FROM code_symbols
         WHERE id IN (
-            SELECT VALUE in FROM symbol_relation 
+            SELECT VALUE in FROM symbol_relation
             WHERE out = $thing AND relation_type = 'calls'
         )
     "#;
@@ -270,9 +270,9 @@ pub(super) async fn get_symbol_callees(
         parse_thing(symbol_id)?
     };
     let sql = r#"
-        SELECT * FROM code_symbols 
+        SELECT * FROM code_symbols
         WHERE id IN (
-            SELECT VALUE out FROM symbol_relation 
+            SELECT VALUE out FROM symbol_relation
             WHERE in = $thing AND relation_type = 'calls'
         )
     "#;
@@ -597,11 +597,7 @@ pub(super) async fn get_unembedded_symbols(
     let results = rows
         .into_iter()
         .map(|row| {
-            let id_str = format!(
-                "{}:{}",
-                row.id.table,
-                record_key_to_string(&row.id.key)
-            );
+            let id_str = format!("{}:{}", row.id.table, record_key_to_string(&row.id.key));
             let embed_text = row
                 .signature
                 .unwrap_or_else(|| format!("{} {}", row.symbol_type, row.name));
@@ -615,8 +611,8 @@ pub(super) async fn count_symbol_relations(db: &Surreal<Db>, project_id: &str) -
     use surrealdb_types::SurrealValue;
 
     let sql = r#"
-        SELECT count() FROM symbol_relation 
-        WHERE project_id = $project_id 
+        SELECT count() FROM symbol_relation
+        WHERE project_id = $project_id
         GROUP ALL
     "#;
     let mut response = db
@@ -639,8 +635,8 @@ pub(super) async fn find_symbol_by_name(
     name: &str,
 ) -> Result<Option<CodeSymbol>> {
     let sql = r#"
-        SELECT * FROM code_symbols 
-        WHERE project_id = $project_id AND name = $name 
+        SELECT * FROM code_symbols
+        WHERE project_id = $project_id AND name = $name
         LIMIT 1
     "#;
     let mut response = db
@@ -653,6 +649,29 @@ pub(super) async fn find_symbol_by_name(
     Ok(symbols.into_iter().next())
 }
 
+pub(super) async fn find_symbols_by_names(
+    db: &Surreal<Db>,
+    project_id: &str,
+    names: &[String],
+) -> Result<Vec<CodeSymbol>> {
+    if names.is_empty() {
+        return Ok(vec![]);
+    }
+
+    let sql = r#"
+        SELECT * FROM code_symbols
+        WHERE project_id = $project_id AND name IN $names
+    "#;
+    let mut response = db
+        .query(sql)
+        .bind(("project_id", project_id.to_string()))
+        .bind(("names", names.to_vec()))
+        .await?;
+
+    let symbols: Vec<CodeSymbol> = response.take(0)?;
+    Ok(symbols)
+}
+
 pub(super) async fn find_symbol_by_name_with_context(
     db: &Surreal<Db>,
     project_id: &str,
@@ -662,7 +681,7 @@ pub(super) async fn find_symbol_by_name_with_context(
     // Try same file first for better resolution
     if let Some(file) = prefer_file {
         let sql = r#"
-            SELECT * FROM code_symbols 
+            SELECT * FROM code_symbols
             WHERE project_id = $project_id AND name = $name AND file_path = $file
             LIMIT 1
         "#;
@@ -683,6 +702,97 @@ pub(super) async fn find_symbol_by_name_with_context(
     find_symbol_by_name(db, project_id, name).await
 }
 
+pub(super) async fn replace_symbol_chunk_map(
+    db: &Surreal<Db>,
+    project_id: &str,
+    rows: &[(String, String, f32)],
+) -> Result<u32> {
+    // Replace strategy keeps the table consistent after incremental changes:
+    // clear old rows for project, then insert freshly computed mappings.
+    db.query("DELETE symbol_chunk_map WHERE project_id = $project_id")
+        .bind(("project_id", project_id.to_string()))
+        .await?;
+
+    if rows.is_empty() {
+        return Ok(0);
+    }
+
+    let data: Vec<serde_json::Value> = rows
+        .iter()
+        .map(|(symbol_id, chunk_id, overlap)| {
+            let raw = format!("{project_id}|{symbol_id}|{chunk_id}");
+            let id = blake3::hash(raw.as_bytes()).to_hex().to_string();
+            serde_json::json!({
+                "id": id,
+                "project_id": project_id,
+                "symbol_id": symbol_id,
+                "chunk_id": chunk_id,
+                "overlap_score": overlap
+            })
+        })
+        .collect();
+
+    let sql = r#"
+        INSERT INTO symbol_chunk_map $rows
+        ON DUPLICATE KEY UPDATE
+            overlap_score = $input.overlap_score,
+            created_at = time::now()
+    "#;
+    db.query(sql).bind(("rows", data)).await?;
+    Ok(rows.len() as u32)
+}
+
+pub(super) async fn get_mapped_chunks_for_symbols(
+    db: &Surreal<Db>,
+    project_id: &str,
+    symbol_ids: &[String],
+    limit: usize,
+) -> Result<Vec<(String, f32)>> {
+    use std::collections::HashMap;
+    use surrealdb_types::SurrealValue;
+
+    if symbol_ids.is_empty() || limit == 0 {
+        return Ok(vec![]);
+    }
+
+    #[derive(serde::Deserialize, SurrealValue)]
+    struct MapRow {
+        chunk_id: String,
+        overlap_score: f32,
+    }
+
+    let fetch = (limit * 8).max(limit);
+    let mut response = db
+        .query(
+            "SELECT chunk_id, overlap_score FROM symbol_chunk_map
+             WHERE project_id = $project_id AND symbol_id IN $symbol_ids
+             ORDER BY overlap_score DESC
+             LIMIT $limit",
+        )
+        .bind(("project_id", project_id.to_string()))
+        .bind(("symbol_ids", symbol_ids.to_vec()))
+        .bind(("limit", fetch))
+        .await?;
+    let rows: Vec<MapRow> = response.take(0).unwrap_or_default();
+
+    let mut best_by_chunk: HashMap<String, f32> = HashMap::new();
+    for row in rows {
+        best_by_chunk
+            .entry(row.chunk_id)
+            .and_modify(|s| {
+                if row.overlap_score > *s {
+                    *s = row.overlap_score;
+                }
+            })
+            .or_insert(row.overlap_score);
+    }
+
+    let mut out: Vec<(String, f32)> = best_by_chunk.into_iter().collect();
+    out.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+    out.truncate(limit);
+    Ok(out)
+}
+
 pub(super) async fn vector_search_code(
     db: &Surreal<Db>,
     embedding: &[f32],
@@ -701,7 +811,7 @@ pub(super) async fn vector_search_code(
 
     let query = format!(
         r#"
-        SELECT 
+        SELECT
             meta::id(id) AS id,
             file_path,
             content,
@@ -711,12 +821,12 @@ pub(super) async fn vector_search_code(
             chunk_type,
             name,
             context_path,
-            vector::similarity::cosine(embedding, $vec) AS score 
+            vector::similarity::cosine(embedding, $vec) AS score
         FROM code_chunks
         WHERE embedding <|{knn_k},{ef}|> $vec
           AND embedding IS NOT NONE
           AND ($project_id IS NONE OR project_id = $project_id)
-        ORDER BY score DESC 
+        ORDER BY score DESC
         LIMIT $limit
     "#
     );

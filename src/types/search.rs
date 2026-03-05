@@ -8,6 +8,8 @@ use super::SurrealValue;
 pub struct SearchResult {
     pub id: String,
     pub content: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub content_hash: Option<String>,
     pub memory_type: MemoryType,
     pub score: f32,
     #[serde(skip_serializing_if = "Option::is_none")]

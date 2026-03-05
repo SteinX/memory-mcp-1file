@@ -157,7 +157,7 @@ pub trait StorageBackend: Send + Sync {
     /// Delete all chunks for a specific file path within a project
     async fn delete_chunks_by_path(&self, project_id: &str, file_path: &str) -> Result<usize>;
 
-    /// Get all chunks for a specific file path within a project  
+    /// Get all chunks for a specific file path within a project
     async fn get_chunks_by_path(&self, project_id: &str, file_path: &str)
         -> Result<Vec<CodeChunk>>;
 
@@ -285,6 +285,25 @@ pub trait StorageBackend: Send + Sync {
         path_prefix: Option<&str>,
     ) -> Result<(Vec<CodeSymbol>, u32)>;
 
+    /// Replace symbol->chunk overlap mappings for a project.
+    ///
+    /// Input rows: (symbol_id, chunk_id, overlap_score), where IDs are plain
+    /// record keys without table prefix.
+    async fn replace_symbol_chunk_map(
+        &self,
+        project_id: &str,
+        rows: &[(String, String, f32)],
+    ) -> Result<u32>;
+
+    /// Retrieve mapped chunk IDs for a list of symbol IDs (record keys).
+    /// Returns (chunk_id, best_overlap_score), sorted by overlap descending.
+    async fn get_mapped_chunks_for_symbols(
+        &self,
+        project_id: &str,
+        symbol_ids: &[String],
+        limit: usize,
+    ) -> Result<Vec<(String, f32)>>;
+
     // ─────────────────────────────────────────────────────────────────────────
     // Statistics & Counts
     // ─────────────────────────────────────────────────────────────────────────
@@ -316,6 +335,13 @@ pub trait StorageBackend: Send + Sync {
         project_id: &str,
         name: &str,
     ) -> Result<Option<crate::types::symbol::CodeSymbol>>;
+
+    /// Batch-find symbols by names across the project (single DB round-trip).
+    async fn find_symbols_by_names(
+        &self,
+        project_id: &str,
+        names: &[String],
+    ) -> Result<Vec<CodeSymbol>>;
 
     /// Find symbol by name with file preference for better resolution
     async fn find_symbol_by_name_with_context(

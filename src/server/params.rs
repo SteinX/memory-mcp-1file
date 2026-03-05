@@ -65,6 +65,9 @@ pub struct SearchParams {
     /// vector|bm25 (default: vector)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub mode: Option<String>,
+    /// Minimum score threshold in [0.0, 1.0] applied after ranking.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub min_score: Option<f32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
