@@ -65,7 +65,10 @@ impl EmbeddingService {
         }
 
         let status_clone = status.clone();
-        std::thread::spawn(move || {
+        std::thread::Builder::new()
+            .name("emb-loader".into())
+            .stack_size(16 * 1024 * 1024) // 16 MB — Candle models need deep stack for tensor ops
+            .spawn(move || {
             let rt = match tokio::runtime::Builder::new_current_thread()
                 .enable_all()
                 .build()
@@ -140,7 +143,7 @@ impl EmbeddingService {
                     status.store(STATUS_ERROR, Ordering::SeqCst);
                 }
             }
-        });
+        }).expect("Failed to spawn embedding loader thread");
     }
 
     /// Pure filesystem check — no network I/O.

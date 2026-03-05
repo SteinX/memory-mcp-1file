@@ -78,7 +78,7 @@ impl SurrealStorage {
         Ok(())
     }
 
-    async fn rebuild_vector_indices(&self, dim: usize) -> Result<()> {
+    pub async fn rebuild_vector_indices(&self, dim: usize) -> Result<()> {
         let queries = format!(
             "REMOVE INDEX IF EXISTS idx_memories_vec ON memories;
              REMOVE INDEX IF EXISTS idx_entities_vec ON entities;
@@ -101,6 +101,28 @@ impl SurrealStorage {
             .next()?
             .parse()
             .ok()
+    }
+
+    /// Directly update embedding fields for a memory (stale re-embed).
+    pub async fn raw_update_embedding(
+        &self,
+        id: &str,
+        embedding: Vec<f32>,
+        content_hash: String,
+        embedding_state: &str,
+    ) -> Result<()> {
+        memory_ops::raw_update_embedding(&self.db, id, embedding, content_hash, embedding_state)
+            .await
+    }
+
+    /// Get all memories with stale or missing embeddings.
+    pub async fn get_stale_memories(&self) -> Result<Vec<Memory>> {
+        let mut response = self
+            .db
+            .query("SELECT * FROM memories WHERE embedding_state = 'stale' OR embedding IS NONE")
+            .await?;
+        let memories: Vec<Memory> = response.take(0).unwrap_or_default();
+        Ok(memories)
     }
 }
 
@@ -512,6 +534,10 @@ impl StorageBackend for SurrealStorage {
         code_ops::get_chunks_by_ids(&self.db, ids).await
     }
 
+    async fn clear_project_embeddings(&self, project_id: &str) -> Result<u64> {
+        code_ops::clear_project_embeddings(&self.db, project_id).await
+    }
+
     async fn get_index_status(&self, project_id: &str) -> Result<Option<IndexStatus>> {
         code_ops::get_index_status(&self.db, project_id).await
     }
@@ -655,6 +681,14 @@ impl StorageBackend for SurrealStorage {
 
     async fn count_embedded_chunks(&self, project_id: &str) -> Result<u32> {
         code_ops::count_embedded_chunks(&self.db, project_id).await
+    }
+
+    async fn get_unembedded_chunks(&self, project_id: &str) -> Result<Vec<(String, String)>> {
+        code_ops::get_unembedded_chunks(&self.db, project_id).await
+    }
+
+    async fn get_unembedded_symbols(&self, project_id: &str) -> Result<Vec<(String, String)>> {
+        symbol_ops::get_unembedded_symbols(&self.db, project_id).await
     }
 
     async fn count_symbol_relations(&self, project_id: &str) -> Result<u32> {

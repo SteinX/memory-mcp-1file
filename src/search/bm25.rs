@@ -387,14 +387,37 @@ impl CodeSearchEngine {
                 None => projects.keys().map(|k| k.as_str()).collect(),
             };
 
+            tracing::debug!(
+                total_projects = projects.len(),
+                requested_pid = ?project_id,
+                available_pids = ?projects.keys().collect::<Vec<_>>(),
+                "BM25 search: starting"
+            );
+
             for pid in project_ids {
                 if let Some(idx) = projects.get(pid) {
+                    tracing::debug!(
+                        project_id = pid,
+                        meta_count = idx.meta.len(),
+                        "BM25 search: querying project"
+                    );
                     let results = idx.engine.search(query, limit * 2);
+                    tracing::debug!(
+                        project_id = pid,
+                        raw_results = results.len(),
+                        query = query,
+                        "BM25 search: engine returned"
+                    );
                     for result in results {
                         if let Some(meta) = idx.meta.get(&result.document.id) {
                             all_results.push((result.score, meta.clone()));
                         }
                     }
+                } else {
+                    tracing::warn!(
+                        project_id = pid,
+                        "BM25 search: project NOT FOUND in index"
+                    );
                 }
             }
 
@@ -788,6 +811,9 @@ mod tests {
         ) -> crate::Result<Vec<crate::types::ScoredCodeChunk>> {
             unreachable!()
         }
+        async fn clear_project_embeddings(&self, _: &str) -> crate::Result<u64> {
+            unreachable!()
+        }
         async fn create_entity(&self, _: crate::types::Entity) -> crate::Result<String> {
             unreachable!()
         }
@@ -878,6 +904,14 @@ mod tests {
         async fn get_all_chunks_for_project(
             &self,
             _: &str,
+        ) -> crate::Result<Vec<crate::types::CodeChunk>> {
+            unreachable!()
+        }
+        async fn get_chunks_paginated(
+            &self,
+            _: &str,
+            _: usize,
+            _: usize,
         ) -> crate::Result<Vec<crate::types::CodeChunk>> {
             unreachable!()
         }
@@ -1020,6 +1054,12 @@ mod tests {
         }
         async fn count_embedded_chunks(&self, _: &str) -> crate::Result<u32> {
             unreachable!()
+        }
+        async fn get_unembedded_chunks(&self, _project_id: &str) -> crate::Result<Vec<(String, String)>> {
+            Ok(vec![])
+        }
+        async fn get_unembedded_symbols(&self, _project_id: &str) -> crate::Result<Vec<(String, String)>> {
+            Ok(vec![])
         }
         async fn count_symbol_relations(&self, _: &str) -> crate::Result<u32> {
             unreachable!()

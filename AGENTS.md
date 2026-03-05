@@ -633,10 +633,11 @@ cargo build --profile fast
 docker build -f Dockerfile.fast -t memory-mcp:dev .
 
 # 3. Run container (4GB limit, persistent data volume)
+# ⚠️ Монтувати ТІЛЬКИ src/ — повний /project має 489+ файлів і індексація ~2 години!
 docker run -d \
   --name memory-mcp-dev \
   --memory 4g \
-  -v /home/unnamed/project:/project \
+  -v /home/unnamed/project/tools/memory-mcp-1file/src:/project \
   -v memory-mcp-data:/data \
   -e RUST_LOG=info \
   -e RUST_BACKTRACE=1 \
@@ -678,19 +679,118 @@ dmesg | grep -iE "oom|killed|memory-mcp" | tail -10
 
 ```bash
 # Повний цикл: build → image → restart (зберігає /data volume!)
+# ⚠️ Монтувати ТІЛЬКИ src/ — повний /project має 489+ файлів і індексація ~2 години!
 cargo build --profile fast && \
 docker rm -f memory-mcp-dev && \
 docker build -f Dockerfile.fast -t memory-mcp:dev . && \
 docker run -d \
   --name memory-mcp-dev \
   --memory 4g \
-  -v /home/unnamed/project:/project \
+  -v /home/unnamed/project/tools/memory-mcp-1file/src:/project \
   -v memory-mcp-data:/data \
   -e RUST_LOG=info \
   -e RUST_BACKTRACE=1 \
   memory-mcp:dev \
   sh -c 'tail -f /dev/null | /usr/local/bin/memory-mcp 2>&1'
 ```
+
+### MCP Integration Testing
+
+<mcp_testing>
+Протокол тестування MCP tools через Docker.
+</mcp_testing>
+
+#### ⛔ CRITICAL: `docker exec` НЕ працює для MCP тестів
+
+SurrealDB використовує exclusive LOCK на `/data`. `docker exec` створює **другу інстанцію** binary,
+яка не може відкрити DB → `Storage error: the file is already locked`.
+
+**Правильний підхід:** `docker run --rm -i` з тим самим named volume (`memory-mcp-data`).
+Фонового контейнера при цьому бути НЕ повинно — він тримає LOCK.
+
+#### Правильні назви MCP Tools
+
+```
+Memory:  store_memory, update_memory, delete_memory, list_memories, get_memory,
+         invalidate, get_valid
+Search:  recall (hybrid vector+keyword+graph RRF)
+         search_memory (mode: vector|bm25)
+Code:    recall_code (mode: vector|hybrid, DEFAULT=hybrid)
+         search_symbols, symbol_graph (symbol_id, action: callers|callees|related)
+         index_project, delete_project, project_info (action: list|status|stats)
+System:  get_status, reset_all_memory, how_to_use
+```
+
+> ⚠️ **`search_code` — це ВНУТРІШНЯ функція, НЕ MCP tool!**
+> Для пошуку коду використовуй `recall_code`.
+> `recall_code` mode=`vector` → викликає search_code internally.
+> `recall_code` mode=`hybrid` (default) → vector + BM25 + graph RRF.
+
+#### Тестовий скрипт
+
+```bash
+#!/bin/bash
+# MCP Integration Test — зупини фоновий контейнер перед запуском!
+# docker rm -f memory-mcp-dev 2>/dev/null
+
+INIT='{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test","version":"0.1"}}}'
+NOTIF='{"jsonrpc":"2.0","method":"notifications/initialized"}'
+
+# recall_code hybrid (vector + BM25 + graph RRF)
+TEST1='{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"recall_code","arguments":{"query":"EmbeddingRequest struct definition","project_id":"project","limit":5}}}'
+
+# recall_code vector-only mode
+TEST2='{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"recall_code","arguments":{"query":"BM25 search rebuild","project_id":"project","limit":5,"mode":"vector"}}}'
+
+# search_symbols
+TEST3='{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"search_symbols","arguments":{"query":"embed","project_id":"project","limit":5}}}'
+
+# project_info stats
+TEST4='{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"project_info","arguments":{"action":"stats","project_id":"project"}}}'
+
+# get_status
+TEST5='{"jsonrpc":"2.0","id":6,"method":"tools/call","params":{"name":"get_status","arguments":{}}}'
+
+{
+  echo "$INIT";  sleep 3
+  echo "$NOTIF"; sleep 2
+  echo "$TEST1"; sleep 12
+  echo "$TEST2"; sleep 12
+  echo "$TEST3"; sleep 5
+  echo "$TEST4"; sleep 3
+  echo "$TEST5"; sleep 3
+} | timeout 50 docker run --rm -i \
+  --name memory-mcp-test \
+  --memory 4g \
+  -v /home/unnamed/project/tools/memory-mcp-1file/src:/project \
+  -v memory-mcp-data:/data \
+  -e RUST_LOG=warn \
+  -e RUST_BACKTRACE=1 \
+  memory-mcp:dev \
+  /usr/local/bin/memory-mcp 2>/tmp/mcp_test_stderr.log
+
+echo "EXIT_CODE=$?"
+```
+
+#### Валідація результатів
+
+| Поле в відповіді | Що перевіряти |
+|------------------|---------------|
+| `vector_hits` | >0 якщо ембедінги готові (перевір `project_info stats`) |
+| `bm25_hits` | >0 якщо BM25 прогрітий (має бути завжди після індексації) |
+| `source` | `"vector"` або `"bm25"` — показує звідки результат |
+| `score` | >0 для BM25, cosine similarity для vector |
+| `count` | кількість результатів |
+
+#### Типові помилки при тестуванні
+
+| Помилка | Причина | Рішення |
+|---------|---------|---------|
+| `"tool not found"` | Неправильна назва tool (напр. `search_code`) | Використовуй `recall_code` |
+| `"Storage error: file is already locked"` | Фоновий контейнер тримає DB LOCK | `docker rm -f memory-mcp-dev` перед тестом |
+| `vector_hits: 0` | Ембедінги ще генеруються | Перевір `project_info stats` → embedded % |
+| `bm25_hits: 0` | BM25 не прогрітий (перші секунди після старту) | Збільш sleep між NOTIF та першим запитом |
+| Порожня відповідь + EXIT 124 | timeout занадто короткий | Збільш timeout та sleep між запитами |
 
 ### Memory Budget (Qwen3 1024d, 4GB limit)
 
@@ -719,4 +819,4 @@ Peak:                 ~2100MB  (headroom ~1900MB при 4GB)
 
 ---
 
-*Last updated: 2026-03-01*
+*Last updated: 2026-03-02*

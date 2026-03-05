@@ -487,3 +487,44 @@ pub async fn get_project_stats(
         "failed_files": status.failed_files
     })))
 }
+
+/// Returns indexing degradation info for any active project, or None if all complete.
+/// Used by recall_code, search_symbols, symbol_graph to inform users about degraded features.
+pub async fn get_degradation_info(state: &Arc<AppState>) -> Option<serde_json::Value> {
+    let project_ids = state.storage.list_projects().await.ok()?;
+
+    for project_id in &project_ids {
+        let status = match state.storage.get_index_status(project_id).await {
+            Ok(Some(s)) => s,
+            _ => continue,
+        };
+
+        if status.status == crate::types::IndexState::Completed
+            || status.status == crate::types::IndexState::Failed
+        {
+            continue;
+        }
+
+        let total_chunks = state.storage.count_chunks(project_id).await.unwrap_or(0);
+        let embedded_chunks = state.storage.count_embedded_chunks(project_id).await.unwrap_or(0);
+        let total_symbols = state.storage.count_symbols(project_id).await.unwrap_or(0);
+        let embedded_symbols = state.storage.count_embedded_symbols(project_id).await.unwrap_or(0);
+
+        let chunk_pct = if total_chunks > 0 {
+            (embedded_chunks as f64 / total_chunks as f64) * 100.0
+        } else {
+            0.0
+        };
+
+        return Some(json!({
+            "status": status.status.to_string(),
+            "progress": format!("{}/{} chunks ({:.1}%), {}/{} symbols",
+                embedded_chunks, total_chunks, chunk_pct, embedded_symbols, total_symbols),
+            "degraded": ["vector_search"],
+            "available": ["bm25_search", "symbol_search", "ppr_graph"],
+            "message": "Indexing in progress. Semantic (vector) search unavailable until complete."
+        }));
+    }
+
+    None
+}

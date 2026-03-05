@@ -102,11 +102,12 @@ async fn check_and_complete_project(
     let total_symbols = state.storage.count_symbols(project_id).await?;
     let embedded_chunks = state.storage.count_embedded_chunks(project_id).await?;
     let embedded_symbols = state.storage.count_embedded_symbols(project_id).await?;
+    let failed = state.embedding_queue.metrics().get_failed_total() as u32;
 
-    let chunks_complete = embedded_chunks >= total_chunks;
+    let chunks_complete = (embedded_chunks + failed) >= total_chunks;
     // Safety threshold: if ≥99.5% symbols embedded, consider complete
     // (handles edge case where some symbols lack signature text for embedding)
-    let symbols_complete = embedded_symbols >= total_symbols
+    let symbols_complete = (embedded_symbols + failed) >= total_symbols
         || (total_symbols > 0
             && embedded_symbols > 0
             && (embedded_symbols as f64 / total_symbols as f64) >= 0.995);
@@ -121,10 +122,44 @@ async fn check_and_complete_project(
         ));
         if entry.0 == embedded_chunks && entry.1 == embedded_symbols {
             entry.2 += 1;
-            if entry.2 >= 6 {
-                // 60 seconds stuck
+            // Don't force-complete if zero embeddings — engine likely still loading
+            // Use 600s (60 ticks) timeout: Gemma on CPU can take 2-5 min per batch
+            // Previous 60s timeout caused premature completion with only ~11% embedded
+            if entry.2 >= 60 && (embedded_chunks > 0 || embedded_symbols > 0) {
+                // 600 seconds stuck WITH some progress = genuinely stuck
                 is_stuck = true;
-                tracing::warn!(project_id = %project_id, "Embedding progress stuck for 60s, forcing completion");
+                tracing::warn!(
+                    project_id = %project_id,
+                    embedded_chunks,
+                    total_chunks,
+                    embedded_symbols,
+                    total_symbols,
+                    "Embedding progress stuck for 600s with partial progress, forcing completion"
+                );
+            } else if entry.2 >= 60 && embedded_chunks == 0 && embedded_symbols == 0 {
+                // 600 seconds with zero embeddings = engine not ready yet, reset and wait
+                if entry.2 % 60 == 0 {
+                    tracing::info!(
+                        project_id = %project_id,
+                        stuck_ticks = entry.2,
+                        "Embedding engine not ready yet (0 embeddings), waiting..."
+                    );
+                }
+            } else if entry.2 % 6 == 0 && entry.2 > 0 {
+                // Log every 60s while waiting
+                let pct = if total_chunks > 0 {
+                    (embedded_chunks as f64 / total_chunks as f64 * 100.0) as u32
+                } else {
+                    0
+                };
+                tracing::info!(
+                    project_id = %project_id,
+                    embedded_chunks,
+                    total_chunks,
+                    pct = pct,
+                    stall_secs = entry.2 * 10,
+                    "Embedding in progress, waiting for next batch..."
+                );
             }
         } else {
             entry.0 = embedded_chunks;
@@ -140,13 +175,31 @@ async fn check_and_complete_project(
         updated_status.status = IndexState::Completed;
         updated_status.total_chunks = total_chunks;
         updated_status.total_symbols = total_symbols;
+        updated_status.failed_embeddings = failed;
 
         state.storage.update_index_status(updated_status).await?;
+
+        // Rebuild HNSW vector indices so semantic search works immediately
+        let dim = state.embedding.dimensions();
+        if let Err(e) = state.storage.rebuild_vector_indices(dim).await {
+            tracing::error!(
+                project_id = %project_id,
+                error = %e,
+                "Failed to rebuild HNSW indices after completion"
+            );
+        } else {
+            tracing::info!(
+                project_id = %project_id,
+                dim = dim,
+                "HNSW vector indices rebuilt successfully"
+            );
+        }
 
         tracing::info!(
             project_id = %project_id,
             chunks = total_chunks,
             symbols = total_symbols,
+            failed = failed,
             "Project indexing completed"
         );
     }

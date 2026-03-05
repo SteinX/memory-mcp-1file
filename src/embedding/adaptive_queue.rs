@@ -88,6 +88,11 @@ impl AdaptiveEmbeddingQueue {
         })
     }
 
+    /// Clone the underlying mpsc::Sender for re-queue in the embedding worker.
+    pub fn requeue_sender(&self) -> mpsc::Sender<EmbeddingRequest> {
+        self.sender.clone()
+    }
+
     pub fn metrics(&self) -> &EmbeddingMetrics {
         &self.metrics
     }

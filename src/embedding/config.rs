@@ -24,7 +24,7 @@ pub enum ModelType {
     BgeM3,
     /// Qwen/Qwen3-Embedding-0.6B — 1024d, ~1.2 GB. Top open-source 2026, MRL, 32K ctx.
     Qwen3,
-    /// unsloth/embeddinggemma-300m-qat-q4_0-unquantized — 2048d, ~545 MB. Default.
+    /// unsloth/embeddinggemma-300m-qat-q4_0-unquantized — 768d, ~195 MB. Default.
     #[default]
     Gemma,
     Mock,
@@ -51,7 +51,7 @@ impl ModelType {
             Self::Nomic => 768,
             Self::BgeM3 => 1024,
             Self::Qwen3 => 1024,
-            Self::Gemma => 2048,
+            Self::Gemma => 768,
             Self::Mock => 768,
         }
     }
@@ -83,7 +83,7 @@ impl ModelType {
             Self::E5Small => "~85 MB",
             Self::E5Multi => "~180 MB",
             Self::Nomic => "~270 MB",
-            Self::Gemma => "~545 MB",
+            Self::Gemma => "~195 MB",
             Self::BgeM3 => "~420 MB",
             Self::Qwen3 => "~1.2 GB",
             Self::Mock => "0 MB",
@@ -249,7 +249,7 @@ mod tests {
         assert_eq!(ModelType::E5Multi.base_dimensions(), 768);
         assert_eq!(ModelType::BgeM3.base_dimensions(), 1024);
         assert_eq!(ModelType::Qwen3.base_dimensions(), 1024);
-        assert_eq!(ModelType::Gemma.base_dimensions(), 2048);
+        assert_eq!(ModelType::Gemma.base_dimensions(), 768);
     }
 
     #[test]
@@ -261,7 +261,7 @@ mod tests {
     }
 
     #[test]
-    fn test_default_is_qwen3() {
+    fn test_default_is_gemma() {
         assert_eq!(ModelType::default(), ModelType::Gemma);
         assert_eq!(EmbeddingConfig::default().model, ModelType::Gemma);
     }
@@ -276,7 +276,7 @@ mod tests {
         assert_eq!(cfg.output_dim(), 512);
 
         let cfg2 = EmbeddingConfig::default();
-        assert_eq!(cfg2.output_dim(), 2048);
+        assert_eq!(cfg2.output_dim(), 768);
     }
 
     #[test]

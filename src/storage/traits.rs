@@ -180,6 +180,10 @@ pub trait StorageBackend: Send + Sync {
     /// keeping all chunk content in RAM.
     async fn get_chunks_by_ids(&self, ids: &[String]) -> Result<Vec<CodeChunk>>;
 
+    /// Clear all embeddings for a project, forcing re-embedding via resume pipeline.
+    /// Sets embedding = NONE on all chunks and symbols for the given project.
+    async fn clear_project_embeddings(&self, project_id: &str) -> Result<u64>;
+
     /// Get indexing status for a project
     async fn get_index_status(&self, project_id: &str) -> Result<Option<IndexStatus>>;
 
@@ -296,6 +300,12 @@ pub trait StorageBackend: Send + Sync {
 
     /// Count chunks that have embeddings (embedding IS NOT NULL)
     async fn count_embedded_chunks(&self, project_id: &str) -> Result<u32>;
+
+    /// Get chunks that have no embedding yet (for resume after interruption)
+    async fn get_unembedded_chunks(&self, project_id: &str) -> Result<Vec<(String, String)>>;
+
+    /// Get symbols that have no embedding yet (for resume after interruption)
+    async fn get_unembedded_symbols(&self, project_id: &str) -> Result<Vec<(String, String)>>;
 
     /// Count symbol relations for a project (useful for debugging graph)
     async fn count_symbol_relations(&self, project_id: &str) -> Result<u32>;

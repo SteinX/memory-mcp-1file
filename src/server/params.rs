@@ -316,3 +316,11 @@ pub struct GetRelatedParams {
     pub depth: Option<usize>,
     pub direction: Option<String>,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[schemars(title = "")]
+pub struct HowToUseParams {
+    /// Placeholder. Always pass true.
+    #[serde(default)]
+    pub _placeholder: bool,
+}

@@ -355,6 +355,84 @@ impl MemoryMcpServer {
             .await
             .map_err(to_rpc_error)
     }
+
+    #[tool(description = "Show all available tools with usage examples and parameter combinations.")]
+    async fn how_to_use(
+        &self,
+        _params: Parameters<HowToUseParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let text = [
+            "=== MEMORY ===",
+            "store_memory(content=\"...\") — store new memory",
+            "store_memory(content=\"...\", memory_type=\"semantic|episodic|procedural\", metadata={...}) — with type and metadata",
+            "store_memory(content=\"...\", user_id=\"agent-1\") — scoped to user/agent",
+            "get_memory(id=\"abc123\") — get full memory by ID",
+            "update_memory(id=\"abc123\", content=\"new text\") — update content (re-embeds automatically)",
+            "update_memory(id=\"abc123\", memory_type=\"semantic\", metadata={...}) — update type/metadata only",
+            "delete_memory(id=\"abc123\") — hard delete (prefer invalidate)",
+            "invalidate(id=\"abc123\", reason=\"outdated\") — soft-delete with reason",
+            "invalidate(id=\"abc123\", superseded_by=\"def456\") — soft-delete linking replacement",
+            "list_memories(limit=20, offset=0) — list newest first, paginated",
+            "get_valid(limit=50) — all non-invalidated memories",
+            "get_valid(timestamp=\"2026-01-15T00:00:00Z\") — point-in-time snapshot",
+            "get_valid(user_id=\"agent-1\") — filter by user/agent",
+            "",
+            "=== SEARCH (memories) ===",
+            "recall(query=\"authentication flow\") — BEST: hybrid vector+BM25+graph RRF fusion",
+            "recall(query=\"...\", vectorWeight=0.7, bm25Weight=0.1, pprWeight=0.2) — tune RRF channel weights",
+            "recall(query=\"...\", limit=20) — control result count",
+            "search_memory(query=\"auth token\", mode=\"vector\") — pure semantic similarity",
+            "search_memory(query=\"DECISION:\", mode=\"bm25\") — exact keyword match",
+            "",
+            "=== CODE INDEXING ===",
+            "index_project(path=\"/project\") — index codebase (incremental)",
+            "index_project(path=\"/project\", force=true) — full re-index from scratch",
+            "project_info(action=\"list\") — list all indexed projects",
+            "project_info(action=\"status\", project_id=\"...\") — indexing progress, stuck chunks, failed files",
+            "project_info(action=\"stats\", project_id=\"...\") — file/symbol/chunk/language counts",
+            "delete_project(project_id=\"...\") — remove indexed project and all its data",
+            "",
+            "=== CODE SEARCH ===",
+            "recall_code(query=\"error handling middleware\") — BEST: hybrid BM25+vector+PPR graph",
+            "recall_code(query=\"...\", mode=\"vector\") — pure semantic vector search",
+            "recall_code(query=\"...\", mode=\"hybrid\") — explicit hybrid (default)",
+            "recall_code(query=\"...\", vectorWeight=0.5, bm25Weight=0.3, pprWeight=0.2) — tune fusion weights",
+            "recall_code(query=\"...\", pathPrefix=\"src/auth/\") — filter by path prefix",
+            "recall_code(query=\"...\", language=\"dart\") — filter by language",
+            "recall_code(query=\"...\", chunkType=\"function\") — filter by chunk type (function|class|method|module)",
+            "recall_code(query=\"...\", pathPrefix=\"src/\", language=\"rust\", limit=20) — all filters combined",
+            "",
+            "=== SYMBOLS ===",
+            "search_symbols(query=\"UserRepository\") — find by name (exact + fuzzy)",
+            "search_symbols(query=\"auth\", symbol_type=\"class\") — filter: class|function|method|interface|enum",
+            "search_symbols(query=\"...\", path_prefix=\"src/\", limit=20, offset=0) — paginated + path filter",
+            "search_symbols(query=\"...\", project_id=\"proj123\") — filter by project",
+            "symbol_graph(action=\"related\", symbol_id=\"abc123\") — related symbols (imports, calls, inheritance)",
+            "symbol_graph(action=\"related\", symbol_id=\"abc123\", depth=3, direction=\"out\") — deep outgoing traversal",
+            "symbol_graph(action=\"related\", symbol_id=\"abc123\", depth=2, direction=\"in\") — who depends on this",
+            "symbol_graph(action=\"related\", symbol_id=\"abc123\", direction=\"both\") — full neighborhood",
+            "symbol_graph(action=\"callers\", symbol_id=\"abc123\") — who calls this symbol",
+            "symbol_graph(action=\"callees\", symbol_id=\"abc123\") — what this symbol calls",
+            "",
+            "=== KNOWLEDGE GRAPH ===",
+            "knowledge_graph(action=\"create_entity\", name=\"AuthModule\", entity_type=\"module\", description=\"...\") — create node",
+            "knowledge_graph(action=\"create_entity\", name=\"AuthModule\", user_id=\"agent-1\") — scoped entity",
+            "knowledge_graph(action=\"create_relation\", from_entity=\"AuthModule\", to_entity=\"UserRepo\", relation_type=\"depends_on\") — create edge",
+            "knowledge_graph(action=\"create_relation\", from_entity=\"...\", to_entity=\"...\", relation_type=\"...\", weight=0.9) — weighted edge",
+            "knowledge_graph(action=\"get_related\", entity_id=\"AuthModule\") — direct neighbors",
+            "knowledge_graph(action=\"get_related\", entity_id=\"AuthModule\", depth=3, direction=\"both\") — deep traversal",
+            "knowledge_graph(action=\"get_related\", entity_id=\"...\", direction=\"in\") — incoming only",
+            "knowledge_graph(action=\"detect_communities\") — find clusters in the graph",
+            "",
+            "=== SYSTEM ===",
+            "get_status(_placeholder=true) — health, embedding model info, memory count",
+            "how_to_use(_placeholder=true) — this help text",
+            "reset_all_memory(confirm=true) — DANGER: wipe ALL data (memories, code index, graph)",
+        ]
+        .join("\n");
+
+        Ok(CallToolResult::success(vec![Content::text(text)]))
+    }
 }
 
 impl ServerHandler for MemoryMcpServer {

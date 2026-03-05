@@ -156,15 +156,18 @@ async fn do_index_project(
                     let _permit = state.db_semaphore.acquire().await;
                     if let Ok(results) = state.storage.create_code_chunks_batch(batch).await {
                         for (id, chunk) in results {
-                            let _ = state
+                            if let Err(e) = state
                                 .embedding_queue
                                 .send(EmbeddingRequest {
                                     text: chunk.content,
                                     responder: None,
-                                    target: Some(EmbeddingTarget::Chunk(id)),
+                                    target: Some(EmbeddingTarget::Chunk(id.clone())),
                                     retry_count: 0,
                                 })
-                                .await;
+                                .await
+                            {
+                                tracing::warn!(chunk_id = %id, error = %e, "Failed to enqueue chunk embedding");
+                            }
                         }
                     }
                 }
@@ -198,7 +201,7 @@ async fn do_index_project(
                                     .signature
                                     .clone()
                                     .unwrap_or_else(|| format!("{} {}", sym.symbol_type, sym.name));
-                                let _ = state
+                                if let Err(e) = state
                                     .embedding_queue
                                     .send(EmbeddingRequest {
                                         text: embed_text,
@@ -206,7 +209,10 @@ async fn do_index_project(
                                         target: Some(EmbeddingTarget::Symbol(id.clone())),
                                         retry_count: 0,
                                     })
-                                    .await;
+                                    .await
+                                {
+                                    tracing::warn!(symbol_id = %id, error = %e, "Failed to enqueue symbol embedding");
+                                }
                             }
                         }
                         Err(e) => {

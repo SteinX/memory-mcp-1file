@@ -78,11 +78,12 @@ fn main() -> anyhow::Result<()> {
     pin_compute_threads();
     let cli = Cli::parse();
 
-    // SurrealKV WAL recovery uses deep recursion. 8MB is sufficient since
-    // HNSW indexes use IF NOT EXISTS (no O(n log n) rebuild on startup).
+    // Candle ML models (especially Qwen3) allocate large tensors on the stack
+    // during forward passes. 16 MB covers both SurrealKV WAL recovery and
+    // any spawn_blocking inference that inherits the worker stack size.
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
-        .thread_stack_size(8 * 1024 * 1024) // 8 MB
+        .thread_stack_size(16 * 1024 * 1024) // 16 MB
         .build()?;
 
     runtime.block_on(async_main(cli))
@@ -91,9 +92,9 @@ fn main() -> anyhow::Result<()> {
 async fn async_main(cli: Cli) -> anyhow::Result<()> {
     if cli.list_models {
         println!("Available models:");
-        println!("  qwen3     - 1024 dim, ~1.2 GB (default) [Apache 2.0] Top open-source 2026, MRL, 32K ctx");
+        println!("  qwen3     - 1024 dim, ~1.2 GB          [Apache 2.0] Top open-source 2026, MRL, 32K ctx");
         println!(
-            "  gemma     -  768 dim, ~195 MB           [Gemma license] Lightweight MRL alternative"
+            "  gemma     -  768 dim, ~195 MB (default) [Gemma license] Lightweight MRL alternative"
         );
         println!(
             "  bge_m3    - 1024 dim, ~420 MB           [MIT] Hybrid dense+sparse+colbert retrieval"
@@ -169,6 +170,8 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
 
     let (shutdown_tx, _shutdown_rx) = tokio::sync::watch::channel(false);
 
+    let requeue_tx = adaptive_queue.requeue_sender();
+
     let state = Arc::new(AppState {
         config: AppConfig {
             data_dir: cli.data_dir,
@@ -195,6 +198,7 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
 
     let worker = EmbeddingWorker::new(
         queue_rx,
+        requeue_tx,
         embedding.get_engine(),
         embedding_store.clone(),
         state.clone(),
@@ -222,6 +226,74 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
             .await;
         if count > 0 {
             tracing::info!(chunks = count, "BM25 in-memory index warmed from DB");
+        }
+    });
+
+    // Re-embed stale memories (background, non-blocking, throttled)
+    let reembed_state = state.clone();
+    let reembed_engine = embedding.get_engine();
+    tokio::spawn(async move {
+        // Wait for embedding engine to be ready
+        loop {
+            let guard = reembed_engine.read().await;
+            if guard.is_some() {
+                break;
+            }
+            drop(guard);
+            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+        }
+
+        let stale_memories = match reembed_state.storage.get_stale_memories().await {
+            Ok(memories) => memories,
+            Err(e) => {
+                tracing::warn!("Failed to query stale memories: {}", e);
+                return;
+            }
+        };
+
+        if stale_memories.is_empty() {
+            return;
+        }
+
+        tracing::info!(count = stale_memories.len(), "Re-embedding stale memories");
+        let mut re_embedded = 0u32;
+        for memory in &stale_memories {
+            let mem_id = match &memory.id {
+                Some(thing) => memory_mcp::types::record_key_to_string(&thing.key),
+                None => continue,
+            };
+            let content = memory.content.clone();
+            let engine_clone = reembed_engine.clone();
+            // Use spawn_blocking to avoid stack overflow — ML model needs large stack
+            let emb_result = tokio::task::spawn_blocking(move || {
+                let rt = tokio::runtime::Handle::current();
+                let guard = rt.block_on(engine_clone.read());
+                match guard.as_ref() {
+                    Some(engine) => engine.embed(&content).ok(),
+                    None => None,
+                }
+            })
+            .await;
+
+            if let Ok(Some(emb)) = emb_result {
+                let hash = blake3::hash(memory.content.as_bytes()).to_hex().to_string();
+                if let Err(e) = reembed_state
+                    .storage
+                    .raw_update_embedding(&mem_id, emb, hash, "current")
+                    .await
+                {
+                    tracing::warn!(id = %mem_id, error = %e, "Failed to update re-embedded memory");
+                } else {
+                    re_embedded += 1;
+                }
+            } else {
+                tracing::warn!(id = %mem_id, "Failed to re-embed memory");
+            }
+            // Throttle: 1 memory per second to avoid CPU contention
+            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+        }
+        if re_embedded > 0 {
+            tracing::info!(count = re_embedded, "Stale memories re-embedded successfully");
         }
     });
 

@@ -100,7 +100,17 @@ pub(super) async fn batch_update_symbol_embeddings(
         .map(|(id, emb)| serde_json::json!({"id": id, "embedding": emb}))
         .collect();
 
-    db.query(sql).bind(("updates", data)).await?;
+    let response = db.query(sql).bind(("updates", data)).await?;
+    if let Err(e) = response.check() {
+        tracing::error!(
+            count = updates.len(),
+            first_id = %updates[0].0,
+            error = %e,
+            "batch_update_symbol_embeddings: query-level error"
+        );
+        return Err(e.into());
+    }
+    tracing::debug!(count = updates.len(), "batch_update_symbol_embeddings: OK");
     Ok(())
 }
 
@@ -230,7 +240,12 @@ pub(super) async fn get_symbol_callers(
     db: &Surreal<Db>,
     symbol_id: &str,
 ) -> Result<Vec<CodeSymbol>> {
-    let thing = parse_thing(symbol_id)?;
+    use crate::types::ThingId;
+    let thing = if !symbol_id.contains(':') {
+        ThingId::new("code_symbols", symbol_id)?.to_thing()
+    } else {
+        parse_thing(symbol_id)?
+    };
     let sql = r#"
         SELECT * FROM code_symbols 
         WHERE id IN (
@@ -248,7 +263,12 @@ pub(super) async fn get_symbol_callees(
     db: &Surreal<Db>,
     symbol_id: &str,
 ) -> Result<Vec<CodeSymbol>> {
-    let thing = parse_thing(symbol_id)?;
+    use crate::types::ThingId;
+    let thing = if !symbol_id.contains(':') {
+        ThingId::new("code_symbols", symbol_id)?.to_thing()
+    } else {
+        parse_thing(symbol_id)?
+    };
     let sql = r#"
         SELECT * FROM code_symbols 
         WHERE id IN (
@@ -552,6 +572,45 @@ pub(super) async fn count_embedded_symbols(db: &Surreal<Db>, project_id: &str) -
     Ok(result.map(|r| r.count).unwrap_or(0))
 }
 
+pub(super) async fn get_unembedded_symbols(
+    db: &Surreal<Db>,
+    project_id: &str,
+) -> Result<Vec<(String, String)>> {
+    use surrealdb_types::SurrealValue;
+
+    let sql = "SELECT id, name, symbol_type, signature FROM code_symbols WHERE project_id = $project_id AND embedding IS NONE";
+    let response = db
+        .query(sql)
+        .bind(("project_id", project_id.to_string()))
+        .await?;
+    let mut response = response.check()?;
+
+    #[derive(serde::Deserialize, SurrealValue)]
+    struct Row {
+        id: crate::types::RecordId,
+        name: String,
+        symbol_type: String,
+        signature: Option<String>,
+    }
+
+    let rows: Vec<Row> = response.take(0)?;
+    let results = rows
+        .into_iter()
+        .map(|row| {
+            let id_str = format!(
+                "{}:{}",
+                row.id.table,
+                record_key_to_string(&row.id.key)
+            );
+            let embed_text = row
+                .signature
+                .unwrap_or_else(|| format!("{} {}", row.symbol_type, row.name));
+            (id_str, embed_text)
+        })
+        .collect();
+    Ok(results)
+}
+
 pub(super) async fn count_symbol_relations(db: &Surreal<Db>, project_id: &str) -> Result<u32> {
     use surrealdb_types::SurrealValue;
 
@@ -655,6 +714,7 @@ pub(super) async fn vector_search_code(
             vector::similarity::cosine(embedding, $vec) AS score 
         FROM code_chunks
         WHERE embedding <|{knn_k},{ef}|> $vec
+          AND embedding IS NOT NONE
           AND ($project_id IS NONE OR project_id = $project_id)
         ORDER BY score DESC 
         LIMIT $limit
@@ -692,6 +752,7 @@ pub(super) async fn vector_search_symbols(
             vector::similarity::cosine(embedding, $vec) AS _score
         FROM code_symbols
         WHERE embedding <|{knn_k},{ef}|> $vec
+          AND embedding IS NOT NONE
           AND ($project_id IS NONE OR project_id = $project_id)
         ORDER BY _score DESC
         LIMIT $limit

@@ -10,7 +10,8 @@ mod symbols;
 
 // Re-export everything so external callers see the same flat API as before.
 pub use indexing::{
-    delete_project, get_index_status, get_project_stats, index_project, list_projects,
+    delete_project, get_degradation_info, get_index_status, get_project_stats, index_project,
+    list_projects,
 };
 pub use search::{recall_code, search_code};
 pub use symbols::{search_symbols, symbol_graph};

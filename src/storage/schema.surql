@@ -47,7 +47,8 @@ DEFINE INDEX IF NOT EXISTS idx_entities_fts ON entities
     FIELDS name FULLTEXT ANALYZER simple BM25;
 
 -- Relations table (entity graph edges)
--- Auto-created by RELATE statements; no explicit definition needed
+-- Must be explicitly defined so SELECT/graph queries work before first RELATE
+DEFINE TABLE IF NOT EXISTS relations TYPE RELATION SCHEMALESS;
 
 -- Symbol relations table (code graph edges: calls, imports, etc.)
 DEFINE TABLE IF NOT EXISTS symbol_relation SCHEMAFULL TYPE RELATION;
@@ -99,6 +100,7 @@ DEFINE FIELD completed_at     ON index_status TYPE option<datetime>;
 DEFINE FIELD error_message    ON index_status TYPE option<string>;
 DEFINE FIELD failed_files     ON index_status TYPE array<string> DEFAULT [];
 DEFINE FIELD failed_embeddings ON index_status TYPE int DEFAULT 0;
+DEFINE FIELD embedding_version ON index_status TYPE int DEFAULT 0;
 
 -- File hashes table (for incremental indexing)
 DEFINE TABLE IF NOT EXISTS file_hashes SCHEMAFULL;

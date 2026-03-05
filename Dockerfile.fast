@@ -20,7 +20,7 @@ ENV DATA_DIR=/data
 ENV LOG_LEVEL=info
 # SurrealKV WAL recovery needs extra stack. 8MB is sufficient since
 # HNSW indexes use IF NOT EXISTS (no O(n log n) rebuild on startup).
-ENV RUST_MIN_STACK=8388608
+ENV RUST_MIN_STACK=16777216
 # Limit glibc malloc arenas to reduce memory fragmentation in containers.
 # Without this, glibc can create up to 8×CPU arenas, wasting hundreds of MB.
 ENV MALLOC_ARENA_MAX=2

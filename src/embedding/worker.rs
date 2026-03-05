@@ -22,6 +22,7 @@ pub struct EmbeddingRequest {
 
 pub struct EmbeddingWorker {
     queue: mpsc::Receiver<EmbeddingRequest>,
+    requeue_tx: mpsc::Sender<EmbeddingRequest>,
     engine: Arc<tokio::sync::RwLock<Option<Arc<EmbeddingEngine>>>>,
     store: Arc<EmbeddingStore>,
     storage: Arc<crate::storage::SurrealStorage>,
@@ -31,6 +32,7 @@ pub struct EmbeddingWorker {
 impl EmbeddingWorker {
     pub fn new(
         queue: mpsc::Receiver<EmbeddingRequest>,
+        requeue_tx: mpsc::Sender<EmbeddingRequest>,
         engine: Arc<tokio::sync::RwLock<Option<Arc<EmbeddingEngine>>>>,
         store: Arc<EmbeddingStore>,
         state: Arc<crate::config::AppState>,
@@ -38,6 +40,7 @@ impl EmbeddingWorker {
         let metrics = state.embedding_queue.metrics_arc();
         Self {
             queue,
+            requeue_tx,
             engine,
             store,
             storage: state.storage.clone(),
@@ -48,8 +51,12 @@ impl EmbeddingWorker {
     pub async fn run(mut self) -> usize {
         let mut batch = Vec::with_capacity(2);
         let mut processed_count = 0;
+        let mut total_received = 0usize;
+        let mut engine_not_ready_count = 0u64;
         let deadline = tokio::time::sleep(Duration::from_millis(100));
         tokio::pin!(deadline);
+
+        tracing::info!("Embedding worker started, waiting for requests");
 
         loop {
             tokio::select! {
@@ -58,11 +65,20 @@ impl EmbeddingWorker {
                 recv_result = self.queue.recv() => {
                     match recv_result {
                         Some(req) => {
+                            total_received += 1;
+                            if total_received == 1 || total_received % 500 == 0 {
+                                tracing::info!(total_received, batch_size = batch.len(), "Embedding worker receiving items");
+                            }
                             batch.push(req);
-                            if batch.len() >= 8 {
+                            if batch.len() >= 2 {
                                 let n = batch.len();
                                 if self.process_batch(&mut batch).await {
                                     processed_count += n;
+                                } else {
+                                    engine_not_ready_count += 1;
+                                    if engine_not_ready_count <= 5 || engine_not_ready_count % 100 == 0 {
+                                        tracing::warn!(engine_not_ready_count, batch_pending = batch.len(), "Engine not ready, items accumulating");
+                                    }
                                 }
                                 deadline.as_mut().reset(tokio::time::Instant::now() + Duration::from_millis(100));
                             }
@@ -86,6 +102,14 @@ impl EmbeddingWorker {
                         let count = batch.len();
                         if self.process_batch(&mut batch).await {
                             processed_count += count;
+                            if processed_count % 500 == 0 || processed_count <= 8 {
+                                tracing::info!(processed_count, "Embedding worker progress (deadline flush)");
+                            }
+                        } else {
+                            engine_not_ready_count += 1;
+                            if engine_not_ready_count <= 5 || engine_not_ready_count % 100 == 0 {
+                                tracing::warn!(engine_not_ready_count, batch_pending = batch.len(), "Engine not ready on deadline flush");
+                            }
                         }
                     }
                     deadline.as_mut().reset(tokio::time::Instant::now() + Duration::from_millis(100));
@@ -100,6 +124,31 @@ impl EmbeddingWorker {
     async fn process_batch(&self, batch: &mut Vec<EmbeddingRequest>) -> bool {
         if batch.is_empty() {
             return true;
+        }
+
+        // Filter out trivially short texts (e.g. "pub mod foo;") that produce
+        // degenerate embeddings near the average token centroid. These chunks
+        // still participate in BM25 search but are excluded from vector search.
+        const MIN_EMBED_CHARS: usize = 50;
+        let mut skipped_short = 0usize;
+        for req in batch.iter_mut() {
+            if req.text.len() < MIN_EMBED_CHARS && req.target.is_some() {
+                // Mark as "no embedding needed" by clearing target —
+                // the DB update loop below will simply skip it.
+                skipped_short += 1;
+                req.target = None;
+                if let Some(tx) = req.responder.take() {
+                    let _ = tx.send(Vec::new());
+                }
+            }
+        }
+        // Remove skipped items so they don't go through inference
+        if skipped_short > 0 {
+            tracing::debug!(skipped_short, min_chars = MIN_EMBED_CHARS, "Skipped short chunks from embedding");
+            batch.retain(|r| r.target.is_some() || r.responder.is_some());
+            if batch.is_empty() {
+                return true;
+            }
         }
 
         // ── PHASE 1: Brief lock — clone the inner Arc, drop guard immediately ──
@@ -134,9 +183,7 @@ impl EmbeddingWorker {
         }
 
         // ── PHASE 3: Offload inference to blocking pool (no lock, no block_in_place) ──
-        // spawn_blocking is strictly better than block_in_place here because
-        // Arc<EmbeddingEngine> is Send — the tokio worker thread is freed
-        // immediately rather than being commandeered.
+        tracing::debug!(cache_hits = batch.len() - misses_texts.len(), cache_misses = misses_texts.len(), "Phase 2 cache results");
         if !misses_texts.is_empty() {
             let engine_for_blocking = Arc::clone(&engine);
             let embed_result =
@@ -147,34 +194,82 @@ impl EmbeddingWorker {
                 Ok(Ok(new_embeddings)) => {
                     // Collect all cache misses for a single batched disk write
                     let mut cache_batch = Vec::with_capacity(new_embeddings.len());
-                    for (local_idx, vec) in new_embeddings.into_iter().enumerate() {
+                    for (local_idx, emb_opt) in new_embeddings.into_iter().enumerate() {
                         let original_idx = misses_indices[local_idx];
-                        let req = &batch[original_idx];
-                        let hash = blake3::hash(req.text.as_bytes()).to_hex().to_string();
+                        if let Some(vec) = emb_opt {
+                            let req = &batch[original_idx];
+                            let hash = blake3::hash(req.text.as_bytes()).to_hex().to_string();
 
-                        cache_batch.push((hash, vec.clone()));
-                        final_embeddings[original_idx] = Some(vec);
+                            cache_batch.push((hash, vec.clone()));
+                            final_embeddings[original_idx] = Some(vec);
+                        } else {
+                            // Per-item failure (e.g. empty token sequence) — try re-queue
+                            let req = &batch[original_idx];
+                            if req.retry_count < 3 {
+                                tracing::warn!(
+                                    target = ?req.target,
+                                    attempt = req.retry_count + 1,
+                                    "Embedding returned None, re-queuing"
+                                );
+                                let retry = EmbeddingRequest {
+                                    text: req.text.clone(),
+                                    responder: None,
+                                    target: match &req.target {
+                                        Some(EmbeddingTarget::Symbol(id)) => Some(EmbeddingTarget::Symbol(id.clone())),
+                                        Some(EmbeddingTarget::Chunk(id)) => Some(EmbeddingTarget::Chunk(id.clone())),
+                                        None => None,
+                                    },
+                                    retry_count: req.retry_count + 1,
+                                };
+                                let _ = self.requeue_tx.try_send(retry);
+                            } else {
+                                tracing::error!(
+                                    target = ?req.target,
+                                    "Embedding permanently failed after 3 retries"
+                                );
+                                self.metrics.inc_failed(1);
+                            }
+                        }
                     }
                     let _ = self.store.put_batch(cache_batch).await;
                 }
                 Ok(Err(e)) => {
                     tracing::error!(
-                        "Batch embedding failed (items will have no embeddings): {}",
-                        e
+                        batch_size = batch.len(),
+                        error = %e,
+                        "Batch embedding failed, re-queuing retryable items"
                     );
-                    // Log retry info for monitoring - actual re-queue needs queue sender
                     for req in batch.iter() {
                         if req.retry_count < 3 {
                             tracing::warn!(
-                                "Embedding failed for target {:?} (attempt {}/3)",
-                                req.target,
-                                req.retry_count + 1
+                                target = ?req.target,
+                                attempt = req.retry_count + 1,
+                                "Re-queuing after batch failure"
                             );
+                            let retry = EmbeddingRequest {
+                                text: req.text.clone(),
+                                responder: None,
+                                target: match &req.target {
+                                    Some(EmbeddingTarget::Symbol(id)) => Some(EmbeddingTarget::Symbol(id.clone())),
+                                    Some(EmbeddingTarget::Chunk(id)) => Some(EmbeddingTarget::Chunk(id.clone())),
+                                    None => None,
+                                },
+                                retry_count: req.retry_count + 1,
+                            };
+                            let _ = self.requeue_tx.try_send(retry);
+                        } else {
+                            tracing::error!(
+                                target = ?req.target,
+                                "Embedding permanently failed after 3 retries"
+                            );
+                            self.metrics.inc_failed(1);
                         }
                     }
                 }
                 Err(join_err) => {
                     tracing::error!("embed_batch task panicked: {}", join_err);
+                    // Panic = unrecoverable — mark all as failed
+                    self.metrics.inc_failed(batch.len() as u64);
                 }
             }
         }
@@ -182,6 +277,7 @@ impl EmbeddingWorker {
         // ── PHASE 4: Collect updates for batch DB writes (no lock held) ──
         let mut symbol_updates: Vec<(String, Vec<f32>)> = Vec::new();
         let mut chunk_updates: Vec<(String, Vec<f32>)> = Vec::new();
+        let mut null_count = 0usize;
 
         for (req, emb_opt) in batch.drain(..).zip(final_embeddings) {
             self.metrics.dec_queue();
@@ -200,10 +296,20 @@ impl EmbeddingWorker {
                         }
                     }
                 }
-            } else if let Some(tx) = req.responder {
-                let _ = tx.send(vec![]);
+            } else {
+                null_count += 1;
+                if let Some(tx) = req.responder {
+                    let _ = tx.send(vec![]);
+                }
             }
         }
+
+        tracing::info!(
+            symbol_updates = symbol_updates.len(),
+            chunk_updates = chunk_updates.len(),
+            null_count,
+            "Phase 4 collected DB updates"
+        );
 
         // Batch update instead of individual spawns
         use crate::storage::StorageBackend;
@@ -258,11 +364,12 @@ mod tests {
 
         let (tx, rx) = mpsc::channel(100);
         let metrics = std::sync::Arc::new(EmbeddingMetrics::new());
-        let adaptive_queue = AdaptiveEmbeddingQueue::with_defaults(tx, metrics);
+        let adaptive_queue = AdaptiveEmbeddingQueue::with_defaults(tx.clone(), metrics);
 
         let (shutdown_tx, _) = tokio::sync::watch::channel(false);
         let _worker = EmbeddingWorker::new(
             rx,
+            tx,
             service.get_engine(),
             store.clone(),
             Arc::new(crate::config::AppState {

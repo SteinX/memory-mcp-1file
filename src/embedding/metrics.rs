@@ -31,4 +31,8 @@ impl EmbeddingMetrics {
     pub fn get_queue_depth(&self) -> usize {
         self.queue_depth.load(Ordering::Relaxed)
     }
+
+    pub fn get_failed_total(&self) -> u64 {
+        self.failed_total.load(Ordering::Relaxed)
+    }
 }

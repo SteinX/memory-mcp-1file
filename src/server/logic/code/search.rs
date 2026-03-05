@@ -39,38 +39,89 @@ pub async fn search_code(
     let query_embedding = state.embedding.embed(&params.query).await?;
 
     let limit = normalize_limit(params.limit);
-    let results = state
-        .storage
-        .vector_search_code(&query_embedding, params.project_id.as_deref(), limit)
-        .await
-        .unwrap_or_default();
 
-    if !results.is_empty() {
-        return Ok(success_json(json!({
-            "results": results,
-            "count": results.len(),
-            "query": params.query,
-            "is_partial": is_partial,
-            "message": indexing_message
-        })));
+    // Run vector search and BM25 in parallel for robust results.
+    // Previously BM25 was only a fallback — degenerate vectors masked BM25 entirely.
+    let project_id = params.project_id.as_deref();
+    let (vector_results, bm25_results) = tokio::join!(
+        async {
+            match state
+                .storage
+                .vector_search_code(&query_embedding, project_id, limit)
+                .await
+            {
+                Ok(results) => {
+                    tracing::debug!(hits = results.len(), "search_code: vector search completed");
+                    results
+                }
+                Err(e) => {
+                    tracing::warn!(error = %e, "search_code: vector search failed, falling back to empty");
+                    Vec::new()
+                }
+            }
+        },
+        async {
+            state
+                .code_search
+                .search(&params.query, project_id, limit, state.storage.as_ref())
+                .await
+        }
+    );
+
+    // Merge: vector results first, then BM25 results not already present.
+    // This gives vector priority in ranking while ensuring BM25 fills gaps.
+    use std::collections::HashSet;
+    let mut seen_ids: HashSet<String> = HashSet::new();
+    let mut merged = Vec::with_capacity(limit);
+
+    for r in &vector_results {
+        if seen_ids.insert(r.id.clone()) {
+            merged.push(json!({
+                "id": r.id,
+                "file_path": r.file_path,
+                "content": r.content,
+                "language": r.language,
+                "start_line": r.start_line,
+                "end_line": r.end_line,
+                "chunk_type": r.chunk_type,
+                "name": r.name,
+                "context_path": r.context_path,
+                "score": r.score,
+                "source": "vector"
+            }));
+        }
+        if merged.len() >= limit {
+            break;
+        }
     }
 
-    // Fallback: use in-memory BM25 engine instead of DB-based text search
-    let fallback = state
-        .code_search
-        .search(
-            &params.query,
-            params.project_id.as_deref(),
-            limit,
-            state.storage.as_ref(),
-        )
-        .await;
+    for r in &bm25_results {
+        if merged.len() >= limit {
+            break;
+        }
+        if seen_ids.insert(r.id.clone()) {
+            merged.push(json!({
+                "id": r.id,
+                "file_path": r.file_path,
+                "content": r.content,
+                "language": r.language,
+                "start_line": r.start_line,
+                "end_line": r.end_line,
+                "chunk_type": r.chunk_type,
+                "name": r.name,
+                "context_path": r.context_path,
+                "score": r.score,
+                "source": "bm25"
+            }));
+        }
+    }
 
     Ok(success_json(json!({
-        "results": fallback,
-        "count": fallback.len(),
+        "results": merged,
+        "count": merged.len(),
         "query": params.query,
-        "note": "fallback to text search (in-memory BM25)",
+        "vector_hits": vector_results.len(),
+        "bm25_hits": bm25_results.len(),
         "is_partial": is_partial,
         "message": indexing_message
     })))
@@ -154,14 +205,23 @@ pub async fn recall_code(
     let fetch_limit = if has_filters { limit * 6 } else { limit * 3 };
 
     // 1. Vector search on code_chunks
-    let vector_results: Vec<_> = state
+    let vector_results: Vec<_> = match state
         .storage
         .vector_search_code(&query_embedding, project_id, fetch_limit)
         .await
-        .unwrap_or_default()
-        .into_iter()
-        .filter(|r| matches_filters(r))
-        .collect();
+    {
+        Ok(results) => {
+            tracing::debug!(hits = results.len(), "recall_code: vector search completed");
+            results
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, "recall_code: vector search failed, falling back to empty");
+            Vec::new()
+        }
+    }
+    .into_iter()
+    .filter(|r| matches_filters(r))
+    .collect();
 
     // 2. BM25 search via in-memory engine (replaces DB-based CONTAINS fallback)
     let bm25_results: Vec<_> = state
@@ -373,7 +433,7 @@ pub async fn recall_code(
         })
         .collect();
 
-    Ok(success_json(json!({
+    let mut response = json!({
         "results": results,
         "count": results.len(),
         "query": params.query,
@@ -384,5 +444,11 @@ pub async fn recall_code(
         },
         "is_partial": is_partial,
         "message": indexing_message
-    })))
+    });
+
+    if let Some(degradation) = super::get_degradation_info(state).await {
+        response["_indexing"] = degradation;
+    }
+
+    Ok(success_json(response))
 }

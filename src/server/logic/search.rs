@@ -223,6 +223,7 @@ mod tests {
         let search_params = SearchParams {
             query: "Rust".to_string(),
             limit: Some(5),
+            mode: None,
         };
         let result = search(&ctx.state, search_params).await.unwrap();
         let val = serde_json::to_value(&result).unwrap();
@@ -238,6 +239,7 @@ mod tests {
         let text_params = SearchParams {
             query: "scripting".to_string(),
             limit: Some(5),
+            mode: None,
         };
         let result = search_text(&ctx.state, text_params).await.unwrap();
         let val = serde_json::to_value(&result).unwrap();

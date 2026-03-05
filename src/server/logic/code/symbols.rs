@@ -34,7 +34,7 @@ pub async fn search_symbols(
 
             let has_more = offset + count < total as usize;
 
-            Ok(success_json(json!({
+            let mut response = json!({
                 "results": symbols,
                 "count": count,
                 "total": total,
@@ -47,7 +47,13 @@ pub async fn search_symbols(
                     "symbol_type": params.symbol_type,
                     "path_prefix": params.path_prefix
                 }
-            })))
+            });
+
+            if let Some(degradation) = super::get_degradation_info(state).await {
+                response["_indexing"] = degradation;
+            }
+
+            Ok(success_json(response))
         }
         Err(e) => Ok(error_response(e)),
     }
@@ -61,22 +67,30 @@ pub async fn symbol_graph(
         "callers" => match state.storage.get_symbol_callers(&params.symbol_id).await {
             Ok(mut callers) => {
                 strip_symbol_embeddings(&mut callers);
-                Ok(success_json(json!({
+                let mut response = json!({
                     "results": callers,
                     "count": callers.len(),
                     "symbol_id": params.symbol_id
-                })))
+                });
+                if let Some(degradation) = super::get_degradation_info(state).await {
+                    response["_indexing"] = degradation;
+                }
+                Ok(success_json(response))
             }
             Err(e) => Ok(error_response(e)),
         },
         "callees" => match state.storage.get_symbol_callees(&params.symbol_id).await {
             Ok(mut callees) => {
                 strip_symbol_embeddings(&mut callees);
-                Ok(success_json(json!({
+                let mut response = json!({
                     "results": callees,
                     "count": callees.len(),
                     "symbol_id": params.symbol_id
-                })))
+                });
+                if let Some(degradation) = super::get_degradation_info(state).await {
+                    response["_indexing"] = degradation;
+                }
+                Ok(success_json(response))
             }
             Err(e) => Ok(error_response(e)),
         },
@@ -106,7 +120,7 @@ pub async fn symbol_graph(
                 Ok(result) => {
                     let mut symbols = result.symbols;
                     strip_symbol_embeddings(&mut symbols);
-                    Ok(success_json(json!({
+                    let mut response = json!({
                         "symbols": symbols,
                         "relations": result.relations,
                         "symbol_count": symbols.len(),
@@ -115,7 +129,11 @@ pub async fn symbol_graph(
                         "truncated": result.truncated,
                         "deferred_count": result.deferred_count,
                         "frontier": result.frontier
-                    })))
+                    });
+                    if let Some(degradation) = super::get_degradation_info(state).await {
+                        response["_indexing"] = degradation;
+                    }
+                    Ok(success_json(response))
                 }
                 Err(e) => Ok(error_response(e)),
             }

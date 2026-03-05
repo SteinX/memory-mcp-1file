@@ -101,6 +101,12 @@ pub struct IndexStatus {
 
     #[serde(default)]
     pub failed_embeddings: u32,
+
+    /// Tracks embedding model/pooling version for migration detection.
+    /// When code changes pooling strategy, bump EMBEDDING_VERSION in manager.rs
+    /// to trigger automatic re-embedding on next startup.
+    #[serde(default)]
+    pub embedding_version: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -138,6 +144,7 @@ impl IndexStatus {
             error_message: None,
             failed_files: Vec::new(),
             failed_embeddings: 0,
+            embedding_version: 0,
         }
     }
 }

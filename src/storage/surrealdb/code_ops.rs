@@ -175,7 +175,8 @@ pub(super) async fn update_index_status(db: &Surreal<Db>, status: IndexStatus) -
             completed_at = $completed_at,
             error_message = $error_message,
             failed_files = $failed_files,
-            failed_embeddings = $failed_embeddings
+            failed_embeddings = $failed_embeddings,
+            embedding_version = $embedding_version
         WHERE project_id = $project_id
     "#;
 
@@ -192,6 +193,7 @@ pub(super) async fn update_index_status(db: &Surreal<Db>, status: IndexStatus) -
         .bind(("error_message", status.error_message.clone()))
         .bind(("failed_files", status.failed_files.clone()))
         .bind(("failed_embeddings", status.failed_embeddings))
+        .bind(("embedding_version", status.embedding_version))
         .await?;
 
     let updated: Vec<IndexStatus> = response.take(0).unwrap_or_default();
@@ -415,7 +417,17 @@ pub(super) async fn batch_update_chunk_embeddings(
         .map(|(id, emb)| serde_json::json!({"id": id, "embedding": emb}))
         .collect();
 
-    db.query(sql).bind(("updates", data)).await?;
+    let response = db.query(sql).bind(("updates", data)).await?;
+    if let Err(e) = response.check() {
+        tracing::error!(
+            count = updates.len(),
+            first_id = %updates[0].0,
+            error = %e,
+            "batch_update_chunk_embeddings: query-level error"
+        );
+        return Err(e.into());
+    }
+    tracing::debug!(count = updates.len(), "batch_update_chunk_embeddings: OK");
     Ok(())
 }
 
@@ -440,7 +452,7 @@ pub(super) async fn count_chunks(db: &Surreal<Db>, project_id: &str) -> Result<u
 pub(super) async fn count_embedded_chunks(db: &Surreal<Db>, project_id: &str) -> Result<u32> {
     use surrealdb_types::SurrealValue;
 
-    let sql = "SELECT count() FROM code_chunks WHERE project_id = $project_id AND embedding IS NOT NONE GROUP ALL";
+    let sql = "SELECT count() FROM code_chunks WHERE project_id = $project_id AND (embedding IS NOT NONE OR string::len(content) < 50) GROUP ALL";
     let mut response = db
         .query(sql)
         .bind(("project_id", project_id.to_string()))
@@ -453,4 +465,58 @@ pub(super) async fn count_embedded_chunks(db: &Surreal<Db>, project_id: &str) ->
 
     let result: Option<CountResult> = response.take(0)?;
     Ok(result.map(|r| r.count).unwrap_or(0))
+}
+
+pub(super) async fn get_unembedded_chunks(
+    db: &Surreal<Db>,
+    project_id: &str,
+) -> Result<Vec<(String, String)>> {
+    use surrealdb_types::SurrealValue;
+
+    let sql = "SELECT id, content FROM code_chunks WHERE project_id = $project_id AND embedding IS NONE AND string::len(content) >= 50";
+    let response = db
+        .query(sql)
+        .bind(("project_id", project_id.to_string()))
+        .await?;
+    let mut response = response.check()?;
+
+    #[derive(serde::Deserialize, SurrealValue)]
+    struct Row {
+        id: crate::types::RecordId,
+        content: String,
+    }
+
+    let rows: Vec<Row> = response.take(0)?;
+    let results = rows
+        .into_iter()
+        .map(|row| {
+            let id_str = format!(
+                "{}:{}",
+                row.id.table,
+                crate::types::record_key_to_string(&row.id.key)
+            );
+            (id_str, row.content)
+        })
+        .collect();
+    Ok(results)
+}
+
+/// Clear all embeddings for a project (set to NONE), forcing re-embedding
+/// via the existing resume pipeline (get_unembedded_chunks → EmbeddingWorker).
+pub(super) async fn clear_project_embeddings(
+    db: &Surreal<Db>,
+    project_id: &str,
+) -> Result<u64> {
+    let sql = "
+        UPDATE code_chunks SET embedding = NONE WHERE project_id = $project_id;
+        UPDATE code_symbols SET embedding = NONE WHERE project_id = $project_id;
+    ";
+    let response = db
+        .query(sql)
+        .bind(("project_id", project_id.to_string()))
+        .await?;
+    let response = response.check()?;
+    // Each UPDATE returns affected rows; sum both statements
+    let chunks_cleared = response.num_statements();
+    Ok(chunks_cleared as u64)
 }

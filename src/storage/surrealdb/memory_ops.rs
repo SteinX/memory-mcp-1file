@@ -4,7 +4,7 @@ use surrealdb::Surreal;
 use crate::types::{Datetime, Memory, MemoryUpdate, SearchResult};
 use crate::Result;
 
-use super::helpers::generate_id;
+use super::helpers::{generate_id, parse_thing};
 
 pub(super) async fn create_memory(db: &Surreal<Db>, mut memory: Memory) -> Result<String> {
     let id = generate_id();
@@ -34,6 +34,15 @@ pub(super) async fn update_memory(
     }
     if let Some(metadata) = update.metadata {
         memory.metadata = Some(metadata);
+    }
+    if let Some(embedding) = update.embedding {
+        memory.embedding = Some(embedding);
+    }
+    if let Some(content_hash) = update.content_hash {
+        memory.content_hash = Some(content_hash);
+    }
+    if let Some(embedding_state) = update.embedding_state {
+        memory.embedding_state = embedding_state;
     }
 
     let updated: Option<Memory> = db.update(("memories", id)).content(memory).await?;
@@ -152,6 +161,7 @@ pub(super) async fn vector_search(
             vector::similarity::cosine(embedding, $vec) AS score, metadata 
         FROM memories 
         WHERE embedding <|{knn_k},{ef}|> $vec
+          AND embedding IS NOT NONE
           AND (valid_until IS NONE OR valid_until > time::now())
         ORDER BY score DESC 
         LIMIT $limit
@@ -232,4 +242,24 @@ pub(super) async fn invalidate(
         .await?;
     let updated: Option<Memory> = response.take(0).ok().flatten();
     Ok(updated.is_some())
+}
+
+/// Directly update embedding fields for a memory (used by stale re-embed process).
+pub(super) async fn raw_update_embedding(
+    db: &Surreal<Db>,
+    id: &str,
+    embedding: Vec<f32>,
+    content_hash: String,
+    embedding_state: &str,
+) -> Result<()> {
+    let thing = parse_thing(&format!("memories:{}", id))?;
+    db.query(
+        "UPDATE $thing SET embedding = $emb, content_hash = $hash, embedding_state = $state",
+    )
+    .bind(("thing", thing))
+    .bind(("emb", embedding))
+    .bind(("hash", content_hash))
+    .bind(("state", embedding_state.to_string()))
+    .await?;
+    Ok(())
 }

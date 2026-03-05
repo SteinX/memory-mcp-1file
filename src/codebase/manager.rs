@@ -2,9 +2,10 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use tokio::sync::RwLock;
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 
 use crate::config::AppState;
+use crate::embedding::{EmbeddingRequest, EmbeddingTarget};
 use crate::storage::StorageBackend;
 use crate::types::IndexState;
 use crate::Result;
@@ -13,6 +14,11 @@ use super::index_worker::{IndexJob, IndexJobSender};
 use super::indexer::{index_project, IncrementalResult};
 use super::scanner::scan_directory;
 use super::watcher::FileWatcher;
+
+/// Bump this when embedding model or pooling strategy changes.
+/// On startup, if the stored version is lower, all embeddings are cleared
+/// and re-generated via the existing resume pipeline.
+const EMBEDDING_VERSION: u32 = 3; // v1: last-token, v2: mean pooling, v3: +short chunk filter
 
 pub struct CodebaseManager {
     state: Arc<AppState>,
@@ -169,14 +175,110 @@ impl CodebaseManager {
                 if s.status == IndexState::Completed
                     || s.status == IndexState::EmbeddingPending =>
             {
-                info!(status = %s.status, "Index exists, validating against disk...");
-                // Spawn validation so we don't block start().
+                // Check if embedding version changed (e.g. pooling strategy update)
+                if s.embedding_version < EMBEDDING_VERSION {
+                    warn!(
+                        old_version = s.embedding_version,
+                        new_version = EMBEDDING_VERSION,
+                        "Embedding version mismatch — clearing old embeddings for re-generation"
+                    );
+                    let state = self.state.clone();
+                    let project_path = self.project_path.clone();
+                    let project_id = self.project_id.clone();
+                    let index_tx = self.index_tx.clone();
+                    let mut migration_status = s.clone();
+                    tokio::spawn(async move {
+                        // 1. Clear all embeddings (set to NONE)
+                        match state.storage.clear_project_embeddings(&project_id).await {
+                            Ok(_) => {
+                                info!(project_id = %project_id, "Cleared old embeddings for re-generation");
+                            }
+                            Err(e) => {
+                                error!("Failed to clear embeddings: {}", e);
+                                return;
+                            }
+                        }
+                        // 2. Set status to EmbeddingPending with new version
+                        migration_status.status = IndexState::EmbeddingPending;
+                        migration_status.embedding_version = EMBEDDING_VERSION;
+                        if let Err(e) = state.storage.update_index_status(migration_status).await {
+                            error!("Failed to update index status after migration: {}", e);
+                            return;
+                        }
+                        // 3. Resume embeddings via existing pipeline
+                        let mgr = CodebaseManager {
+                            state: state.clone(),
+                            project_path,
+                            project_id,
+                            watcher: RwLock::new(None),
+                            index_tx,
+                        };
+                        match mgr.resume_embeddings().await {
+                            Ok(count) => {
+                                info!(count, "Embedding migration: enqueued items for re-embedding");
+                            }
+                            Err(e) => {
+                                error!("Embedding migration resume failed: {}", e);
+                            }
+                        }
+                    });
+                } else {
+                    info!(status = %s.status, "Index exists, validating against disk...");
+                    // Spawn validation so we don't block start().
+                    let state = self.state.clone();
+                    let project_path = self.project_path.clone();
+                    let project_id = self.project_id.clone();
+                    let index_tx = self.index_tx.clone();
+                    tokio::spawn(async move {
+                        // Temporarily construct a manager-like helper for the spawn.
+                        let mgr = CodebaseManager {
+                            state: state.clone(),
+                            project_path,
+                            project_id: project_id.clone(),
+                            watcher: RwLock::new(None),
+                            index_tx,
+                        };
+                        match mgr.validate_index_full().await {
+                            Ok(_) => {
+                                info!("Background validation: jobs enqueued in IndexWorker");
+                            }
+                            Err(e) => {
+                                error!("Background validation failed: {}", e);
+                            }
+                        }
+                        // Check for orphaned unembedded chunks (e.g. container killed
+                        // mid-embedding on a previous run) and resume if needed.
+                        match mgr.resume_embeddings().await {
+                            Ok(count) if count > 0 => {
+                                info!(count, "Resumed orphaned embeddings from previous run");
+                                // Set status to EmbeddingPending so completion_monitor
+                                // detects when all embeddings finish and rebuilds HNSW.
+                                if let Ok(Some(mut st)) = state.storage.get_index_status(&project_id).await {
+                                    st.status = IndexState::EmbeddingPending;
+                                    if let Err(e) = state.storage.update_index_status(st).await {
+                                        error!("Failed to set EmbeddingPending after resume: {}", e);
+                                    }
+                                }
+                            }
+                            Ok(_) => {
+                                debug!("No orphaned embeddings to resume");
+                            }
+                            Err(e) => {
+                                error!("Failed to resume orphaned embeddings: {}", e);
+                            }
+                        }
+                    });
+                }
+            }
+            Some(s) if s.status == IndexState::Indexing => {
+                warn!("Previous indexing was interrupted, resuming...");
+                // Instead of destructive restart, validate files and resume embeddings
                 let state = self.state.clone();
                 let project_path = self.project_path.clone();
                 let project_id = self.project_id.clone();
                 let index_tx = self.index_tx.clone();
+                let mut resume_status = s.clone();
                 tokio::spawn(async move {
-                    // Temporarily construct a manager-like helper for the spawn.
                     let mgr = CodebaseManager {
                         state: state.clone(),
                         project_path,
@@ -184,19 +286,31 @@ impl CodebaseManager {
                         watcher: RwLock::new(None),
                         index_tx,
                     };
-                    match mgr.validate_index_full().await {
-                        Ok(_) => {
-                            info!("Background validation: jobs enqueued in IndexWorker");
+                    // First: check for any new/changed/deleted files
+                    if let Err(e) = mgr.validate_index_full().await {
+                        error!("Failed to validate index during resume: {}", e);
+                    }
+                    // Then: re-enqueue any chunks/symbols missing embeddings
+                    match mgr.resume_embeddings().await {
+                        Ok(count) => {
+                            if count > 0 {
+                                info!("Resumed embedding for {} items", count);
+                            } else {
+                                info!("No unembedded items found, marking as EmbeddingPending");
+                            }
+                            // Set to EmbeddingPending so completion_monitor picks it up
+                            resume_status.status = IndexState::EmbeddingPending;
+                            if let Err(e) = mgr.state.storage.update_index_status(resume_status).await {
+                                error!("Failed to update index status: {}", e);
+                            }
                         }
                         Err(e) => {
-                            error!("Background validation failed: {}", e);
+                            error!("Failed to resume embeddings: {}", e);
+                            // Fall back to full re-index only on error
+                            mgr.spawn_full_index();
                         }
                     }
                 });
-            }
-            Some(s) if s.status == IndexState::Indexing => {
-                warn!("Previous indexing was interrupted, restarting...");
-                self.spawn_full_index();
             }
             Some(s) if s.status == IndexState::Failed => {
                 warn!("Previous indexing failed, restarting...");
@@ -208,6 +322,48 @@ impl CodebaseManager {
         self.start_watcher().await?;
 
         Ok(())
+    }
+
+    /// Resume embedding for chunks/symbols that were indexed but not yet embedded.
+    /// Used when recovering from an interrupted indexing session.
+    async fn resume_embeddings(&self) -> Result<usize> {
+        let storage = &self.state.storage;
+        let queue = &self.state.embedding_queue;
+        let mut enqueued = 0;
+
+        // Re-enqueue unembedded chunks
+        let unembedded_chunks = storage.get_unembedded_chunks(&self.project_id).await?;
+        for (id, content) in &unembedded_chunks {
+            let req = EmbeddingRequest {
+                text: content.clone(),
+                responder: None,
+                target: Some(EmbeddingTarget::Chunk(id.clone())),
+                retry_count: 0,
+            };
+            if let Err(e) = queue.send(req).await {
+                tracing::warn!(chunk_id = %id, error = %e, "Failed to enqueue chunk embedding during resume");
+            } else {
+                enqueued += 1;
+            }
+        }
+
+        // Re-enqueue unembedded symbols
+        let unembedded_symbols = storage.get_unembedded_symbols(&self.project_id).await?;
+        for (id, text) in &unembedded_symbols {
+            let req = EmbeddingRequest {
+                text: text.clone(),
+                responder: None,
+                target: Some(EmbeddingTarget::Symbol(id.clone())),
+                retry_count: 0,
+            };
+            if let Err(e) = queue.send(req).await {
+                tracing::warn!(symbol_id = %id, error = %e, "Failed to enqueue symbol embedding during resume");
+            } else {
+                enqueued += 1;
+            }
+        }
+
+        Ok(enqueued)
     }
 
     fn spawn_full_index(&self) {
