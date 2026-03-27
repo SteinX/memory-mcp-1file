@@ -17,7 +17,8 @@ _tmp/
 # doc
 target
 .clavix
-doc/research
+doc/
+opencode-mmcp-1file.jsonc
 _vida
 npm/bin/test_ignore.rs
 test_qwen_loading.rs
