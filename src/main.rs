@@ -16,6 +16,7 @@ use memory_mcp::embedding::{
 use memory_mcp::search::CodeSearchEngine;
 use memory_mcp::server::MemoryMcpServer;
 use memory_mcp::storage::{StorageBackend, SurrealStorage};
+use memory_mcp::transport::{serve_http_sse, HttpServerConfig};
 
 #[derive(Parser)]
 #[command(name = "memory-mcp")]
@@ -59,6 +60,15 @@ struct Cli {
 
     #[arg(long)]
     list_models: bool,
+
+    #[arg(long, help = "Use stdio transport mode (backward compatibility)")]
+    stdio: bool,
+
+    #[arg(long, env, default_value = "8080", help = "HTTP server port")]
+    port: u16,
+
+    #[arg(long, env, default_value = "127.0.0.1", help = "HTTP server bind address")]
+    bind: String,
 }
 
 fn default_data_dir() -> PathBuf {
@@ -66,7 +76,17 @@ fn default_data_dir() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("."))
         .join("memory-mcp")
 }
+/// Pin ML compute thread pools to 2 threads to prevent CPU contention with
+/// the tokio runtime. Must be called before any thread pool is initialized.
+///
+/// SAFETY: `std::env::set_var` is unsafe since Rust 1.66 because concurrent
+/// reads from other threads are UB. This is safe here because `main()` calls
+/// us before `tokio::runtime::Builder::build()`, so no other threads exist yet.
 fn pin_compute_threads() {
+    assert!(
+        std::thread::current().name() == Some("main"),
+        "pin_compute_threads must be called from the main thread before spawning any threads"
+    );
     for var in ["RAYON_NUM_THREADS", "MKL_NUM_THREADS", "OMP_NUM_THREADS"] {
         if std::env::var(var).is_err() {
             unsafe { std::env::set_var(var, "2") };
@@ -384,117 +404,92 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
         });
     }
 
-    let transport = rmcp::transport::io::stdio();
+    if cli.stdio {
+        run_stdio_mode(server, state, cli.idle_timeout).await?;
+    } else {
+        run_http_mode(server, cli.bind, cli.port, state).await?;
+    }
 
+    Ok(())
+}
+
+async fn run_stdio_mode(
+    server: MemoryMcpServer,
+    state: Arc<AppState>,
+    idle_timeout: u64,
+) -> anyhow::Result<()> {
+    let transport = rmcp::transport::io::stdio();
     let service = rmcp::service::serve_server(server, transport).await?;
 
-    if cli.idle_timeout > 0 {
+    if idle_timeout > 0 {
         tracing::warn!(
-            minutes = cli.idle_timeout,
+            minutes = idle_timeout,
             "Non-zero idle timeout is not recommended for MCP stdio transport. \
              Per MCP spec, stdio servers should exit only when stdin is closed or on signals."
         );
     }
 
-    // Periodic storage checkpoint (insurance against SIGKILL from misbehaving clients)
-    let checkpoint_storage = state.storage.clone();
-    tokio::spawn(async move {
-        let mut interval = tokio::time::interval(Duration::from_secs(300)); // 5 min
-        interval.tick().await; // Skip immediate first tick
-        loop {
-            interval.tick().await;
-            if let Err(e) = checkpoint_storage.shutdown().await {
-                tracing::warn!("Periodic checkpoint failed: {}", e);
-            } else {
-                tracing::debug!("Periodic storage checkpoint completed");
-            }
-        }
-    });
+    tracing::info!("Server started in stdio mode, waiting for client disconnect or signals...");
 
-    tracing::info!("Server started, waiting for client disconnect or signals...");
-
-    // Track stdin state for anomaly detection
     let stdin_closed = Arc::new(AtomicBool::new(false));
-
     #[cfg(unix)]
     let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
 
-    // MCP stdio lifecycle (spec 2025-03-26 & 2025-11-25):
-    //   - Server runs until client closes stdin (service.waiting() resolves)
-    //   - Server handles SIGINT/SIGTERM for graceful shutdown
-    //   - NO reconnect: stdio is process-level, stdin can't be "reopened"
-    //   - Idle timeout is optional and disabled by default
     let idle_future = async {
-        if cli.idle_timeout > 0 {
-            tokio::time::sleep(Duration::from_secs(cli.idle_timeout * 60)).await;
+        if idle_timeout > 0 {
+            tokio::time::sleep(Duration::from_secs(idle_timeout * 60)).await;
         } else {
-            // Disabled: never resolve
             std::future::pending::<()>().await;
         }
     };
 
-    let shutdown_reason: &str;
     let stdin_closed_flag = stdin_closed.clone();
-
     tokio::select! {
         res = service.waiting() => {
             stdin_closed_flag.store(true, Ordering::SeqCst);
             match res {
-                Ok(_) => {
-                    tracing::info!("Client disconnected (stdin closed)");
-                    shutdown_reason = "client_disconnect";
-                }
-                Err(e) => {
-                    tracing::error!("Server error: {}", e);
-                    shutdown_reason = "server_error";
-                }
+                Ok(_) => tracing::info!("Client disconnected (stdin closed)"),
+                Err(e) => tracing::error!("Server error: {}", e),
             }
         },
         _ = tokio::signal::ctrl_c() => {
             tracing::info!("Shutting down gracefully... (SIGINT)");
-            shutdown_reason = "sigint";
         },
         _ = async {
             #[cfg(unix)]
-            {
-                terminate.recv().await;
-            }
+            { terminate.recv().await; }
             #[cfg(not(unix))]
-            {
-                std::future::pending::<()>().await;
-            }
+            { std::future::pending::<()>().await; }
         } => {
-            let was_stdin_closed = stdin_closed.load(Ordering::SeqCst);
-            if !was_stdin_closed {
+            if !stdin_closed.load(Ordering::SeqCst) {
                 tracing::warn!(
-                    "SIGTERM received while stdin still open. \
-                     Client may have violated MCP spec (expected: stdin close -> SIGTERM). \
-                     Possible causes: client timeout, session crash, or external kill. \
-                     Allowing 2s grace period for in-flight operations..."
+                    "SIGTERM received while stdin still open. Client may have violated MCP spec."
                 );
-                // Grace period: allow in-flight operations to complete and data to flush
                 tokio::time::sleep(Duration::from_secs(2)).await;
-            } else {
-                tracing::info!("SIGTERM received after stdin closed (normal MCP shutdown)");
             }
-            shutdown_reason = "sigterm";
         },
         _ = idle_future => {
-            tracing::info!(minutes = cli.idle_timeout, "Idle timeout reached, shutting down");
-            shutdown_reason = "idle_timeout";
+            tracing::info!(minutes = idle_timeout, "Idle timeout reached, shutting down");
         }
     }
 
-    tracing::info!(reason = shutdown_reason, "Initiating graceful shutdown...");
-
-    // Signal all background loops to stop
+    tracing::info!("Initiating graceful shutdown...");
     let _ = state.shutdown_tx.send(true);
-
-    tracing::info!("Flushing database...");
     if let Err(e) = state.storage.shutdown().await {
         tracing::warn!("Database shutdown error: {}", e);
     }
-
     tracing::info!("Shutdown complete");
     Ok(())
+}
+
+async fn run_http_mode(
+    server: MemoryMcpServer,
+    bind: String,
+    port: u16,
+    state: Arc<AppState>,
+) -> anyhow::Result<()> {
+    let config = HttpServerConfig { bind, port };
+
+    tracing::info!("Server starting in HTTP SSE mode on http://{}:{}", config.bind, config.port);
+    serve_http_sse(move || Ok(server.clone()), config, state).await
 }

@@ -33,6 +33,8 @@ rmcp = { version = "0.16.0", features = [
     "server",
     "client",
     "transport-io",
+    "transport-streamable-http-server",
+    "transport-streamable-http-server-session",
     "macros",
 ] }
 schemars = "1"
@@ -86,6 +88,12 @@ convert_case = "0.11.0"
 bm-25 = { version = "3.0.0", default-features = false, features = ["parallelism"] }
 mimalloc = "0.1.48"
 num_cpus = "1.17.0"
+
+# HTTP Server for Streamable HTTP transport
+axum = "0.7"
+tower = { version = "0.4", features = ["limit", "util"] }
+tower-http = { version = "0.5", features = ["cors", "trace"] }
+tokio-util = "0.7"
 
 
 # Local patch to expose `Model::clear_kv_cache()` as `pub` so we can reset
