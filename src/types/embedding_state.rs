@@ -8,6 +8,7 @@ pub enum EmbeddingState {
     Pending,
     Ready,
     Stale,
+    Current,
 }
 
 impl std::fmt::Display for EmbeddingState {
@@ -17,6 +18,7 @@ impl std::fmt::Display for EmbeddingState {
             Self::Pending => write!(f, "pending"),
             Self::Ready => write!(f, "ready"),
             Self::Stale => write!(f, "stale"),
+            Self::Current => write!(f, "current"),
         }
     }
 }
@@ -30,6 +32,7 @@ impl std::str::FromStr for EmbeddingState {
             "pending" => Ok(Self::Pending),
             "ready" => Ok(Self::Ready),
             "stale" => Ok(Self::Stale),
+            "current" => Ok(Self::Current),
             _ => Ok(Self::default()),
         }
     }
