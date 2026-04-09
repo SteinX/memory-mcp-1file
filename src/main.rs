@@ -3,6 +3,8 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
+use tracing_subscriber::layer::SubscriberExt;
+use tracing_subscriber::util::SubscriberInitExt;
 
 #[cfg(all(not(target_env = "msvc"), not(target_os = "windows")))]
 #[global_allocator]
@@ -17,6 +19,7 @@ use memory_mcp::search::CodeSearchEngine;
 use memory_mcp::server::MemoryMcpServer;
 use memory_mcp::storage::{StorageBackend, SurrealStorage};
 use memory_mcp::transport::{serve_http_sse, HttpServerConfig};
+use memory_mcp::types::EmbeddingState;
 
 #[derive(Parser)]
 #[command(name = "memory-mcp")]
@@ -53,6 +56,18 @@ struct Cli {
     #[arg(long, env = "LOG_LEVEL", default_value = "info")]
     log_level: String,
 
+    /// Log file path. If specified, logs will be written to this file in addition to stderr.
+    /// The file will be rotated when it reaches the maximum size.
+    /// Example: --log-file /path/to/logs/memory-mcp.log
+    #[arg(long, env = "LOG_FILE")]
+    log_file: Option<PathBuf>,
+
+    /// Maximum size of log file in megabytes before rotation (default: 10 MB).
+    /// Only effective when --log-file is specified.
+    /// Rotated files will be named with timestamp: memory-mcp.2026-04-09_14-30-00.log.1
+    #[arg(long, env = "LOG_FILE_MAX_SIZE_MB", default_value = "10")]
+    log_file_max_size_mb: u64,
+
     /// Idle timeout in minutes. 0 = disabled (default, recommended for MCP stdio).
     /// Per MCP spec, stdio servers should exit only on stdin close or signals.
     #[arg(long, env, default_value = "0")]
@@ -69,12 +84,159 @@ struct Cli {
 
     #[arg(long, env, default_value = "127.0.0.1", help = "HTTP server bind address")]
     bind: String,
+
+    /// SurrealKV block cache capacity in MB. Default: auto-detect based on available RAM.
+    /// Set to 0 to use SurrealDB's default (RAM/2, may cause OOM on constrained systems).
+    /// Recommended: 256 MB for 16 GB RAM, 512 MB for 32 GB RAM.
+    #[arg(long, env = "SURREAL_SURREALKV_BLOCK_CACHE_CAPACITY_MB")]
+    block_cache_mb: Option<u64>,
 }
 
 fn default_data_dir() -> PathBuf {
     dirs::data_local_dir()
         .unwrap_or_else(|| PathBuf::from("."))
         .join("memory-mcp")
+}
+
+fn init_logging(
+    log_level: &str,
+    log_file: Option<&PathBuf>,
+    max_size_mb: u64,
+) -> anyhow::Result<()> {
+    let env_filter = tracing_subscriber::EnvFilter::new(log_level);
+
+    if let Some(log_path) = log_file {
+        let parent = log_path.parent().ok_or_else(|| {
+            anyhow::anyhow!("Invalid log file path: no parent directory")
+        })?;
+        std::fs::create_dir_all(parent)?;
+
+        let timestamp = chrono::Local::now().format("%Y-%m-%d_%H-%M-%S");
+        let file_stem = log_path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("memory-mcp");
+        let extension = log_path
+            .extension()
+            .and_then(|s| s.to_str())
+            .unwrap_or("log");
+
+        let base_log_path = parent.join(format!("{}.{}", file_stem, extension));
+        let rolling_writer = SizeRollingWriter::new(
+            base_log_path,
+            timestamp.to_string(),
+            max_size_mb * 1024 * 1024,
+        );
+
+        let (file_writer, guard) = tracing_appender::non_blocking(rolling_writer);
+        std::mem::forget(guard);
+
+        let stderr_writer = std::io::stderr;
+
+        tracing_subscriber::registry()
+            .with(env_filter)
+            .with(
+                tracing_subscriber::fmt::layer()
+                    .with_writer(file_writer)
+                    .with_ansi(false),
+            )
+            .with(
+                tracing_subscriber::fmt::layer()
+                    .with_writer(stderr_writer)
+                    .with_ansi(true),
+            )
+            .init();
+    } else {
+        tracing_subscriber::fmt()
+            .with_env_filter(env_filter)
+            .with_writer(std::io::stderr)
+            .init();
+    }
+
+    Ok(())
+}
+
+struct SizeRollingWriter {
+    base_path: PathBuf,
+    timestamp: String,
+    max_bytes: u64,
+    current_file: std::fs::File,
+    current_size: u64,
+    rotation_count: u64,
+}
+
+impl SizeRollingWriter {
+    fn new(base_path: PathBuf, timestamp: String, max_bytes: u64) -> Self {
+        let parent = base_path.parent().unwrap();
+        let file_stem = base_path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("memory-mcp");
+        let extension = base_path
+            .extension()
+            .and_then(|s| s.to_str())
+            .unwrap_or("log");
+
+        let path = parent.join(format!("{}.{}.{}", file_stem, timestamp, extension));
+        let file = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)
+            .expect("Failed to create log file");
+
+        let current_size = file.metadata().map(|m| m.len()).unwrap_or(0);
+
+        Self {
+            base_path: path,
+            timestamp,
+            max_bytes,
+            current_file: file,
+            current_size,
+            rotation_count: 0,
+        }
+    }
+
+    fn rotate(&mut self) {
+        self.rotation_count += 1;
+        let parent = self.base_path.parent().unwrap();
+        let file_stem = self
+            .base_path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("memory-mcp");
+
+        let rotated_path = parent.join(format!(
+            "{}.{}.log.{}",
+            file_stem, self.timestamp, self.rotation_count
+        ));
+
+        if let Err(e) = std::fs::rename(&self.base_path, &rotated_path) {
+            eprintln!("Failed to rotate log file: {}", e);
+        }
+
+        self.current_file = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&self.base_path)
+            .expect("Failed to create new log file");
+        self.current_size = 0;
+    }
+}
+
+impl std::io::Write for SizeRollingWriter {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        if self.current_size + buf.len() as u64 > self.max_bytes {
+            self.rotate();
+        }
+
+        let written = self.current_file.write(buf)?;
+        self.current_size += written as u64;
+        Ok(written)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.current_file.flush()
+    }
 }
 /// Pin ML compute thread pools to 2 threads to prevent CPU contention with
 /// the tokio runtime. Must be called before any thread pool is initialized.
@@ -94,9 +256,92 @@ fn pin_compute_threads() {
     }
 }
 
+/// Configure SurrealKV block cache to prevent OOM on constrained systems.
+/// SurrealDB defaults to RAM/2 which is too aggressive when other processes consume memory.
+///
+/// Priority: env var > CLI arg > auto-detect
+///
+/// Auto-detect logic: min(available_RAM * 0.2, 512 MB)
+///
+/// SAFETY: Must be called before any SurrealDB initialization (single-threaded).
+fn configure_block_cache(cli_cache_mb: Option<u64>) {
+    const ENV_VAR: &str = "SURREAL_SURREALKV_BLOCK_CACHE_CAPACITY";
+    const ENV_VAR_MB: &str = "SURREAL_SURREALKV_BLOCK_CACHE_CAPACITY_MB";
+    
+    // Priority 1: Check if user already set the raw bytes env var
+    if std::env::var(ENV_VAR).is_ok() {
+        return;
+    }
+    
+    // Priority 2: Use CLI arg if provided (convert MB to bytes)
+    if let Some(mb) = cli_cache_mb {
+        if mb > 0 {
+            let bytes = mb * 1024 * 1024;
+            unsafe { std::env::set_var(ENV_VAR, bytes.to_string()); }
+        }
+        return;
+    }
+    
+    // Priority 3: Check MB env var
+    if let Ok(mb_str) = std::env::var(ENV_VAR_MB) {
+        if let Ok(mb) = mb_str.parse::<u64>() {
+            if mb > 0 {
+                let bytes = mb * 1024 * 1024;
+                unsafe { std::env::set_var(ENV_VAR, bytes.to_string()); }
+            }
+        }
+        return;
+    }
+    
+    // Priority 4: Auto-detect based on available memory
+    #[cfg(target_os = "macos")]
+    {
+        if let Some(available_mb) = get_available_memory_mb_macos() {
+            // Use 20% of available RAM, max 512 MB
+            let cache_mb = std::cmp::min((available_mb as f64 * 0.2) as u64, 512);
+            let cache_bytes = cache_mb * 1024 * 1024;
+            unsafe { std::env::set_var(ENV_VAR, cache_bytes.to_string()); }
+            eprintln!("[memory-mcp] Auto-configured block cache: {} MB (available RAM: {} MB)", cache_mb, available_mb);
+        }
+    }
+    
+    #[cfg(not(target_os = "macos"))]
+    {
+        // On non-macOS, default to conservative 256 MB to avoid OOM
+        let cache_bytes = 256u64 * 1024 * 1024;
+        unsafe { std::env::set_var(ENV_VAR, cache_bytes.to_string()); }
+        eprintln!("[memory-mcp] Auto-configured block cache: 256 MB (default for non-macOS)");
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn get_available_memory_mb_macos() -> Option<u64> {
+    let mut size = std::mem::size_of::<u64>();
+    let mut free_pages: u64 = 0;
+    
+    let result = unsafe {
+        libc::sysctlbyname(
+            b"vm.page_free_count\0".as_ptr() as *const i8,
+            &mut free_pages as *mut u64 as *mut libc::c_void,
+            &mut size,
+            std::ptr::null_mut(),
+            0,
+        )
+    };
+    
+    if result != 0 {
+        return None;
+    }
+    
+    let page_size = unsafe { libc::sysconf(libc::_SC_PAGESIZE) } as u64;
+    let free_bytes = free_pages * page_size;
+    Some(free_bytes / (1024 * 1024))
+}
+
 fn main() -> anyhow::Result<()> {
     pin_compute_threads();
     let cli = Cli::parse();
+    configure_block_cache(cli.block_cache_mb);
 
     // Candle ML models (especially Qwen3) allocate large tensors on the stack
     // during forward passes. 16 MB covers both SurrealKV WAL recovery and
@@ -133,10 +378,7 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
         return Ok(());
     }
 
-    tracing_subscriber::fmt()
-        .with_env_filter(&cli.log_level)
-        .with_writer(std::io::stderr)
-        .init();
+    init_logging(&cli.log_level, cli.log_file.as_ref(), cli.log_file_max_size_mb)?;
 
     tracing::info!(
         version = env!("CARGO_PKG_VERSION"),
@@ -299,7 +541,7 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
                 let hash = blake3::hash(memory.content.as_bytes()).to_hex().to_string();
                 if let Err(e) = reembed_state
                     .storage
-                    .raw_update_embedding(&mem_id, emb, hash, "current")
+                    .raw_update_embedding(&mem_id, emb, hash, &EmbeddingState::Current.to_string())
                     .await
                 {
                     tracing::warn!(id = %mem_id, error = %e, "Failed to update re-embedded memory");

@@ -19,6 +19,8 @@ target
 .clavix
 doc/
 opencode-mmcp-1file.jsonc
+opencode-mmcp-1file.bck.jsonc
+.opencode/package-lock.json
 _vida
 npm/bin/test_ignore.rs
 test_qwen_loading.rs
