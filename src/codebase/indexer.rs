@@ -19,6 +19,8 @@ use crate::embedding::{EmbeddingRequest, EmbeddingTarget};
 use crate::types::code::CodeChunk;
 use crate::types::symbol::{CodeReference, CodeSymbol};
 
+const PARSE_TIMEOUT_SECS: u64 = 30;
+
 pub async fn index_project(state: Arc<AppState>, project_path: &Path) -> Result<IndexStatus> {
     let project_id = project_path
         .file_name()
@@ -125,7 +127,7 @@ async fn do_index_project(
     let mut hash_buffer: Vec<(String, String)> = Vec::with_capacity(batch_size);
     const HASH_FLUSH_SIZE: usize = 50;
 
-    // Issue 4 fix: Parse files with bounded concurrency using JoinSet instead of
+        // Issue 4 fix: Parse files with bounded concurrency using JoinSet instead of
     // sequential spawn_blocking. Up to max_concurrent_parses files are parsed on
     // the blocking thread pool simultaneously.
     #[allow(clippy::type_complexity)]
@@ -333,11 +335,27 @@ async fn do_index_project(
                 .await;
         }
 
-        // Issue 4 fix: Bounded-concurrency parsing via JoinSet.
-        // Drain one completed parse result before spawning if at capacity.
         if parse_set.len() >= max_concurrent_parses {
-            if let Some(join_result) = parse_set.join_next().await {
-                drain_one_parse!(join_result);
+            match tokio::time::timeout(
+                std::time::Duration::from_secs(PARSE_TIMEOUT_SECS),
+                parse_set.join_next()
+            ).await {
+                Ok(Some(join_result)) => {
+                    drain_one_parse!(join_result);
+                }
+                Ok(None) => {}
+                Err(_timeout) => {
+                    // spawn_blocking tasks cannot be cancelled, but we skip waiting for them
+                    tracing::warn!(
+                        timeout_secs = PARSE_TIMEOUT_SECS,
+                        pending = parse_set.len(),
+                        "Parse task timed out"
+                    );
+                    status.failed_files.push(format!("parse_timeout_{}s", PARSE_TIMEOUT_SECS));
+                    if let Some(join_result) = parse_set.try_join_next() {
+                        let _ = drain_one_parse!(join_result);
+                    }
+                }
             }
         }
 
@@ -355,8 +373,27 @@ async fn do_index_project(
     }
 
     // Drain remaining in-flight parse tasks from the JoinSet
-    while let Some(join_result) = parse_set.join_next().await {
-        drain_one_parse!(join_result);
+    loop {
+        match tokio::time::timeout(
+            std::time::Duration::from_secs(PARSE_TIMEOUT_SECS),
+            parse_set.join_next()
+        ).await {
+            Ok(Some(join_result)) => {
+                drain_one_parse!(join_result);
+            }
+            Ok(None) => break,
+            Err(_timeout) => {
+                tracing::warn!(
+                    timeout_secs = PARSE_TIMEOUT_SECS,
+                    pending = parse_set.len(),
+                    "Final drain parse task timed out"
+                );
+                status.failed_files.push(format!("parse_timeout_{}s", PARSE_TIMEOUT_SECS));
+                if let Some(join_result) = parse_set.try_join_next() {
+                    let _ = drain_one_parse!(join_result);
+                }
+            }
+        }
     }
 
     // Flush any remaining buffered file hashes
@@ -625,10 +662,25 @@ pub async fn incremental_index(
             .delete_symbols_by_path(project_id, &path_str)
             .await;
 
-        // Issue 4 fix: Drain one completed parse before spawning if at capacity.
         if parse_set.len() >= max_concurrent_parses {
-            if let Some(join_result) = parse_set.join_next().await {
-                drain_one_incr!(join_result);
+            match tokio::time::timeout(
+                std::time::Duration::from_secs(PARSE_TIMEOUT_SECS),
+                parse_set.join_next()
+            ).await {
+                Ok(Some(join_result)) => {
+                    drain_one_incr!(join_result);
+                }
+                Ok(None) => {}
+                Err(_timeout) => {
+                    tracing::warn!(
+                        timeout_secs = PARSE_TIMEOUT_SECS,
+                        pending = parse_set.len(),
+                        "Incremental parse task timed out"
+                    );
+                    if let Some(join_result) = parse_set.try_join_next() {
+                        let _ = drain_one_incr!(join_result);
+                    }
+                }
             }
         }
 
@@ -647,8 +699,26 @@ pub async fn incremental_index(
     }
 
     // Drain remaining in-flight parse tasks
-    while let Some(join_result) = parse_set.join_next().await {
-        drain_one_incr!(join_result);
+    loop {
+        match tokio::time::timeout(
+            std::time::Duration::from_secs(PARSE_TIMEOUT_SECS),
+            parse_set.join_next()
+        ).await {
+            Ok(Some(join_result)) => {
+                drain_one_incr!(join_result);
+            }
+            Ok(None) => break,
+            Err(_timeout) => {
+                tracing::warn!(
+                    timeout_secs = PARSE_TIMEOUT_SECS,
+                    pending = parse_set.len(),
+                    "Incremental final drain parse task timed out"
+                );
+                if let Some(join_result) = parse_set.try_join_next() {
+                    let _ = drain_one_incr!(join_result);
+                }
+            }
+        }
     }
 
     // NOTE: rebuild_from_storage is intentionally NOT called here.
