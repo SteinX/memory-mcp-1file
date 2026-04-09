@@ -350,6 +350,8 @@ Environment variables or CLI args:
 | `--timeout` | `TIMEOUT_MS` | `30000` | Timeout in milliseconds |
 | `--idle-timeout` | `IDLE_TIMEOUT` | `0` | Idle timeout in minutes. 0 = disabled |
 | `--log-level` | `LOG_LEVEL` | `info` | Verbosity |
+| `--log-file` | `LOG_FILE` | *(None)* | Log file path. If specified, logs will be written to this file in addition to stderr. The file will be rotated when it reaches the maximum size. Rotated files are named with startup timestamp (e.g., `app.2026-04-09_14-30-00.log.1`). |
+| `--log-file-max-size-mb` | `LOG_FILE_MAX_SIZE_MB` | `10` | Maximum log file size in MB before rotation. Only effective when `--log-file` is specified. |
 | *(None)* | `HF_TOKEN` | *(None)* | HuggingFace Token (ONLY required for gated models like `gemma`) |
 | *(None)* | `EMBEDDING_QUEUE_CAPACITY` | `256` | Max size of the background embedding queue |
 | *(None)* | `EMBEDDING_BATCH_SIZE` | `8` | How many files to process in one embedding chunk |
