@@ -37,6 +37,7 @@ mod tests {
         let index_params = IndexProjectParams {
             path: project_path.to_string_lossy().to_string(),
             force: None,
+            confirm_failed_restart: None,
         };
 
         // 1. Trigger Indexing

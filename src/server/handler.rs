@@ -386,7 +386,7 @@ impl MemoryMcpServer {
             "",
             "=== CODE INDEXING ===",
             "index_project(path=\"/project\") — index codebase (incremental)",
-            "index_project(path=\"/project\", force=true) — full re-index from scratch",
+            "index_project(path=\"/project\", force=true, confirm_failed_restart=true) — full re-index from scratch after explicit confirmation",
             "project_info(action=\"list\") — list all indexed projects",
             "project_info(action=\"status\", project_id=\"...\") — indexing progress, stuck chunks, failed files",
             "project_info(action=\"stats\", project_id=\"...\") — file/symbol/chunk/language counts",

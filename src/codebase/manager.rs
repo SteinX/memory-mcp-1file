@@ -313,8 +313,11 @@ impl CodebaseManager {
                 });
             }
             Some(s) if s.status == IndexState::Failed => {
-                warn!("Previous indexing failed, restarting...");
-                self.spawn_full_index();
+                warn!(
+                    project_id = %self.project_id,
+                    error = ?s.error_message,
+                    "Previous indexing failed; not auto-restarting full index to avoid crash loops"
+                );
             }
             _ => {}
         }

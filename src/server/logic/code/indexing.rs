@@ -32,6 +32,15 @@ pub async fn index_project(
         .to_string();
 
     let force = params.force.unwrap_or(false);
+    let confirm_failed_restart = params.confirm_failed_restart.unwrap_or(false);
+
+    tracing::info!(
+        path = %params.path,
+        project_id = %project_id,
+        force,
+        confirm_failed_restart,
+        "index_project request received"
+    );
 
     // Check current status from DB (for informational purposes / force flag)
     if let Ok(Some(status)) = state.storage.get_index_status(&project_id).await {
@@ -45,15 +54,45 @@ pub async fn index_project(
                         "indexed_files": status.indexed_files,
                         "total_chunks": status.total_chunks,
                         "message": "Project already indexed. File changes are tracked incrementally. Use force=true to re-index from scratch."
-                    })));
+                    }))); 
                 }
                 tracing::info!(project_id = %project_id, "Force re-indexing project");
             }
             crate::types::IndexState::Failed => {
+                if !force || !confirm_failed_restart {
+                    return Ok(success_json(json!({
+                        "project_id": project_id,
+                        "status": status.status.to_string(),
+                        "state": "blocked",
+                        "can_retry": true,
+                        "requires_force": true,
+                        "requires_confirmation": true,
+                        "recommended_action": "retry_with_force_and_confirmation",
+                        "total_files": status.total_files,
+                        "indexed_files": status.indexed_files,
+                        "total_chunks": status.total_chunks,
+                        "message": "Previous indexing failed. Refusing to restart full indexing unless force=true and confirm_failed_restart=true are both provided.",
+                        "error_message": status.error_message,
+                        "failed_files": status.failed_files,
+                        "recovery": {
+                            "reason": "failed_index_restart_requires_explicit_confirmation",
+                            "next_step": "Only retry after confirming the previous failure cause is understood and resources are sufficient.",
+                            "example": {
+                                "tool": "index_project",
+                                "arguments": {
+                                    "path": params.path,
+                                    "force": true,
+                                    "confirm_failed_restart": true
+                                }
+                            }
+                        }
+                    })));
+                }
+
                 tracing::info!(
                     project_id = %project_id,
                     error = ?status.error_message,
-                    "Previous indexing failed, re-indexing"
+                    "Previous indexing failed, confirmed force re-indexing project"
                 );
             }
             crate::types::IndexState::Indexing => {
@@ -527,4 +566,98 @@ pub async fn get_degradation_info(state: &Arc<AppState>) -> Option<serde_json::V
     }
 
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_utils::TestContext;
+    use crate::types::{IndexState, IndexStatus};
+
+    #[tokio::test]
+    async fn index_project_does_not_auto_restart_failed_index_without_force() {
+        let ctx = TestContext::new().await;
+        let project_dir = ctx._temp_dir.path().join("failed-project");
+        std::fs::create_dir_all(&project_dir).unwrap();
+
+        let mut failed = IndexStatus::new("failed-project".to_string());
+        failed.status = IndexState::Failed;
+        failed.total_files = 3798;
+        failed.indexed_files = 3710;
+        failed.total_chunks = 12000;
+        failed.error_message = Some("Indexing stalled at 3710/3798 files for >1800s".to_string());
+        ctx.state.storage.update_index_status(failed).await.unwrap();
+
+        let result = index_project(
+            &ctx.state,
+            IndexProjectParams {
+                path: project_dir.to_string_lossy().to_string(),
+                force: None,
+                confirm_failed_restart: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        let value = serde_json::to_value(&result).unwrap();
+        let text = value["content"][0]["text"].as_str().unwrap();
+        let json: serde_json::Value = serde_json::from_str(text).unwrap();
+
+        assert_eq!(json["status"], "failed");
+        assert_eq!(json["state"], "blocked");
+        assert_eq!(json["can_retry"], true);
+        assert_eq!(json["requires_force"], true);
+        assert_eq!(json["requires_confirmation"], true);
+        assert_eq!(json["recommended_action"], "retry_with_force_and_confirmation");
+        assert_eq!(json["indexed_files"], 3710);
+        assert!(json["message"]
+            .as_str()
+            .unwrap()
+            .contains("confirm_failed_restart=true"));
+        assert_eq!(json["recovery"]["reason"], "failed_index_restart_requires_explicit_confirmation");
+        assert_eq!(json["recovery"]["example"]["tool"], "index_project");
+        assert_eq!(json["recovery"]["example"]["arguments"]["force"], true);
+        assert_eq!(json["recovery"]["example"]["arguments"]["confirm_failed_restart"], true);
+
+        let stored = ctx
+            .state
+            .storage
+            .get_index_status("failed-project")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(stored.status, IndexState::Failed);
+    }
+
+    #[tokio::test]
+    async fn index_project_force_without_confirmation_still_blocks_failed_restart() {
+        let ctx = TestContext::new().await;
+        let project_dir = ctx._temp_dir.path().join("failed-project-force");
+        std::fs::create_dir_all(&project_dir).unwrap();
+
+        let mut failed = IndexStatus::new("failed-project-force".to_string());
+        failed.status = IndexState::Failed;
+        failed.error_message = Some("Indexing stalled previously".to_string());
+        ctx.state.storage.update_index_status(failed).await.unwrap();
+
+        let result = index_project(
+            &ctx.state,
+            IndexProjectParams {
+                path: project_dir.to_string_lossy().to_string(),
+                force: Some(true),
+                confirm_failed_restart: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        let value = serde_json::to_value(&result).unwrap();
+        let text = value["content"][0]["text"].as_str().unwrap();
+        let json: serde_json::Value = serde_json::from_str(text).unwrap();
+
+        assert_eq!(json["status"], "failed");
+        assert_eq!(json["state"], "blocked");
+        assert_eq!(json["requires_force"], true);
+        assert_eq!(json["requires_confirmation"], true);
+    }
 }

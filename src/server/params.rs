@@ -207,6 +207,9 @@ pub struct IndexProjectParams {
     /// Force re-index (default: false)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub force: Option<bool>,
+    /// Required together with force=true when retrying a previously failed full index.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub confirm_failed_restart: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
