@@ -335,6 +335,7 @@ async fn do_index_project(
                 .await;
         }
 
+        let mut skip_spawn = false;
         if parse_set.len() >= max_concurrent_parses {
             match tokio::time::timeout(
                 std::time::Duration::from_secs(PARSE_TIMEOUT_SECS),
@@ -345,18 +346,22 @@ async fn do_index_project(
                 }
                 Ok(None) => {}
                 Err(_timeout) => {
-                    // spawn_blocking tasks cannot be cancelled, but we skip waiting for them
                     tracing::warn!(
                         timeout_secs = PARSE_TIMEOUT_SECS,
                         pending = parse_set.len(),
-                        "Parse task timed out"
+                        path = ?file_path,
+                        "Parse task timed out, skipping file"
                     );
-                    status.failed_files.push(format!("parse_timeout_{}s", PARSE_TIMEOUT_SECS));
-                    if let Some(join_result) = parse_set.try_join_next() {
-                        let _ = drain_one_parse!(join_result);
-                    }
+                    status.failed_files.push(file_path.to_string_lossy().to_string());
+                    status.indexed_files += 1;
+                    monitor.indexed_files.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    skip_spawn = true;
                 }
             }
+        }
+
+        if skip_spawn {
+            continue;
         }
 
         // Spawn CPU-bound chunk+parse work onto the blocking thread pool.
@@ -373,12 +378,14 @@ async fn do_index_project(
     }
 
     // Drain remaining in-flight parse tasks from the JoinSet
+    let mut consecutive_timeouts = 0;
     loop {
         match tokio::time::timeout(
             std::time::Duration::from_secs(PARSE_TIMEOUT_SECS),
             parse_set.join_next()
         ).await {
             Ok(Some(join_result)) => {
+                consecutive_timeouts = 0;
                 drain_one_parse!(join_result);
             }
             Ok(None) => break,
@@ -390,7 +397,17 @@ async fn do_index_project(
                 );
                 status.failed_files.push(format!("parse_timeout_{}s", PARSE_TIMEOUT_SECS));
                 if let Some(join_result) = parse_set.try_join_next() {
+                    consecutive_timeouts = 0;
                     let _ = drain_one_parse!(join_result);
+                } else {
+                    consecutive_timeouts += 1;
+                    if consecutive_timeouts > parse_set.len() {
+                        tracing::warn!(
+                            pending = parse_set.len(),
+                            "All remaining tasks timed out, aborting final drain"
+                        );
+                        break;
+                    }
                 }
             }
         }
@@ -662,6 +679,7 @@ pub async fn incremental_index(
             .delete_symbols_by_path(project_id, &path_str)
             .await;
 
+        let mut skip_spawn = false;
         if parse_set.len() >= max_concurrent_parses {
             match tokio::time::timeout(
                 std::time::Duration::from_secs(PARSE_TIMEOUT_SECS),
@@ -675,13 +693,16 @@ pub async fn incremental_index(
                     tracing::warn!(
                         timeout_secs = PARSE_TIMEOUT_SECS,
                         pending = parse_set.len(),
-                        "Incremental parse task timed out"
+                        path = %path_str,
+                        "Incremental parse task timed out, skipping file"
                     );
-                    if let Some(join_result) = parse_set.try_join_next() {
-                        let _ = drain_one_incr!(join_result);
-                    }
+                    skip_spawn = true;
                 }
             }
+        }
+
+        if skip_spawn {
+            continue;
         }
 
         // Spawn CPU-bound chunk+parse onto the blocking thread pool.
@@ -699,12 +720,14 @@ pub async fn incremental_index(
     }
 
     // Drain remaining in-flight parse tasks
+    let mut consecutive_timeouts = 0;
     loop {
         match tokio::time::timeout(
             std::time::Duration::from_secs(PARSE_TIMEOUT_SECS),
             parse_set.join_next()
         ).await {
             Ok(Some(join_result)) => {
+                consecutive_timeouts = 0;
                 drain_one_incr!(join_result);
             }
             Ok(None) => break,
@@ -715,7 +738,17 @@ pub async fn incremental_index(
                     "Incremental final drain parse task timed out"
                 );
                 if let Some(join_result) = parse_set.try_join_next() {
+                    consecutive_timeouts = 0;
                     let _ = drain_one_incr!(join_result);
+                } else {
+                    consecutive_timeouts += 1;
+                    if consecutive_timeouts > parse_set.len() {
+                        tracing::warn!(
+                            pending = parse_set.len(),
+                            "All remaining tasks timed out, aborting final drain"
+                        );
+                        break;
+                    }
                 }
             }
         }
