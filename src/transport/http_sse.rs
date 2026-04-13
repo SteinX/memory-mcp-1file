@@ -11,6 +11,7 @@ use tokio_util::sync::CancellationToken;
 use tower_http::cors::{AllowOrigin, CorsLayer};
 
 use crate::config::AppState;
+use crate::lifecycle::record_runtime_event_with_details;
 use crate::storage::StorageBackend;
 
 pub struct HttpServerConfig {
@@ -131,6 +132,7 @@ where
     tracing::info!("HTTP SSE server listening on http://{}", local_addr);
 
     let ct_for_signals = ct.clone();
+    let signal_data_dir = state.config.data_dir.clone();
     tokio::spawn(async move {
         let ctrl_c = tokio::signal::ctrl_c();
 
@@ -143,9 +145,23 @@ where
         tokio::select! {
             _ = ctrl_c => {
                 tracing::info!("Received SIGINT, initiating HTTP server shutdown...");
+                record_runtime_event_with_details(
+                    &signal_data_dir,
+                    "last_signal.json",
+                    "signal_received",
+                    "http_sse",
+                    serde_json::json!({"signal": "SIGINT"}),
+                );
             },
             _ = terminate.recv() => {
                 tracing::info!("Received SIGTERM, initiating HTTP server shutdown...");
+                record_runtime_event_with_details(
+                    &signal_data_dir,
+                    "last_signal.json",
+                    "signal_received",
+                    "http_sse",
+                    serde_json::json!({"signal": "SIGTERM"}),
+                );
             },
         }
 
@@ -153,21 +169,53 @@ where
         {
             ctrl_c.await.ok();
             tracing::info!("Received SIGINT, initiating HTTP server shutdown...");
+            record_runtime_event_with_details(
+                &signal_data_dir,
+                "last_signal.json",
+                "signal_received",
+                "http_sse",
+                serde_json::json!({"signal": "SIGINT"}),
+            );
         }
 
         ct_for_signals.cancel();
     });
 
-    axum::serve(listener, app)
+    let serve_result = axum::serve(listener, app)
         .with_graceful_shutdown(async move { ct.cancelled().await })
-        .await?;
+        .await;
+
+    if let Err(e) = serve_result {
+        record_runtime_event_with_details(
+            &state.config.data_dir,
+            "last_error.json",
+            "http_server_error",
+            "http_sse",
+            serde_json::json!({"error": e.to_string()}),
+        );
+        return Err(e.into());
+    }
 
     tracing::info!("HTTP server stopped, cleaning up...");
+    record_runtime_event_with_details(
+        &state.config.data_dir,
+        "last_shutdown.json",
+        "graceful_shutdown_started",
+        "http_sse",
+        serde_json::json!({"reason": "server_stopped_or_signal"}),
+    );
     let _ = state.shutdown_tx.send(true);
     if let Err(e) = state.storage.shutdown().await {
         tracing::warn!("Database shutdown error: {}", e);
     }
     tracing::info!("HTTP server shutdown complete");
+    record_runtime_event_with_details(
+        &state.config.data_dir,
+        "last_shutdown.json",
+        "graceful_shutdown_complete",
+        "http_sse",
+        serde_json::json!({"reason": "server_stopped_or_signal"}),
+    );
 
     Ok(())
 }
@@ -179,8 +227,8 @@ mod tests {
     use axum::http::Request;
     use tower::ServiceExt;
 
-    use crate::test_utils::TestContext;
     use crate::server::MemoryMcpServer;
+    use crate::test_utils::TestContext;
 
     fn test_router(state: Arc<AppState>) -> axum::Router {
         let state_for_factory = state.clone();
@@ -237,7 +285,10 @@ mod tests {
                     .uri("/mcp")
                     .header("origin", "http://example.com")
                     .header("access-control-request-method", "POST")
-                    .header("access-control-request-headers", "content-type,mcp-session-id")
+                    .header(
+                        "access-control-request-headers",
+                        "content-type,mcp-session-id",
+                    )
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -255,9 +306,15 @@ mod tests {
             .get("access-control-allow-methods")
             .map(|v| v.to_str().unwrap().to_string())
             .unwrap_or_default();
-        assert!(allow_methods.contains("POST"), "POST not in allowed methods");
+        assert!(
+            allow_methods.contains("POST"),
+            "POST not in allowed methods"
+        );
         assert!(allow_methods.contains("GET"), "GET not in allowed methods");
-        assert!(allow_methods.contains("DELETE"), "DELETE not in allowed methods");
+        assert!(
+            allow_methods.contains("DELETE"),
+            "DELETE not in allowed methods"
+        );
     }
 
     #[tokio::test]
@@ -350,11 +407,7 @@ mod tests {
         let app = test_router(ctx.state.clone());
 
         let resp = app
-            .oneshot(
-                Request::delete("/mcp")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
+            .oneshot(Request::delete("/mcp").body(Body::empty()).unwrap())
             .await
             .unwrap();
 

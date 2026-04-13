@@ -15,6 +15,9 @@ use memory_mcp::config::{AppConfig, AppState};
 use memory_mcp::embedding::{
     EmbeddingConfig, EmbeddingService, EmbeddingStore, EmbeddingWorker, ModelType,
 };
+use memory_mcp::lifecycle::{
+    install_panic_hook, record_runtime_event_with_details, spawn_heartbeat,
+};
 use memory_mcp::search::CodeSearchEngine;
 use memory_mcp::server::MemoryMcpServer;
 use memory_mcp::storage::{StorageBackend, SurrealStorage};
@@ -82,7 +85,12 @@ struct Cli {
     #[arg(long, env, default_value = "8080", help = "HTTP server port")]
     port: u16,
 
-    #[arg(long, env, default_value = "127.0.0.1", help = "HTTP server bind address")]
+    #[arg(
+        long,
+        env,
+        default_value = "127.0.0.1",
+        help = "HTTP server bind address"
+    )]
     bind: String,
 
     /// SurrealKV block cache capacity in MB. Default: auto-detect based on available RAM.
@@ -106,9 +114,9 @@ fn init_logging(
     let env_filter = tracing_subscriber::EnvFilter::new(log_level);
 
     if let Some(log_path) = log_file {
-        let parent = log_path.parent().ok_or_else(|| {
-            anyhow::anyhow!("Invalid log file path: no parent directory")
-        })?;
+        let parent = log_path
+            .parent()
+            .ok_or_else(|| anyhow::anyhow!("Invalid log file path: no parent directory"))?;
         std::fs::create_dir_all(parent)?;
 
         let timestamp = chrono::Local::now().format("%Y-%m-%d_%H-%M-%S");
@@ -267,32 +275,36 @@ fn pin_compute_threads() {
 fn configure_block_cache(cli_cache_mb: Option<u64>) {
     const ENV_VAR: &str = "SURREAL_SURREALKV_BLOCK_CACHE_CAPACITY";
     const ENV_VAR_MB: &str = "SURREAL_SURREALKV_BLOCK_CACHE_CAPACITY_MB";
-    
+
     // Priority 1: Check if user already set the raw bytes env var
     if std::env::var(ENV_VAR).is_ok() {
         return;
     }
-    
+
     // Priority 2: Use CLI arg if provided (convert MB to bytes)
     if let Some(mb) = cli_cache_mb {
         if mb > 0 {
             let bytes = mb * 1024 * 1024;
-            unsafe { std::env::set_var(ENV_VAR, bytes.to_string()); }
+            unsafe {
+                std::env::set_var(ENV_VAR, bytes.to_string());
+            }
         }
         return;
     }
-    
+
     // Priority 3: Check MB env var
     if let Ok(mb_str) = std::env::var(ENV_VAR_MB) {
         if let Ok(mb) = mb_str.parse::<u64>() {
             if mb > 0 {
                 let bytes = mb * 1024 * 1024;
-                unsafe { std::env::set_var(ENV_VAR, bytes.to_string()); }
+                unsafe {
+                    std::env::set_var(ENV_VAR, bytes.to_string());
+                }
             }
         }
         return;
     }
-    
+
     // Priority 4: Auto-detect based on available memory
     #[cfg(target_os = "macos")]
     {
@@ -300,16 +312,23 @@ fn configure_block_cache(cli_cache_mb: Option<u64>) {
             // Use 20% of available RAM, max 512 MB
             let cache_mb = std::cmp::min((available_mb as f64 * 0.2) as u64, 512);
             let cache_bytes = cache_mb * 1024 * 1024;
-            unsafe { std::env::set_var(ENV_VAR, cache_bytes.to_string()); }
-            eprintln!("[memory-mcp] Auto-configured block cache: {} MB (available RAM: {} MB)", cache_mb, available_mb);
+            unsafe {
+                std::env::set_var(ENV_VAR, cache_bytes.to_string());
+            }
+            eprintln!(
+                "[memory-mcp] Auto-configured block cache: {} MB (available RAM: {} MB)",
+                cache_mb, available_mb
+            );
         }
     }
-    
+
     #[cfg(not(target_os = "macos"))]
     {
         // On non-macOS, default to conservative 256 MB to avoid OOM
         let cache_bytes = 256u64 * 1024 * 1024;
-        unsafe { std::env::set_var(ENV_VAR, cache_bytes.to_string()); }
+        unsafe {
+            std::env::set_var(ENV_VAR, cache_bytes.to_string());
+        }
         eprintln!("[memory-mcp] Auto-configured block cache: 256 MB (default for non-macOS)");
     }
 }
@@ -318,7 +337,7 @@ fn configure_block_cache(cli_cache_mb: Option<u64>) {
 fn get_available_memory_mb_macos() -> Option<u64> {
     let mut size = std::mem::size_of::<u64>();
     let mut free_pages: u64 = 0;
-    
+
     let result = unsafe {
         libc::sysctlbyname(
             b"vm.page_free_count\0".as_ptr() as *const i8,
@@ -328,11 +347,11 @@ fn get_available_memory_mb_macos() -> Option<u64> {
             0,
         )
     };
-    
+
     if result != 0 {
         return None;
     }
-    
+
     let page_size = unsafe { libc::sysconf(libc::_SC_PAGESIZE) } as u64;
     let free_bytes = free_pages * page_size;
     Some(free_bytes / (1024 * 1024))
@@ -378,11 +397,33 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
         return Ok(());
     }
 
-    init_logging(&cli.log_level, cli.log_file.as_ref(), cli.log_file_max_size_mb)?;
+    init_logging(
+        &cli.log_level,
+        cli.log_file.as_ref(),
+        cli.log_file_max_size_mb,
+    )?;
+
+    let runtime_mode = if cli.stdio { "stdio" } else { "http_sse" };
+    install_panic_hook(cli.data_dir.clone(), runtime_mode.to_string());
+    record_runtime_event_with_details(
+        &cli.data_dir,
+        "last_start.json",
+        "process_start",
+        runtime_mode,
+        serde_json::json!({
+            "version": env!("CARGO_PKG_VERSION"),
+            "model": cli.model,
+            "bind": cli.bind,
+            "port": cli.port,
+            "log_level": cli.log_level,
+        }),
+    );
 
     tracing::info!(
         version = env!("CARGO_PKG_VERSION"),
         pid = std::process::id(),
+        ppid = unsafe { libc::getppid() },
+        mode = runtime_mode,
         model = %cli.model,
         data_dir = %cli.data_dir.display(),
         "memory-mcp starting"
@@ -457,6 +498,12 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
         shutdown_tx,
         index_pending: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
     });
+
+    spawn_heartbeat(
+        state.config.data_dir.clone(),
+        runtime_mode.to_string(),
+        state.shutdown_rx(),
+    );
 
     let worker = EmbeddingWorker::new(
         queue_rx,
@@ -555,7 +602,10 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
             tokio::time::sleep(std::time::Duration::from_secs(1)).await;
         }
         if re_embedded > 0 {
-            tracing::info!(count = re_embedded, "Stale memories re-embedded successfully");
+            tracing::info!(
+                count = re_embedded,
+                "Stale memories re-embedded successfully"
+            );
         }
     });
 
@@ -686,16 +736,23 @@ async fn run_stdio_mode(
     };
 
     let stdin_closed_flag = stdin_closed.clone();
-    tokio::select! {
+    let shutdown_reason = tokio::select! {
         res = service.waiting() => {
             stdin_closed_flag.store(true, Ordering::SeqCst);
             match res {
-                Ok(_) => tracing::info!("Client disconnected (stdin closed)"),
-                Err(e) => tracing::error!("Server error: {}", e),
+                Ok(_) => {
+                    tracing::info!("Client disconnected (stdin closed)");
+                    "client_disconnect"
+                }
+                Err(e) => {
+                    tracing::error!("Server error: {}", e);
+                    "server_error"
+                }
             }
         },
         _ = tokio::signal::ctrl_c() => {
             tracing::info!("Shutting down gracefully... (SIGINT)");
+            "sigint"
         },
         _ = async {
             #[cfg(unix)]
@@ -709,11 +766,24 @@ async fn run_stdio_mode(
                 );
                 tokio::time::sleep(Duration::from_secs(2)).await;
             }
+            "sigterm"
         },
         _ = idle_future => {
             tracing::info!(minutes = idle_timeout, "Idle timeout reached, shutting down");
+            "idle_timeout"
         }
-    }
+    };
+
+    record_runtime_event_with_details(
+        &state.config.data_dir,
+        "last_shutdown.json",
+        "graceful_shutdown_started",
+        "stdio",
+        serde_json::json!({
+            "reason": shutdown_reason,
+            "idle_timeout_minutes": idle_timeout,
+        }),
+    );
 
     tracing::info!("Initiating graceful shutdown...");
     let _ = state.shutdown_tx.send(true);
@@ -721,6 +791,15 @@ async fn run_stdio_mode(
         tracing::warn!("Database shutdown error: {}", e);
     }
     tracing::info!("Shutdown complete");
+    record_runtime_event_with_details(
+        &state.config.data_dir,
+        "last_shutdown.json",
+        "graceful_shutdown_complete",
+        "stdio",
+        serde_json::json!({
+            "reason": shutdown_reason,
+        }),
+    );
     Ok(())
 }
 
@@ -732,6 +811,10 @@ async fn run_http_mode(
 ) -> anyhow::Result<()> {
     let config = HttpServerConfig { bind, port };
 
-    tracing::info!("Server starting in HTTP SSE mode on http://{}:{}", config.bind, config.port);
+    tracing::info!(
+        "Server starting in HTTP SSE mode on http://{}:{}",
+        config.bind,
+        config.port
+    );
     serve_http_sse(move || Ok(server.clone()), config, state).await
 }
