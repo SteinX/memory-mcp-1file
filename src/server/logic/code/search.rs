@@ -8,7 +8,7 @@ use crate::graph::{
     rrf_merge, run_ppr, DEFAULT_CODE_BM25_WEIGHT, DEFAULT_CODE_PPR_WEIGHT,
     DEFAULT_CODE_VECTOR_WEIGHT,
 };
-use crate::server::params::{RecallCodeParams, SearchCodeParams};
+use crate::server::params::{normalize_project_id, RecallCodeParams, SearchCodeParams};
 use crate::storage::StorageBackend;
 
 use super::super::{normalize_limit, success_json};
@@ -244,10 +244,17 @@ pub async fn search_code(
 ) -> anyhow::Result<CallToolResult> {
     crate::ensure_embedding_ready!(state);
 
+    let SearchCodeParams {
+        query,
+        project_id,
+        limit,
+    } = params;
+    let project_id = normalize_project_id(project_id);
+
     let mut is_partial = false;
     let mut indexing_message = None;
 
-    if let Some(ref project_id) = params.project_id {
+    if let Some(ref project_id) = project_id {
         if let Ok(Some(status)) = state.storage.get_index_status(project_id).await {
             if status.status == crate::types::IndexState::Indexing
                 || status.status == crate::types::IndexState::EmbeddingPending
@@ -261,13 +268,13 @@ pub async fn search_code(
         }
     }
 
-    let query_embedding = state.embedding.embed(&params.query).await?;
+    let query_embedding = state.embedding.embed(&query).await?;
 
-    let limit = normalize_limit(params.limit);
+    let limit = normalize_limit(limit);
 
     // Run vector search and BM25 in parallel for robust results.
     // Previously BM25 was only a fallback — degenerate vectors masked BM25 entirely.
-    let project_id = params.project_id.as_deref();
+    let project_id = project_id.as_deref();
     let (vector_results, bm25_results) = tokio::join!(
         async {
             match state
@@ -288,7 +295,7 @@ pub async fn search_code(
         async {
             state
                 .code_search
-                .search(&params.query, project_id, limit, state.storage.as_ref())
+                .search(&query, project_id, limit, state.storage.as_ref())
                 .await
         }
     );
@@ -344,7 +351,7 @@ pub async fn search_code(
     Ok(success_json(json!({
         "results": merged,
         "count": merged.len(),
-        "query": params.query,
+        "query": query,
         "vector_hits": vector_results.len(),
         "bm25_hits": bm25_results.len(),
         "is_partial": is_partial,
@@ -362,10 +369,24 @@ pub async fn recall_code(
 
     crate::ensure_embedding_ready!(state);
 
+    let RecallCodeParams {
+        query,
+        project_id,
+        limit,
+        mode: _,
+        vector_weight,
+        bm25_weight,
+        ppr_weight,
+        path_prefix,
+        language,
+        chunk_type,
+    } = params;
+    let project_id = normalize_project_id(project_id);
+
     let mut is_partial = false;
     let mut indexing_message = None;
 
-    if let Some(ref project_id) = params.project_id {
+    if let Some(ref project_id) = project_id {
         if let Ok(Some(status)) = state.storage.get_index_status(project_id).await {
             if status.status == crate::types::IndexState::Indexing
                 || status.status == crate::types::IndexState::EmbeddingPending
@@ -379,25 +400,25 @@ pub async fn recall_code(
         }
     }
 
-    let query_embedding = state.embedding.embed(&params.query).await?;
+    let query_embedding = state.embedding.embed(&query).await?;
 
-    let limit = normalize_limit(params.limit);
+    let limit = normalize_limit(limit);
 
-    let vector_weight = params.vector_weight.unwrap_or(DEFAULT_CODE_VECTOR_WEIGHT);
-    let bm25_weight = params.bm25_weight.unwrap_or(DEFAULT_CODE_BM25_WEIGHT);
-    let ppr_weight = params.ppr_weight.unwrap_or(DEFAULT_CODE_PPR_WEIGHT);
+    let vector_weight = vector_weight.unwrap_or(DEFAULT_CODE_VECTOR_WEIGHT);
+    let bm25_weight = bm25_weight.unwrap_or(DEFAULT_CODE_BM25_WEIGHT);
+    let ppr_weight = ppr_weight.unwrap_or(DEFAULT_CODE_PPR_WEIGHT);
 
-    let project_id = params.project_id.as_deref();
-    let query_lower = params.query.to_lowercase();
-    let query_terms = split_identifier_tokens(&params.query);
-    let codeish_query = is_codeish_query(&params.query, &query_terms);
+    let project_id = project_id.as_deref();
+    let query_lower = query.to_lowercase();
+    let query_terms = split_identifier_tokens(&query);
+    let codeish_query = is_codeish_query(&query, &query_terms);
 
     // ── Pre-filter configuration ───────────────────────────────────────────
     // Each channel is filtered independently BEFORE RRF merge so that
     // irrelevant results don't occupy rank slots and dilute precision.
-    let path_prefix = params.path_prefix.as_deref();
-    let language_filter = params.language.as_deref();
-    let chunk_type_filter = params.chunk_type.as_deref();
+    let path_prefix = path_prefix.as_deref();
+    let language_filter = language.as_deref();
+    let chunk_type_filter = chunk_type.as_deref();
     let has_filters =
         path_prefix.is_some() || language_filter.is_some() || chunk_type_filter.is_some();
 
@@ -459,12 +480,7 @@ pub async fn recall_code(
     // 2. BM25 search via in-memory engine (replaces DB-based CONTAINS fallback)
     let mut bm25_results: Vec<_> = state
         .code_search
-        .search(
-            &params.query,
-            project_id,
-            fetch_limit,
-            state.storage.as_ref(),
-        )
+        .search(&query, project_id, fetch_limit, state.storage.as_ref())
         .await
         .into_iter()
         .filter(|r| matches_filters(r))
@@ -473,7 +489,7 @@ pub async fn recall_code(
     // 2.5 Symbol lexical candidates (shared by exact channel and PPR seeding).
     // `search_symbols` is substring-based for a single query string, so we probe
     // both full query and top identifier tokens to avoid missing exact names.
-    let symbol_probes = build_symbol_probes(&params.query, &query_terms);
+    let symbol_probes = build_symbol_probes(&query, &query_terms);
     let mut seed_symbols_lex = Vec::new();
     let mut seen_symbol_ids = HashSet::new();
     for probe in &symbol_probes {
@@ -916,7 +932,7 @@ pub async fn recall_code(
     let mut response = json!({
         "results": results,
         "count": results.len(),
-        "query": params.query,
+        "query": query,
         "weights": {
             "vector": vector_weight,
             "bm25": bm25_weight,

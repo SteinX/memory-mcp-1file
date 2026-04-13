@@ -4,7 +4,7 @@ use rmcp::model::CallToolResult;
 use serde_json::json;
 
 use crate::config::AppState;
-use crate::server::params::{SearchSymbolsParams, SymbolGraphParams};
+use crate::server::params::{normalize_project_id, SearchSymbolsParams, SymbolGraphParams};
 use crate::storage::StorageBackend;
 
 use super::super::{error_response, strip_symbol_embeddings, success_json};
@@ -13,18 +13,27 @@ pub async fn search_symbols(
     state: &Arc<AppState>,
     params: SearchSymbolsParams,
 ) -> anyhow::Result<CallToolResult> {
-    let limit = params.limit.unwrap_or(20).clamp(1, 100);
-    let offset = params.offset.unwrap_or(0);
+    let SearchSymbolsParams {
+        query,
+        project_id,
+        limit,
+        offset,
+        symbol_type,
+        path_prefix,
+    } = params;
+    let project_id = normalize_project_id(project_id);
+    let limit = limit.unwrap_or(20).clamp(1, 100);
+    let offset = offset.unwrap_or(0);
 
     match state
         .storage
         .search_symbols(
-            &params.query,
-            params.project_id.as_deref(),
+            &query,
+            project_id.as_deref(),
             limit,
             offset,
-            params.symbol_type.as_deref(),
-            params.path_prefix.as_deref(),
+            symbol_type.as_deref(),
+            path_prefix.as_deref(),
         )
         .await
     {
@@ -41,11 +50,11 @@ pub async fn search_symbols(
                 "offset": offset,
                 "limit": limit,
                 "has_more": has_more,
-                "query": params.query,
+                "query": query,
                 "filters": {
-                    "project_id": params.project_id,
-                    "symbol_type": params.symbol_type,
-                    "path_prefix": params.path_prefix
+                    "project_id": project_id,
+                    "symbol_type": symbol_type,
+                    "path_prefix": path_prefix
                 }
             });
 

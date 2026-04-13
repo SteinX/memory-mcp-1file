@@ -18,7 +18,9 @@ pub use symbols::{search_symbols, symbol_graph};
 
 #[cfg(test)]
 mod tests {
-    use crate::server::params::{GetIndexStatusParams, IndexProjectParams, SearchCodeParams};
+    use crate::server::params::{
+        GetIndexStatusParams, IndexProjectParams, SearchCodeParams, SearchSymbolsParams,
+    };
     use crate::test_utils::TestContext;
     use std::fs;
 
@@ -97,6 +99,150 @@ mod tests {
                 &t.text[..std::cmp::min(500, t.text.len())]
             );
             assert!(t.text.contains("Hello"));
+        } else {
+            panic!("Expected text content");
+        }
+    }
+
+    #[tokio::test]
+    async fn search_code_treats_blank_project_id_as_absent() {
+        let ctx = TestContext::new().await;
+        let unique_id = format!("test_project_blank_{}", uuid::Uuid::new_v4().simple());
+        let project_path = ctx._temp_dir.path().join(&unique_id);
+        fs::create_dir_all(&project_path).unwrap();
+        fs::write(
+            project_path.join("main.rs"),
+            "fn main() { println!(\"Hello Blank\"); }",
+        )
+        .unwrap();
+
+        super::index_project(
+            &ctx.state,
+            IndexProjectParams {
+                path: project_path.to_string_lossy().to_string(),
+                force: None,
+                confirm_failed_restart: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        let status_params = GetIndexStatusParams {
+            project_id: unique_id.clone(),
+        };
+
+        let mut retries = 0;
+        loop {
+            tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
+            let res = super::get_index_status(&ctx.state, status_params.clone())
+                .await
+                .unwrap();
+            if let rmcp::model::RawContent::Text(t) = &res.content[0].raw {
+                let indexing_done = t.text.contains("\"status\":\"completed\"")
+                    || t.text.contains("\"status\":\"embedding_pending\"");
+                if indexing_done {
+                    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+                    break;
+                }
+            }
+            retries += 1;
+            assert!(
+                retries <= 100,
+                "Indexing timed out for blank project_id test"
+            );
+        }
+
+        let search_res = super::search_code(
+            &ctx.state,
+            SearchCodeParams {
+                query: "Hello Blank".to_string(),
+                project_id: Some("   ".to_string()),
+                limit: Some(5),
+            },
+        )
+        .await
+        .unwrap();
+
+        if let rmcp::model::RawContent::Text(t) = &search_res.content[0].raw {
+            assert!(
+                t.text.contains("Hello Blank"),
+                "Expected blank project_id to fall back to global search. Got: {}",
+                t.text
+            );
+        } else {
+            panic!("Expected text content");
+        }
+    }
+
+    #[tokio::test]
+    async fn search_symbols_treats_blank_project_id_as_absent() {
+        let ctx = TestContext::new().await;
+        let unique_id = format!("test_symbols_blank_{}", uuid::Uuid::new_v4().simple());
+        let project_path = ctx._temp_dir.path().join(&unique_id);
+        fs::create_dir_all(&project_path).unwrap();
+        fs::write(project_path.join("lib.rs"), "fn hello_symbol() {}\n").unwrap();
+
+        super::index_project(
+            &ctx.state,
+            IndexProjectParams {
+                path: project_path.to_string_lossy().to_string(),
+                force: None,
+                confirm_failed_restart: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        let status_params = GetIndexStatusParams {
+            project_id: unique_id.clone(),
+        };
+
+        let mut retries = 0;
+        loop {
+            tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
+            let res = super::get_index_status(&ctx.state, status_params.clone())
+                .await
+                .unwrap();
+            if let rmcp::model::RawContent::Text(t) = &res.content[0].raw {
+                let indexing_done = t.text.contains("\"status\":\"completed\"")
+                    || t.text.contains("\"status\":\"embedding_pending\"");
+                if indexing_done {
+                    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+                    break;
+                }
+            }
+            retries += 1;
+            assert!(
+                retries <= 100,
+                "Indexing timed out for blank symbol project_id test"
+            );
+        }
+
+        let symbol_res = super::search_symbols(
+            &ctx.state,
+            SearchSymbolsParams {
+                query: "hello_symbol".to_string(),
+                project_id: Some("  ".to_string()),
+                limit: Some(10),
+                offset: Some(0),
+                symbol_type: None,
+                path_prefix: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        if let rmcp::model::RawContent::Text(t) = &symbol_res.content[0].raw {
+            assert!(
+                t.text.contains("hello_symbol"),
+                "Expected blank project_id to fall back to unfiltered symbol search. Got: {}",
+                t.text
+            );
+            assert!(
+                t.text.contains("\"project_id\":null"),
+                "Expected normalized filter to be null. Got: {}",
+                t.text
+            );
         } else {
             panic!("Expected text content");
         }

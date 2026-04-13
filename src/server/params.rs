@@ -1,6 +1,17 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+pub fn normalize_project_id(project_id: Option<String>) -> Option<String> {
+    project_id.and_then(|project_id| {
+        let trimmed = project_id.trim();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed.to_string())
+        }
+    })
+}
+
 /// Schema override: serde_json::Value generates boolean `true` via schemars,
 /// which Claude Code's Zod validator rejects. We emit `{}` (empty object schema) instead.
 /// See: https://github.com/anthropics/claude-code/issues/17742
@@ -329,4 +340,24 @@ pub struct HowToUseParams {
     /// Placeholder. Always pass true.
     #[serde(default)]
     pub _placeholder: bool,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::normalize_project_id;
+
+    #[test]
+    fn normalize_project_id_converts_empty_and_whitespace_to_none() {
+        assert_eq!(normalize_project_id(None), None);
+        assert_eq!(normalize_project_id(Some(String::new())), None);
+        assert_eq!(normalize_project_id(Some("   \t\n  ".to_string())), None);
+    }
+
+    #[test]
+    fn normalize_project_id_trims_non_empty_values() {
+        assert_eq!(
+            normalize_project_id(Some("  reddoc_dev  ".to_string())),
+            Some("reddoc_dev".to_string())
+        );
+    }
 }

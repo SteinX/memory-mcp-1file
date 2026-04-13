@@ -54,7 +54,7 @@ pub async fn index_project(
                         "indexed_files": status.indexed_files,
                         "total_chunks": status.total_chunks,
                         "message": "Project already indexed. File changes are tracked incrementally. Use force=true to re-index from scratch."
-                    }))); 
+                    })));
                 }
                 tracing::info!(project_id = %project_id, "Force re-indexing project");
             }
@@ -545,9 +545,17 @@ pub async fn get_degradation_info(state: &Arc<AppState>) -> Option<serde_json::V
         }
 
         let total_chunks = state.storage.count_chunks(project_id).await.unwrap_or(0);
-        let embedded_chunks = state.storage.count_embedded_chunks(project_id).await.unwrap_or(0);
+        let embedded_chunks = state
+            .storage
+            .count_embedded_chunks(project_id)
+            .await
+            .unwrap_or(0);
         let total_symbols = state.storage.count_symbols(project_id).await.unwrap_or(0);
-        let embedded_symbols = state.storage.count_embedded_symbols(project_id).await.unwrap_or(0);
+        let embedded_symbols = state
+            .storage
+            .count_embedded_symbols(project_id)
+            .await
+            .unwrap_or(0);
 
         let chunk_pct = if total_chunks > 0 {
             (embedded_chunks as f64 / total_chunks as f64) * 100.0
@@ -608,16 +616,25 @@ mod tests {
         assert_eq!(json["can_retry"], true);
         assert_eq!(json["requires_force"], true);
         assert_eq!(json["requires_confirmation"], true);
-        assert_eq!(json["recommended_action"], "retry_with_force_and_confirmation");
+        assert_eq!(
+            json["recommended_action"],
+            "retry_with_force_and_confirmation"
+        );
         assert_eq!(json["indexed_files"], 3710);
         assert!(json["message"]
             .as_str()
             .unwrap()
             .contains("confirm_failed_restart=true"));
-        assert_eq!(json["recovery"]["reason"], "failed_index_restart_requires_explicit_confirmation");
+        assert_eq!(
+            json["recovery"]["reason"],
+            "failed_index_restart_requires_explicit_confirmation"
+        );
         assert_eq!(json["recovery"]["example"]["tool"], "index_project");
         assert_eq!(json["recovery"]["example"]["arguments"]["force"], true);
-        assert_eq!(json["recovery"]["example"]["arguments"]["confirm_failed_restart"], true);
+        assert_eq!(
+            json["recovery"]["example"]["arguments"]["confirm_failed_restart"],
+            true
+        );
 
         let stored = ctx
             .state
