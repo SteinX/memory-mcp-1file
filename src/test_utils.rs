@@ -6,7 +6,7 @@ use crate::embedding::{
     AdaptiveEmbeddingQueue, EmbeddingConfig, EmbeddingMetrics, EmbeddingService, EmbeddingStore,
     ModelType,
 };
-use crate::search::CodeSearchEngine;
+use crate::search::{CodeSearchEngine, MemorySearchEngine};
 use crate::storage::SurrealStorage;
 
 pub struct TestContext {
@@ -80,6 +80,7 @@ impl TestContext {
             progress: crate::config::IndexProgressTracker::new(),
             db_semaphore: Arc::new(tokio::sync::Semaphore::new(10)),
             code_search: Arc::new(CodeSearchEngine::new()),
+            memory_search: Arc::new(MemorySearchEngine::new()),
             indexing_projects: Arc::new(std::sync::Mutex::new(std::collections::HashSet::new())),
             shutdown_tx,
             index_pending: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),

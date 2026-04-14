@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use rmcp::model::CallToolResult;
@@ -9,7 +10,7 @@ use crate::graph::{
 };
 use crate::server::params::{RecallParams, SearchParams};
 use crate::storage::StorageBackend;
-use crate::types::{MemoryType, ScoredMemory, SearchResult};
+use crate::types::{record_key_to_string, MemoryQuery, MemoryType, ScoredMemory, SearchResult};
 
 use super::{error_response, normalize_limit, success_json};
 
@@ -53,26 +54,207 @@ fn apply_min_score(mut results: Vec<SearchResult>, min_score: Option<f32>) -> Ve
     results
 }
 
+fn apply_min_score_scored(
+    mut results: Vec<ScoredMemory>,
+    min_score: Option<f32>,
+) -> Vec<ScoredMemory> {
+    if let Some(ms) = min_score {
+        let threshold = ms.clamp(0.0, 1.0);
+        results.retain(|r| r.score >= threshold);
+    }
+    results
+}
+
+fn channel_names(vector_score: f32, bm25_score: f32, ppr_score: f32) -> Vec<String> {
+    let mut channels = Vec::new();
+    if vector_score > 0.0 {
+        channels.push("vector".to_string());
+    }
+    if bm25_score > 0.0 {
+        channels.push("bm25".to_string());
+    }
+    if ppr_score > 0.0 {
+        channels.push("ppr".to_string());
+    }
+    channels
+}
+
+fn importance_multiplier(importance_score: f32) -> f32 {
+    importance_score.clamp(0.25, 4.0).sqrt()
+}
+
+fn overfetch_limit(limit: usize, filters: &MemoryQuery) -> usize {
+    if filters.is_unfiltered() {
+        limit * 3
+    } else {
+        limit * 5
+    }
+}
+
+fn metadata_filter_diagnostics(filters: &MemoryQuery) -> serde_json::Value {
+    json!({
+        "enabled": filters.uses_metadata_post_filter(),
+        "mode": if filters.uses_metadata_post_filter() {
+            "post_query_subset_match"
+        } else {
+            "disabled"
+        },
+        "notes": if filters.uses_metadata_post_filter() {
+            "metadata_filter is evaluated in Rust after DB retrieval; counts reflect post-filtered results."
+        } else {
+            "metadata_filter not used for this request."
+        }
+    })
+}
+
+fn metadata_matches(
+    candidate: Option<&serde_json::Value>,
+    filter: Option<&serde_json::Value>,
+) -> bool {
+    match filter {
+        None => true,
+        Some(filter) => match candidate {
+            Some(candidate) => json_contains(candidate, filter),
+            None => false,
+        },
+    }
+}
+
+fn json_contains(candidate: &serde_json::Value, filter: &serde_json::Value) -> bool {
+    match (candidate, filter) {
+        (serde_json::Value::Object(candidate_map), serde_json::Value::Object(filter_map)) => {
+            filter_map.iter().all(|(key, filter_value)| {
+                candidate_map
+                    .get(key)
+                    .map(|candidate_value| json_contains(candidate_value, filter_value))
+                    .unwrap_or(false)
+            })
+        }
+        (serde_json::Value::Array(candidate_items), serde_json::Value::Array(filter_items)) => {
+            filter_items.iter().all(|filter_item| {
+                candidate_items
+                    .iter()
+                    .any(|candidate_item| json_contains(candidate_item, filter_item))
+            })
+        }
+        _ => candidate == filter,
+    }
+}
+
+struct ChannelResults {
+    retrieved_candidates: usize,
+    post_filter_hits: usize,
+    results: Vec<SearchResult>,
+}
+
+async fn lexical_memory_search(
+    state: &Arc<AppState>,
+    query: &str,
+    filters: &MemoryQuery,
+    limit: usize,
+) -> ChannelResults {
+    let mut prefilter_filters = filters.clone();
+    prefilter_filters.metadata_filter = None;
+
+    let memories = state
+        .storage
+        .list_memories(&prefilter_filters, overfetch_limit(limit, filters), 0)
+        .await
+        .unwrap_or_default();
+
+    let retrieved_candidates = memories.len();
+    if memories.is_empty() {
+        return ChannelResults {
+            retrieved_candidates,
+            post_filter_hits: 0,
+            results: vec![],
+        };
+    }
+
+    let mut allowed_ids = HashSet::with_capacity(memories.len());
+    for memory in memories {
+        if let Some(id) = memory
+            .id
+            .as_ref()
+            .map(|record| record_key_to_string(&record.key))
+        {
+            allowed_ids.insert(id);
+        }
+    }
+
+    let scored = state
+        .memory_search
+        .search(query, Some(&allowed_ids), limit.max(retrieved_candidates))
+        .await;
+
+    let post_filtered: Vec<SearchResult> = scored
+        .into_iter()
+        .filter(|result| metadata_matches(result.metadata.as_ref(), filters.metadata_filter.as_ref()))
+        .collect();
+    let post_filter_hits = post_filtered.len();
+    let results = dedup_memory_results(post_filtered, limit);
+
+    ChannelResults {
+        retrieved_candidates,
+        post_filter_hits,
+        results,
+    }
+}
+
+fn apply_metadata_post_filter(results: Vec<SearchResult>, filters: &MemoryQuery) -> ChannelResults {
+    let retrieved_candidates = results.len();
+    let filtered: Vec<SearchResult> = results
+        .into_iter()
+        .filter(|result| metadata_matches(result.metadata.as_ref(), filters.metadata_filter.as_ref()))
+        .collect();
+    let post_filter_hits = filtered.len();
+    ChannelResults {
+        retrieved_candidates,
+        post_filter_hits,
+        results: filtered,
+    }
+}
+
 pub async fn search(state: &Arc<AppState>, params: SearchParams) -> anyhow::Result<CallToolResult> {
     crate::ensure_embedding_ready!(state);
+    let filters = match params.to_memory_query() {
+        Ok(filters) => filters,
+        Err(e) => return Ok(error_response(e)),
+    };
 
     let query_embedding = state.embedding.embed(&params.query).await?;
 
     let limit = normalize_limit(params.limit);
-    let results = match state
+    let fetch_limit = overfetch_limit(limit, &filters);
+    let mut prefilter_filters = filters.clone();
+    prefilter_filters.metadata_filter = None;
+    let vector_raw = match state
         .storage
-        .vector_search(&query_embedding, limit * 3)
+        .vector_search(&query_embedding, &prefilter_filters, fetch_limit)
         .await
     {
         Ok(r) => r,
         Err(e) => return Ok(error_response(e)),
     };
-    let results = apply_min_score(dedup_memory_results(results, limit), params.min_score);
+    let vector_channel = apply_metadata_post_filter(vector_raw, &filters);
+    let results = apply_min_score(
+        dedup_memory_results(vector_channel.results, limit),
+        params.min_score,
+    );
 
     Ok(success_json(json!({
         "results": results,
         "count": results.len(),
-        "query": params.query
+        "query": params.query,
+        "filters": filters.describe(),
+        "vector_hits": results.len(),
+        "metadata_filter_diagnostics": metadata_filter_diagnostics(&filters),
+        "diagnostics": {
+            "vector_retrieved_candidates": vector_channel.retrieved_candidates,
+            "vector_post_filter_hits": vector_channel.post_filter_hits,
+            "returned_hits": results.len(),
+            "metadata_filter": metadata_filter_diagnostics(&filters)
+        }
     })))
 }
 
@@ -81,16 +263,29 @@ pub async fn search_text(
     params: SearchParams,
 ) -> anyhow::Result<CallToolResult> {
     let limit = normalize_limit(params.limit);
-    let results = match state.storage.bm25_search(&params.query, limit * 3).await {
-        Ok(r) => r,
+    let filters = match params.to_memory_query() {
+        Ok(filters) => filters,
         Err(e) => return Ok(error_response(e)),
     };
-    let results = apply_min_score(dedup_memory_results(results, limit), params.min_score);
+    let bm25_channel = lexical_memory_search(state, &params.query, &filters, limit).await;
+    let results = apply_min_score(
+        dedup_memory_results(bm25_channel.results, limit),
+        params.min_score,
+    );
 
     Ok(success_json(json!({
         "results": results,
         "count": results.len(),
-        "query": params.query
+        "query": params.query,
+        "filters": filters.describe(),
+        "bm25_hits": results.len(),
+        "metadata_filter_diagnostics": metadata_filter_diagnostics(&filters),
+        "diagnostics": {
+            "bm25_retrieved_candidates": bm25_channel.retrieved_candidates,
+            "bm25_post_filter_hits": bm25_channel.post_filter_hits,
+            "returned_hits": results.len(),
+            "metadata_filter": metadata_filter_diagnostics(&filters)
+        }
     })))
 }
 
@@ -99,11 +294,17 @@ pub async fn recall(state: &Arc<AppState>, params: RecallParams) -> anyhow::Resu
     use std::collections::HashMap;
 
     crate::ensure_embedding_ready!(state);
+    let filters = match params.to_memory_query() {
+        Ok(filters) => filters,
+        Err(e) => return Ok(error_response(e)),
+    };
 
     let query_embedding = state.embedding.embed(&params.query).await?;
 
     let limit = normalize_limit(params.limit);
-    let fetch_limit = limit * 3;
+    let fetch_limit = overfetch_limit(limit, &filters);
+    let mut prefilter_filters = filters.clone();
+    prefilter_filters.metadata_filter = None;
 
     let vector_weight = params.vector_weight.unwrap_or(DEFAULT_VECTOR_WEIGHT);
     let bm25_weight = params.bm25_weight.unwrap_or(DEFAULT_BM25_WEIGHT);
@@ -111,17 +312,14 @@ pub async fn recall(state: &Arc<AppState>, params: RecallParams) -> anyhow::Resu
 
     let vector_results_raw = state
         .storage
-        .vector_search(&query_embedding, fetch_limit)
+        .vector_search(&query_embedding, &prefilter_filters, fetch_limit)
         .await
         .unwrap_or_default();
-    let vector_results = dedup_memory_results(vector_results_raw, fetch_limit);
+    let vector_channel = apply_metadata_post_filter(vector_results_raw, &filters);
+    let vector_results = dedup_memory_results(vector_channel.results, fetch_limit);
 
-    let bm25_results_raw = state
-        .storage
-        .bm25_search(&params.query, fetch_limit)
-        .await
-        .unwrap_or_default();
-    let bm25_results = dedup_memory_results(bm25_results_raw, fetch_limit);
+    let bm25_channel = lexical_memory_search(state, &params.query, &filters, fetch_limit).await;
+    let bm25_results = dedup_memory_results(bm25_channel.results, fetch_limit);
 
     let vector_tuples: Vec<_> = vector_results
         .iter()
@@ -203,47 +401,89 @@ pub async fn recall(state: &Arc<AppState>, params: RecallParams) -> anyhow::Resu
         limit,
     );
 
-    let mut content_map: std::collections::HashMap<String, (&str, MemoryType, String)> =
+    let mut content_map: std::collections::HashMap<
+        String,
+        (&SearchResult, MemoryType, String),
+    > =
         std::collections::HashMap::new();
     for r in &vector_results {
-        content_map.insert(
-            r.id.clone(),
-            (&r.content, r.memory_type.clone(), dedup_key(r)),
-        );
+        content_map.insert(r.id.clone(), (r, r.memory_type.clone(), dedup_key(r)));
     }
     for r in &bm25_results {
-        content_map.entry(r.id.clone()).or_insert((
-            &r.content,
-            r.memory_type.clone(),
-            dedup_key(r),
-        ));
+        content_map
+            .entry(r.id.clone())
+            .or_insert((r, r.memory_type.clone(), dedup_key(r)));
     }
 
-    let mut scored_memories: Vec<ScoredMemory> = Vec::with_capacity(limit);
+    let mut scored_candidates: Vec<(String, ScoredMemory)> = Vec::with_capacity(limit);
     let mut seen_keys = std::collections::HashSet::new();
     for (id, scores) in merged {
-        if let Some((content, mem_type, k)) = content_map.get(&id) {
-            if seen_keys.insert(k.clone()) {
-                scored_memories.push(ScoredMemory {
+        if let Some((result, mem_type, k)) = content_map.get(&id) {
+            let boosted_score = scores.combined_score * importance_multiplier(result.importance_score);
+            scored_candidates.push((
+                k.clone(),
+                ScoredMemory {
                     id: id.clone(),
-                    content: content.to_string(),
+                    content: result.content.clone(),
                     memory_type: mem_type.clone(),
-                    score: scores.combined_score,
+                    score: boosted_score,
                     vector_score: scores.vector_score,
                     bm25_score: scores.bm25_score,
                     ppr_score: scores.ppr_score,
-                });
-                if scored_memories.len() >= limit {
-                    break;
-                }
+                    importance_score: result.importance_score,
+                    channels: channel_names(
+                        scores.vector_score,
+                        scores.bm25_score,
+                        scores.ppr_score,
+                    ),
+                    user_id: result.user_id.clone(),
+                    agent_id: result.agent_id.clone(),
+                    run_id: result.run_id.clone(),
+                    namespace: result.namespace.clone(),
+                    metadata: result.metadata.clone(),
+                    superseded_by: result.superseded_by.clone(),
+                },
+            ));
+        }
+    }
+
+    scored_candidates.sort_by(|a, b| {
+        b.1.score
+            .partial_cmp(&a.1.score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+
+    let mut scored_memories: Vec<ScoredMemory> = Vec::with_capacity(limit);
+    for (dedup_key, scored) in scored_candidates {
+        if seen_keys.insert(dedup_key) {
+            scored_memories.push(scored);
+            if scored_memories.len() >= limit {
+                break;
             }
         }
     }
+
+    let fused_candidates = scored_memories.len();
+    let scored_memories = apply_min_score_scored(scored_memories, params.min_score);
 
     Ok(success_json(json!({
         "memories": scored_memories,
         "count": scored_memories.len(),
         "query": params.query,
+        "filters": filters.describe(),
+        "diagnostics": {
+            "vector_hits": vector_results.len(),
+            "bm25_hits": bm25_results.len(),
+            "ppr_hits": ppr_tuples.len(),
+            "fused_hits": scored_memories.len(),
+            "vector_retrieved_candidates": vector_channel.retrieved_candidates,
+            "vector_post_filter_hits": vector_channel.post_filter_hits,
+            "bm25_retrieved_candidates": bm25_channel.retrieved_candidates,
+            "bm25_post_filter_hits": bm25_channel.post_filter_hits,
+            "fused_candidates": fused_candidates,
+            "returned_hits": scored_memories.len(),
+            "metadata_filter": metadata_filter_diagnostics(&filters)
+        },
         "weights": {
             "vector": vector_weight,
             "bm25": bm25_weight,
@@ -258,30 +498,52 @@ mod tests {
     use crate::test_utils::TestContext;
     use crate::types::Memory;
 
+    async fn seed_memory(ctx: &TestContext, memory: Memory) {
+        let id = ctx.state.storage.create_memory(memory).await.unwrap();
+        let stored = ctx
+            .state
+            .storage
+            .get_memory(&id)
+            .await
+            .unwrap()
+            .expect("seeded memory should exist");
+        ctx.state.memory_search.upsert_memory(stored).await;
+    }
+
     #[tokio::test]
     async fn test_search_logic() {
         let ctx = TestContext::new().await;
 
         // Seed data
-        ctx.state
-            .storage
-            .create_memory(Memory {
+        seed_memory(&ctx, Memory {
                 content: "Rust is a systems programming language".to_string(),
                 embedding: Some(vec![0.1; 768]), // Mock embedding
                 ..Memory::new("Rust is a systems programming language".to_string())
             })
-            .await
-            .unwrap();
+            .await;
 
-        ctx.state
-            .storage
-            .create_memory(Memory {
+        seed_memory(&ctx, Memory {
+                content: "prioritytest low".to_string(),
+                embedding: Some(vec![0.2; 768]),
+                importance_score: 0.5,
+                ..Memory::new("prioritytest low".to_string())
+            })
+            .await;
+
+        seed_memory(&ctx, Memory {
+                content: "prioritytest high".to_string(),
+                embedding: Some(vec![0.2; 768]),
+                importance_score: 4.0,
+                ..Memory::new("prioritytest high".to_string())
+            })
+            .await;
+
+        seed_memory(&ctx, Memory {
                 content: "Python is great for scripting".to_string(),
                 embedding: Some(vec![0.9; 768]),
                 ..Memory::new("Python is great for scripting".to_string())
             })
-            .await
-            .unwrap();
+            .await;
 
         // 1. Vector Search
         let search_params = SearchParams {
@@ -289,6 +551,17 @@ mod tests {
             limit: Some(5),
             mode: None,
             min_score: None,
+            user_id: None,
+            agent_id: None,
+            run_id: None,
+            namespace: None,
+            memory_type: None,
+            metadata_filter: None,
+            valid_at: None,
+            event_after: None,
+            event_before: None,
+            ingestion_after: None,
+            ingestion_before: None,
         };
         let result = search(&ctx.state, search_params).await.unwrap();
         let val = serde_json::to_value(&result).unwrap();
@@ -299,6 +572,7 @@ mod tests {
         // Here we only verify response shape; relevance is asserted below via
         // BM25 and hybrid paths.
         assert!(json["count"].as_u64().is_some());
+        assert!(json["diagnostics"]["vector_retrieved_candidates"].as_u64().is_some());
 
         // 2. BM25 Search
         let text_params = SearchParams {
@@ -306,6 +580,17 @@ mod tests {
             limit: Some(5),
             mode: None,
             min_score: None,
+            user_id: None,
+            agent_id: None,
+            run_id: None,
+            namespace: None,
+            memory_type: None,
+            metadata_filter: None,
+            valid_at: None,
+            event_after: None,
+            event_before: None,
+            ingestion_after: None,
+            ingestion_before: None,
         };
         let result = search_text(&ctx.state, text_params).await.unwrap();
         let val = serde_json::to_value(&result).unwrap();
@@ -313,6 +598,7 @@ mod tests {
         let json: serde_json::Value = serde_json::from_str(text).unwrap();
         let content = json["results"][0]["content"].as_str().unwrap();
         assert!(content.contains("Python"));
+        assert!(json["diagnostics"]["bm25_retrieved_candidates"].as_u64().is_some());
 
         // 3. Recall (Hybrid)
         let recall_params = RecallParams {
@@ -321,11 +607,84 @@ mod tests {
             vector_weight: None,
             bm25_weight: None,
             ppr_weight: None,
+            min_score: None,
+            user_id: None,
+            agent_id: None,
+            run_id: None,
+            namespace: None,
+            memory_type: None,
+            metadata_filter: None,
+            valid_at: None,
+            event_after: None,
+            event_before: None,
+            ingestion_after: None,
+            ingestion_before: None,
         };
         let result = recall(&ctx.state, recall_params).await.unwrap();
         let val = serde_json::to_value(&result).unwrap();
         let text = val["content"][0]["text"].as_str().unwrap();
         let json: serde_json::Value = serde_json::from_str(text).unwrap();
         assert!(json["count"].as_u64().unwrap() > 0);
+        assert!(json["diagnostics"]["vector_hits"].as_u64().is_some());
+        assert!(json["diagnostics"]["fused_candidates"].as_u64().is_some());
+
+        let priority_params = RecallParams {
+            query: "prioritytest".to_string(),
+            limit: Some(5),
+            vector_weight: None,
+            bm25_weight: None,
+            ppr_weight: None,
+            min_score: None,
+            user_id: None,
+            agent_id: None,
+            run_id: None,
+            namespace: None,
+            memory_type: None,
+            metadata_filter: None,
+            valid_at: None,
+            event_after: None,
+            event_before: None,
+            ingestion_after: None,
+            ingestion_before: None,
+        };
+        let result = recall(&ctx.state, priority_params).await.unwrap();
+        let val = serde_json::to_value(&result).unwrap();
+        let text = val["content"][0]["text"].as_str().unwrap();
+        let json: serde_json::Value = serde_json::from_str(text).unwrap();
+        assert_eq!(json["memories"][0]["content"], "prioritytest high");
+        assert_eq!(json["memories"][0]["importance_score"], 4.0);
+
+        let metadata_params = SearchParams {
+            query: "prioritytest".to_string(),
+            limit: Some(5),
+            mode: Some("bm25".to_string()),
+            min_score: None,
+            user_id: None,
+            agent_id: None,
+            run_id: None,
+            namespace: None,
+            memory_type: None,
+            metadata_filter: Some(serde_json::json!({"tier": "gold"})),
+            valid_at: None,
+            event_after: None,
+            event_before: None,
+            ingestion_after: None,
+            ingestion_before: None,
+        };
+
+        seed_memory(&ctx, Memory {
+                content: "prioritytest tagged gold".to_string(),
+                embedding: Some(vec![0.3; 768]),
+                metadata: Some(serde_json::json!({"tier": "gold"})),
+                ..Memory::new("prioritytest tagged gold".to_string())
+            })
+            .await;
+
+        let result = search_text(&ctx.state, metadata_params).await.unwrap();
+        let val = serde_json::to_value(&result).unwrap();
+        let text = val["content"][0]["text"].as_str().unwrap();
+        let json: serde_json::Value = serde_json::from_str(text).unwrap();
+        assert_eq!(json["diagnostics"]["metadata_filter"]["mode"], "post_query_subset_match");
+        assert!(json["diagnostics"]["bm25_retrieved_candidates"].as_u64().unwrap() >= json["diagnostics"]["bm25_post_filter_hits"].as_u64().unwrap());
     }
 }

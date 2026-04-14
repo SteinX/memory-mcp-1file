@@ -406,6 +406,7 @@ mod tests {
                 progress: crate::config::IndexProgressTracker::new(),
                 db_semaphore: Arc::new(tokio::sync::Semaphore::new(10)),
                 code_search: Arc::new(crate::search::CodeSearchEngine::new()),
+                memory_search: Arc::new(crate::search::MemorySearchEngine::new()),
                 indexing_projects: Arc::new(
                     std::sync::Mutex::new(std::collections::HashSet::new()),
                 ),
