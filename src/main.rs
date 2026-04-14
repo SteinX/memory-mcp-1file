@@ -18,7 +18,7 @@ use memory_mcp::embedding::{
 use memory_mcp::lifecycle::{
     install_panic_hook, record_runtime_event_with_details, spawn_heartbeat,
 };
-use memory_mcp::search::CodeSearchEngine;
+use memory_mcp::search::{CodeSearchEngine, MemorySearchEngine};
 use memory_mcp::server::MemoryMcpServer;
 use memory_mcp::storage::{StorageBackend, SurrealStorage};
 use memory_mcp::transport::{serve_http_sse, HttpServerConfig};
@@ -494,6 +494,7 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
         progress: memory_mcp::config::IndexProgressTracker::new(),
         db_semaphore: Arc::new(tokio::sync::Semaphore::new(10)),
         code_search: Arc::new(CodeSearchEngine::new()),
+        memory_search: Arc::new(MemorySearchEngine::new()),
         indexing_projects: Arc::new(std::sync::Mutex::new(std::collections::HashSet::new())),
         shutdown_tx,
         index_pending: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
@@ -535,6 +536,17 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
             .await;
         if count > 0 {
             tracing::info!(chunks = count, "BM25 in-memory index warmed from DB");
+        }
+    });
+
+    let memory_bm25_state = state.clone();
+    tokio::spawn(async move {
+        let count = memory_bm25_state
+            .memory_search
+            .load_all_from_storage(memory_bm25_state.storage.as_ref())
+            .await;
+        if count > 0 {
+            tracing::info!(memories = count, "Memory lexical index warmed from DB");
         }
     });
 

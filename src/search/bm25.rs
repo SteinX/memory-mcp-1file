@@ -6,11 +6,11 @@
 //! - Emitting the full original token alongside sub-tokens (for exact-match boost)
 
 use bm_25::{Document, SearchEngineBuilder, Tokenizer};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use tokio::sync::RwLock;
 
 use crate::storage::StorageBackend;
-use crate::types::ScoredCodeChunk;
+use crate::types::{Datetime, Memory, MemoryQuery, ScoredCodeChunk, SearchResult};
 
 // ─── Tokenizer ───────────────────────────────────────────────────────────────
 
@@ -175,6 +175,228 @@ fn split_camel(word: &str) -> Vec<String> {
 /// `content` field combined with `file_path` and optional `name` so that
 /// symbol names (function names, class names) are searchable.
 type InnerEngine = bm_25::SearchEngine<String, u32, CodeTokenizer>;
+
+struct MemoryIndex {
+    engine: InnerEngine,
+    meta: HashMap<String, MemoryMeta>,
+}
+
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct MemoryMeta {
+    pub id: String,
+    pub content: String,
+    pub content_hash: Option<String>,
+    pub memory_type: crate::types::MemoryType,
+    pub importance_score: f32,
+    pub event_time: Datetime,
+    pub ingestion_time: Datetime,
+    pub valid_from: Datetime,
+    pub valid_until: Option<Datetime>,
+    pub user_id: Option<String>,
+    pub agent_id: Option<String>,
+    pub run_id: Option<String>,
+    pub namespace: Option<String>,
+    pub metadata: Option<serde_json::Value>,
+    pub superseded_by: Option<String>,
+}
+
+impl MemoryMeta {
+    pub fn from_memory(memory: Memory) -> Option<Self> {
+        let id = memory
+            .id
+            .as_ref()
+            .map(|thing| crate::types::record_key_to_string(&thing.key))?;
+
+        Some(Self {
+            id,
+            content: memory.content,
+            content_hash: memory.content_hash,
+            memory_type: memory.memory_type,
+            importance_score: memory.importance_score,
+            event_time: memory.event_time,
+            ingestion_time: memory.ingestion_time,
+            valid_from: memory.valid_from,
+            valid_until: memory.valid_until,
+            user_id: memory.user_id,
+            agent_id: memory.agent_id,
+            run_id: memory.run_id,
+            namespace: memory.namespace,
+            metadata: memory.metadata,
+            superseded_by: memory.superseded_by,
+        })
+    }
+
+    pub fn to_search_result(&self, score: f32) -> SearchResult {
+        SearchResult {
+            id: self.id.clone(),
+            content: self.content.clone(),
+            content_hash: self.content_hash.clone(),
+            memory_type: self.memory_type.clone(),
+            score,
+            importance_score: self.importance_score,
+            user_id: self.user_id.clone(),
+            agent_id: self.agent_id.clone(),
+            run_id: self.run_id.clone(),
+            namespace: self.namespace.clone(),
+            metadata: self.metadata.clone(),
+            superseded_by: self.superseded_by.clone(),
+        }
+    }
+}
+
+pub struct MemorySearchEngine {
+    index: RwLock<MemoryIndex>,
+}
+
+impl MemorySearchEngine {
+    pub fn new() -> Self {
+        Self {
+            index: RwLock::new(Self::empty_index()),
+        }
+    }
+
+    fn empty_index() -> MemoryIndex {
+        MemoryIndex {
+            engine: SearchEngineBuilder::<String, u32, CodeTokenizer>::with_avgdl(256.0).build(),
+            meta: HashMap::new(),
+        }
+    }
+
+    async fn rebuild_from_meta(&self, metas: Vec<MemoryMeta>) {
+        let rebuilt = tokio::task::spawn_blocking(move || {
+            let mut documents = Vec::with_capacity(metas.len());
+            let mut meta_map = HashMap::with_capacity(metas.len());
+
+            for meta in metas {
+                documents.push(Document::new(meta.id.clone(), meta.content.clone()));
+                meta_map.insert(meta.id.clone(), meta);
+            }
+
+            let engine = if documents.is_empty() {
+                SearchEngineBuilder::<String, u32, CodeTokenizer>::with_avgdl(256.0).build()
+            } else {
+                SearchEngineBuilder::<String, u32, CodeTokenizer>::with_tokenizer_and_documents(
+                    CodeTokenizer,
+                    documents,
+                )
+                .build()
+            };
+
+            MemoryIndex {
+                engine,
+                meta: meta_map,
+            }
+        })
+        .await
+        .expect("MemorySearchEngine rebuild_from_meta: spawn_blocking panicked");
+
+        let mut index = self.index.write().await;
+        *index = rebuilt;
+    }
+
+    pub async fn upsert_memory(&self, memory: Memory) {
+        if let Some(meta) = MemoryMeta::from_memory(memory) {
+            let mut index = self.index.write().await;
+            index
+                .engine
+                .upsert(Document::new(meta.id.clone(), meta.content.clone()));
+            index.meta.insert(meta.id.clone(), meta);
+        }
+    }
+
+    pub async fn upsert_memories(&self, memories: Vec<Memory>) {
+        if memories.is_empty() {
+            return;
+        }
+        let mut index = self.index.write().await;
+        for memory in memories {
+            if let Some(meta) = MemoryMeta::from_memory(memory) {
+                index
+                    .engine
+                    .upsert(Document::new(meta.id.clone(), meta.content.clone()));
+                index.meta.insert(meta.id.clone(), meta);
+            }
+        }
+    }
+
+    pub async fn remove_memory(&self, id: &str) {
+        let mut index = self.index.write().await;
+        index.engine.remove(&id.to_string());
+        index.meta.remove(id);
+    }
+
+    pub async fn search(
+        &self,
+        query: &str,
+        allowed_ids: Option<&HashSet<String>>,
+        limit: usize,
+    ) -> Vec<SearchResult> {
+        let index = self.index.read().await;
+        if index.meta.is_empty() || limit == 0 {
+            return vec![];
+        }
+
+        let raw_limit = match allowed_ids {
+            Some(ids) => ids.len().max(limit),
+            None => limit,
+        };
+
+        let raw_results = index.engine.search(query, raw_limit);
+        raw_results
+            .into_iter()
+            .filter(|result| {
+                allowed_ids
+                    .map(|ids| ids.contains(&result.document.id))
+                    .unwrap_or(true)
+            })
+            .filter_map(|result| {
+                index
+                    .meta
+                    .get(&result.document.id)
+                    .map(|meta| meta.to_search_result(result.score.clamp(0.0, 1.0)))
+            })
+            .take(limit)
+            .collect()
+    }
+
+    pub async fn load_all_from_storage(&self, storage: &impl StorageBackend) -> usize {
+        const PAGE_SIZE: usize = 1000;
+        let filters = MemoryQuery::default();
+        let mut offset = 0usize;
+        let mut metas = Vec::new();
+
+        loop {
+            let memories = match storage.list_memories(&filters, PAGE_SIZE, offset).await {
+                Ok(memories) => memories,
+                Err(e) => {
+                    tracing::warn!(error = %e, "Failed to load memories for lexical warm-up");
+                    break;
+                }
+            };
+
+            if memories.is_empty() {
+                break;
+            }
+
+            let page_len = memories.len();
+            metas.extend(memories.into_iter().filter_map(MemoryMeta::from_memory));
+            offset += page_len;
+            if page_len < PAGE_SIZE {
+                break;
+            }
+        }
+
+        let count = metas.len();
+        self.rebuild_from_meta(metas).await;
+        count
+    }
+}
+
+impl Default for MemorySearchEngine {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 /// Metadata stored alongside the BM25 index so we can reconstruct
 /// `ScoredCodeChunk` results without keeping all chunk content in RAM.
@@ -762,6 +984,7 @@ mod tests {
         }
         async fn list_memories(
             &self,
+            _: &crate::types::MemoryQuery,
             _: usize,
             _: usize,
         ) -> crate::Result<Vec<crate::types::Memory>> {
@@ -770,9 +993,16 @@ mod tests {
         async fn count_memories(&self) -> crate::Result<usize> {
             unreachable!()
         }
+        async fn count_memories_filtered(
+            &self,
+            _: &crate::types::MemoryQuery,
+        ) -> crate::Result<usize> {
+            unreachable!()
+        }
         async fn vector_search(
             &self,
             _: &[f32],
+            _: &crate::types::MemoryQuery,
             _: usize,
         ) -> crate::Result<Vec<crate::types::SearchResult>> {
             unreachable!()
@@ -796,6 +1026,7 @@ mod tests {
         async fn bm25_search(
             &self,
             _: &str,
+            _: &crate::types::MemoryQuery,
             _: usize,
         ) -> crate::Result<Vec<crate::types::SearchResult>> {
             unreachable!()
@@ -855,15 +1086,14 @@ mod tests {
         }
         async fn get_valid(
             &self,
-            _: Option<&str>,
+            _: &crate::types::MemoryQuery,
             _: usize,
         ) -> crate::Result<Vec<crate::types::Memory>> {
             unreachable!()
         }
         async fn get_valid_at(
             &self,
-            _: crate::types::Datetime,
-            _: Option<&str>,
+            _: &crate::types::MemoryQuery,
             _: usize,
         ) -> crate::Result<Vec<crate::types::Memory>> {
             unreachable!()
@@ -1356,5 +1586,39 @@ mod tests {
             text.contains("some content here"),
             "content must be present: {text:?}"
         );
+    }
+
+    #[tokio::test]
+    async fn test_memory_search_engine_search_and_remove() {
+        let engine = MemorySearchEngine::new();
+
+        engine
+            .upsert_memory(Memory {
+                id: Some(crate::types::RecordId::new("memories", "m1")),
+                content: "memory lexical alpha".to_string(),
+                ..Memory::new("memory lexical alpha".to_string())
+            })
+            .await;
+        engine
+            .upsert_memory(Memory {
+                id: Some(crate::types::RecordId::new("memories", "m2")),
+                content: "memory lexical beta".to_string(),
+                namespace: Some("project-b".to_string()),
+                ..Memory::new("memory lexical beta".to_string())
+            })
+            .await;
+
+        let results = engine.search("alpha", None, 5).await;
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].id, "m1");
+
+        let allowed = HashSet::from(["m2".to_string()]);
+        let restricted = engine.search("memory lexical", Some(&allowed), 5).await;
+        assert_eq!(restricted.len(), 1);
+        assert_eq!(restricted[0].id, "m2");
+
+        engine.remove_memory("m1").await;
+        let after_remove = engine.search("alpha", None, 5).await;
+        assert!(after_remove.is_empty());
     }
 }

@@ -6,7 +6,7 @@ use std::sync::Arc;
 use tokio::sync::{watch, RwLock, Semaphore};
 
 use crate::embedding::{AdaptiveEmbeddingQueue, EmbeddingService, EmbeddingStore};
-use crate::search::CodeSearchEngine;
+use crate::search::{CodeSearchEngine, MemorySearchEngine};
 use crate::storage::SurrealStorage;
 
 #[derive(Debug, Clone)]
@@ -138,6 +138,9 @@ pub struct AppState {
     pub db_semaphore: Arc<Semaphore>,
     /// In-memory BM25 index for code chunks (replaces broken SurrealDB FTS)
     pub code_search: Arc<CodeSearchEngine>,
+    /// In-memory lexical index for memories. Warmed from DB and kept in sync
+    /// by memory CRUD/invalidation flows to avoid rebuilding BM25 per request.
+    pub memory_search: Arc<MemorySearchEngine>,
     /// Atomic lock: set of project IDs currently being (re-)indexed.
     /// Insert returns `false` if the ID is already present → concurrent request is rejected.
     /// Removed when indexing finishes (success or failure).
