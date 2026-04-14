@@ -1,7 +1,7 @@
 use surrealdb::engine::local::Db;
 use surrealdb::Surreal;
 
-use crate::types::{Datetime, Memory, MemoryUpdate, SearchResult};
+use crate::types::{Memory, MemoryQuery, MemoryUpdate, SearchResult};
 use crate::Result;
 
 use super::helpers::{generate_id, parse_thing};
@@ -32,6 +32,21 @@ pub(super) async fn update_memory(
     if let Some(memory_type) = update.memory_type {
         memory.memory_type = memory_type;
     }
+    if let Some(user_id) = update.user_id {
+        memory.user_id = Some(user_id);
+    }
+    if let Some(agent_id) = update.agent_id {
+        memory.agent_id = Some(agent_id);
+    }
+    if let Some(run_id) = update.run_id {
+        memory.run_id = Some(run_id);
+    }
+    if let Some(namespace) = update.namespace {
+        memory.namespace = Some(namespace);
+    }
+    if let Some(importance_score) = update.importance_score {
+        memory.importance_score = importance_score;
+    }
     if let Some(metadata) = update.metadata {
         memory.metadata = Some(metadata);
     }
@@ -56,16 +71,20 @@ pub(super) async fn delete_memory(db: &Surreal<Db>, id: &str) -> Result<bool> {
 
 pub(super) async fn list_memories(
     db: &Surreal<Db>,
+    filters: &MemoryQuery,
     limit: usize,
     offset: usize,
 ) -> Result<Vec<Memory>> {
-    let query = "SELECT * FROM memories ORDER BY ingestion_time DESC LIMIT $limit START $offset";
-    let mut response = db
-        .query(query)
+    let sql = format!(
+        "SELECT * FROM memories WHERE {} ORDER BY ingestion_time DESC LIMIT $limit START $offset",
+        base_filter_clause("time::now()")
+    );
+    let mut response = bind_memory_query(db.query(&sql), filters)
         .bind(("limit", limit))
         .bind(("offset", offset))
         .await?;
-    let memories: Vec<Memory> = response.take(0)?;
+    let mut memories: Vec<Memory> = response.take(0)?;
+    memories.retain(|m| metadata_matches(m.metadata.as_ref(), filters.metadata_filter.as_ref()));
     Ok(memories)
 }
 
@@ -78,9 +97,24 @@ pub(super) async fn count_memories(db: &Surreal<Db>) -> Result<usize> {
     Ok(count)
 }
 
+pub(super) async fn count_memories_filtered(
+    db: &Surreal<Db>,
+    filters: &MemoryQuery,
+) -> Result<usize> {
+    let sql = format!(
+        "SELECT * FROM memories WHERE {}",
+        base_filter_clause("time::now()")
+    );
+    let mut response = bind_memory_query(db.query(&sql), filters).await?;
+    let mut memories: Vec<Memory> = response.take(0)?;
+    memories.retain(|m| metadata_matches(m.metadata.as_ref(), filters.metadata_filter.as_ref()));
+    Ok(memories.len())
+}
+
 pub(super) async fn bm25_search(
     db: &Surreal<Db>,
     query: &str,
+    filters: &MemoryQuery,
     limit: usize,
 ) -> Result<Vec<SearchResult>> {
     // SurrealDB v3.0.0: search::score() is broken (bug #6852/#6946).
@@ -104,20 +138,25 @@ pub(super) async fn bm25_search(
 
     let sql = format!(
         r#"
-        SELECT meta::id(id) AS id, content, memory_type, 1.0f AS score, metadata
+        SELECT meta::id(id) AS id, content, content_hash, memory_type, 1.0f AS score,
+               importance_score,
+               user_id, agent_id, run_id, namespace, metadata, superseded_by
         FROM memories
         WHERE {where_clause}
-          AND (valid_until IS NONE OR valid_until > time::now())
+          AND {}
         LIMIT $limit
     "#
+        , base_filter_clause("time::now()")
     );
 
-    let mut query_builder = db.query(&sql);
+    let mut response = bind_memory_query(db.query(&sql), filters)
+        .bind(("limit", fetch_limit));
     for (i, word) in words.iter().enumerate() {
-        query_builder = query_builder.bind((format!("w{i}"), word.to_string()));
+        response = response.bind((format!("w{i}"), word.to_string()));
     }
-    let mut response = query_builder.bind(("limit", fetch_limit)).await?;
+    let mut response = response.await?;
     let mut results: Vec<SearchResult> = response.take(0)?;
+    results.retain(|r| metadata_matches(r.metadata.as_ref(), filters.metadata_filter.as_ref()));
 
     // Compute relevance score in Rust: normalized term frequency.
     let query_lower = query.to_lowercase();
@@ -147,6 +186,7 @@ pub(super) async fn bm25_search(
 pub(super) async fn vector_search(
     db: &Surreal<Db>,
     embedding: &[f32],
+    filters: &MemoryQuery,
     limit: usize,
 ) -> Result<Vec<SearchResult>> {
     // Use HNSW index via <|K,EF|> KNN operator for fast candidate selection,
@@ -157,68 +197,143 @@ pub(super) async fn vector_search(
 
     let query = format!(
         r#"
-        SELECT meta::id(id) AS id, content, memory_type,
-            vector::similarity::cosine(embedding, $vec) AS score, metadata 
+        SELECT meta::id(id) AS id, content, content_hash, memory_type,
+            vector::similarity::cosine(embedding, $vec) AS score,
+            importance_score,
+            user_id, agent_id, run_id, namespace, metadata, superseded_by
         FROM memories 
         WHERE embedding <|{knn_k},{ef}|> $vec
           AND embedding IS NOT NONE
-          AND (valid_until IS NONE OR valid_until > time::now())
+          AND {}
         ORDER BY score DESC 
         LIMIT $limit
     "#
+        , base_filter_clause("time::now()")
     );
-    let mut response = db
-        .query(&query)
+    let mut response = bind_memory_query(db.query(&query), filters)
         .bind(("vec", embedding.to_vec()))
         .bind(("limit", limit))
         .await?;
-    let results: Vec<SearchResult> = response.take(0)?;
+    let mut results: Vec<SearchResult> = response.take(0)?;
+    results.retain(|r| metadata_matches(r.metadata.as_ref(), filters.metadata_filter.as_ref()));
     Ok(results)
 }
 
 pub(super) async fn get_valid(
     db: &Surreal<Db>,
-    user_id: Option<&str>,
+    filters: &MemoryQuery,
     limit: usize,
 ) -> Result<Vec<Memory>> {
-    let sql = r#"
+    let sql = format!(r#"
         SELECT * FROM memories 
-        WHERE (valid_until IS NONE OR valid_until > time::now())
-          AND ($user_id IS NONE OR user_id = $user_id)
+        WHERE {}
         ORDER BY ingestion_time DESC
         LIMIT $limit
-    "#;
-    let mut response = db
-        .query(sql)
-        .bind(("user_id", user_id.map(String::from)))
+    "#, base_filter_clause("time::now()"));
+    let mut response = bind_memory_query(db.query(&sql), filters)
         .bind(("limit", limit))
         .await?;
-    let memories: Vec<Memory> = response.take(0)?;
+    let mut memories: Vec<Memory> = response.take(0)?;
+    memories.retain(|m| metadata_matches(m.metadata.as_ref(), filters.metadata_filter.as_ref()));
     Ok(memories)
 }
 
 pub(super) async fn get_valid_at(
     db: &Surreal<Db>,
-    timestamp: Datetime,
-    user_id: Option<&str>,
+    filters: &MemoryQuery,
     limit: usize,
 ) -> Result<Vec<Memory>> {
-    let sql = r#"
+    let timestamp = filters
+        .valid_at
+        .clone()
+        .ok_or_else(|| crate::types::AppError::Internal(anyhow::anyhow!("valid_at timestamp required").into()))?;
+
+    let sql = format!(r#"
         SELECT * FROM memories 
-        WHERE valid_from <= $timestamp 
-          AND (valid_until IS NONE OR valid_until > $timestamp)
-          AND ($user_id IS NONE OR user_id = $user_id)
+        WHERE {}
         ORDER BY ingestion_time DESC
         LIMIT $limit
-    "#;
-    let mut response = db
-        .query(sql)
+    "#, base_filter_clause("$timestamp"));
+    let mut response = bind_memory_query(db.query(&sql), filters)
         .bind(("timestamp", timestamp))
-        .bind(("user_id", user_id.map(String::from)))
         .bind(("limit", limit))
         .await?;
-    let memories: Vec<Memory> = response.take(0)?;
+    let mut memories: Vec<Memory> = response.take(0)?;
+    memories.retain(|m| metadata_matches(m.metadata.as_ref(), filters.metadata_filter.as_ref()));
     Ok(memories)
+}
+
+fn base_filter_clause(reference_time_expr: &str) -> String {
+    format!(
+        "(($valid_at IS NONE AND (valid_until IS NONE OR valid_until > {reference_time_expr})) OR \
+          ($valid_at IS NOT NONE AND valid_from <= $valid_at AND (valid_until IS NONE OR valid_until > $valid_at))) \
+          AND ($user_id IS NONE OR user_id = $user_id) \
+          AND ($agent_id IS NONE OR agent_id = $agent_id) \
+          AND ($run_id IS NONE OR run_id = $run_id) \
+          AND ($namespace IS NONE OR namespace = $namespace) \
+          AND ($memory_type IS NONE OR memory_type = $memory_type) \
+          AND ($event_after IS NONE OR event_time >= $event_after) \
+          AND ($event_before IS NONE OR event_time <= $event_before) \
+          AND ($ingestion_after IS NONE OR ingestion_time >= $ingestion_after) \
+          AND ($ingestion_before IS NONE OR ingestion_time <= $ingestion_before)"
+    )
+}
+
+fn bind_memory_query<'a>(
+    mut query: surrealdb::method::Query<'a, Db>,
+    filters: &MemoryQuery,
+) -> surrealdb::method::Query<'a, Db> {
+    query = query.bind(("valid_at", filters.valid_at.clone()));
+    query = query.bind(("user_id", filters.user_id.clone()));
+    query = query.bind(("agent_id", filters.agent_id.clone()));
+    query = query.bind(("run_id", filters.run_id.clone()));
+    query = query.bind(("namespace", filters.namespace.clone()));
+    query = query.bind((
+        "memory_type",
+        filters.memory_type.as_ref().map(|m| match m {
+            crate::types::MemoryType::Episodic => "episodic".to_string(),
+            crate::types::MemoryType::Semantic => "semantic".to_string(),
+            crate::types::MemoryType::Procedural => "procedural".to_string(),
+        }),
+    ));
+    query = query.bind(("event_after", filters.event_after.clone()));
+    query = query.bind(("event_before", filters.event_before.clone()));
+    query = query.bind(("ingestion_after", filters.ingestion_after.clone()));
+    query.bind(("ingestion_before", filters.ingestion_before.clone()))
+}
+
+fn metadata_matches(
+    candidate: Option<&serde_json::Value>,
+    filter: Option<&serde_json::Value>,
+) -> bool {
+    match filter {
+        None => true,
+        Some(filter) => match candidate {
+            Some(candidate) => json_contains(candidate, filter),
+            None => false,
+        },
+    }
+}
+
+fn json_contains(candidate: &serde_json::Value, filter: &serde_json::Value) -> bool {
+    match (candidate, filter) {
+        (serde_json::Value::Object(candidate_map), serde_json::Value::Object(filter_map)) => {
+            filter_map.iter().all(|(key, filter_value)| {
+                candidate_map
+                    .get(key)
+                    .map(|candidate_value| json_contains(candidate_value, filter_value))
+                    .unwrap_or(false)
+            })
+        }
+        (serde_json::Value::Array(candidate_items), serde_json::Value::Array(filter_items)) => {
+            filter_items.iter().all(|filter_item| {
+                candidate_items
+                    .iter()
+                    .any(|candidate_item| json_contains(candidate_item, filter_item))
+            })
+        }
+        _ => candidate == filter,
+    }
 }
 
 pub(super) async fn invalidate(

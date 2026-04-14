@@ -3,12 +3,11 @@
 //! Defines the async interface for all storage operations.
 //! Implemented by SurrealStorage.
 
-use crate::types::Datetime;
 use std::collections::HashMap;
 
 use crate::types::{
     CodeChunk, CodeSymbol, Direction, Entity, IndexStatus, ManifestEntry, Memory, MemoryUpdate,
-    Relation, ScoredCodeChunk, SearchResult, SymbolRelation,
+    MemoryQuery, Relation, ScoredCodeChunk, SearchResult, SymbolRelation,
 };
 use crate::Result;
 
@@ -32,17 +31,30 @@ pub trait StorageBackend: Send + Sync {
     async fn delete_memory(&self, id: &str) -> Result<bool>;
 
     /// List memories with pagination, sorted by ingestion_time DESC
-    async fn list_memories(&self, limit: usize, offset: usize) -> Result<Vec<Memory>>;
+    async fn list_memories(
+        &self,
+        filters: &MemoryQuery,
+        limit: usize,
+        offset: usize,
+    ) -> Result<Vec<Memory>>;
 
     /// Count total number of memories
     async fn count_memories(&self) -> Result<usize>;
+
+    /// Count memories under the provided filter set
+    async fn count_memories_filtered(&self, filters: &MemoryQuery) -> Result<usize>;
 
     // ─────────────────────────────────────────────────────────────────────────
     // Vector search
     // ─────────────────────────────────────────────────────────────────────────
 
     /// Vector similarity search on memories
-    async fn vector_search(&self, embedding: &[f32], limit: usize) -> Result<Vec<SearchResult>>;
+    async fn vector_search(
+        &self,
+        embedding: &[f32],
+        filters: &MemoryQuery,
+        limit: usize,
+    ) -> Result<Vec<SearchResult>>;
 
     /// Vector similarity search on code chunks
     async fn vector_search_code(
@@ -65,7 +77,12 @@ pub trait StorageBackend: Send + Sync {
     // ─────────────────────────────────────────────────────────────────────────
 
     /// Full-text BM25 search on memories
-    async fn bm25_search(&self, query: &str, limit: usize) -> Result<Vec<SearchResult>>;
+    async fn bm25_search(
+        &self,
+        query: &str,
+        filters: &MemoryQuery,
+        limit: usize,
+    ) -> Result<Vec<SearchResult>>;
 
     /// Full-text BM25 search on code chunks
     async fn bm25_search_code(
@@ -120,13 +137,12 @@ pub trait StorageBackend: Send + Sync {
     // ─────────────────────────────────────────────────────────────────────────
 
     /// Get currently valid memories (valid_until is None or in the future)
-    async fn get_valid(&self, user_id: Option<&str>, limit: usize) -> Result<Vec<Memory>>;
+    async fn get_valid(&self, filters: &MemoryQuery, limit: usize) -> Result<Vec<Memory>>;
 
     /// Get memories that were valid at a specific point in time
     async fn get_valid_at(
         &self,
-        timestamp: Datetime,
-        user_id: Option<&str>,
+        filters: &MemoryQuery,
         limit: usize,
     ) -> Result<Vec<Memory>>;
 

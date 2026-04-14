@@ -1,15 +1,14 @@
 use std::collections::HashMap;
 use std::path::Path;
 
-use crate::types::Datetime;
 use surrealdb::engine::local::{Db, SurrealKv};
 use surrealdb::Surreal;
 
 use super::StorageBackend;
 use crate::graph::{GraphTraversalStorage, SymbolGraphTraversalStorage};
 use crate::types::{
-    CodeChunk, CodeSymbol, Direction, Entity, IndexStatus, ManifestEntry, Memory, MemoryUpdate,
-    Relation, ScoredCodeChunk, SearchResult, SymbolRelation,
+    CodeChunk, CodeSymbol, Direction, Entity, IndexStatus, ManifestEntry, Memory, MemoryQuery,
+    MemoryUpdate, Relation, ScoredCodeChunk, SearchResult, SymbolRelation,
 };
 use crate::Result;
 
@@ -384,16 +383,30 @@ impl StorageBackend for SurrealStorage {
         memory_ops::delete_memory(&self.db, id).await
     }
 
-    async fn list_memories(&self, limit: usize, offset: usize) -> Result<Vec<Memory>> {
-        memory_ops::list_memories(&self.db, limit, offset).await
+    async fn list_memories(
+        &self,
+        filters: &MemoryQuery,
+        limit: usize,
+        offset: usize,
+    ) -> Result<Vec<Memory>> {
+        memory_ops::list_memories(&self.db, filters, limit, offset).await
     }
 
     async fn count_memories(&self) -> Result<usize> {
         memory_ops::count_memories(&self.db).await
     }
 
-    async fn vector_search(&self, embedding: &[f32], limit: usize) -> Result<Vec<SearchResult>> {
-        memory_ops::vector_search(&self.db, embedding, limit).await
+    async fn count_memories_filtered(&self, filters: &MemoryQuery) -> Result<usize> {
+        memory_ops::count_memories_filtered(&self.db, filters).await
+    }
+
+    async fn vector_search(
+        &self,
+        embedding: &[f32],
+        filters: &MemoryQuery,
+        limit: usize,
+    ) -> Result<Vec<SearchResult>> {
+        memory_ops::vector_search(&self.db, embedding, filters, limit).await
     }
 
     async fn vector_search_code(
@@ -414,8 +427,13 @@ impl StorageBackend for SurrealStorage {
         symbol_ops::vector_search_symbols(&self.db, embedding, project_id, limit).await
     }
 
-    async fn bm25_search(&self, query: &str, limit: usize) -> Result<Vec<SearchResult>> {
-        memory_ops::bm25_search(&self.db, query, limit).await
+    async fn bm25_search(
+        &self,
+        query: &str,
+        filters: &MemoryQuery,
+        limit: usize,
+    ) -> Result<Vec<SearchResult>> {
+        memory_ops::bm25_search(&self.db, query, filters, limit).await
     }
 
     async fn bm25_search_code(
@@ -468,17 +486,12 @@ impl StorageBackend for SurrealStorage {
         graph_ops::get_all_relations(&self.db).await
     }
 
-    async fn get_valid(&self, user_id: Option<&str>, limit: usize) -> Result<Vec<Memory>> {
-        memory_ops::get_valid(&self.db, user_id, limit).await
+    async fn get_valid(&self, filters: &MemoryQuery, limit: usize) -> Result<Vec<Memory>> {
+        memory_ops::get_valid(&self.db, filters, limit).await
     }
 
-    async fn get_valid_at(
-        &self,
-        timestamp: Datetime,
-        user_id: Option<&str>,
-        limit: usize,
-    ) -> Result<Vec<Memory>> {
-        memory_ops::get_valid_at(&self.db, timestamp, user_id, limit).await
+    async fn get_valid_at(&self, filters: &MemoryQuery, limit: usize) -> Result<Vec<Memory>> {
+        memory_ops::get_valid_at(&self.db, filters, limit).await
     }
 
     async fn invalidate(
@@ -809,9 +822,14 @@ impl StorageBackend for SurrealStorage {
 mod tests {
     use super::*;
     use crate::types::{
-        ChunkType, Datetime, Entity, Language, Memory, MemoryType, MemoryUpdate, RecordId, Relation,
+        ChunkType, Datetime, Entity, Language, Memory, MemoryQuery, MemoryType, MemoryUpdate,
+        RecordId, Relation,
     };
     use tempfile::tempdir;
+
+    fn empty_memory_query() -> MemoryQuery {
+        MemoryQuery::default()
+    }
 
     async fn setup_test_db() -> (SurrealStorage, tempfile::TempDir) {
         let tmp = tempdir().unwrap();
@@ -829,6 +847,9 @@ mod tests {
             embedding: Some(vec![0.1; 768]),
             memory_type: MemoryType::Semantic,
             user_id: Some("user1".to_string()),
+            agent_id: None,
+            run_id: None,
+            namespace: None,
             metadata: None,
             event_time: Datetime::default(),
             ingestion_time: Datetime::default(),
@@ -836,6 +857,7 @@ mod tests {
             valid_until: None,
             importance_score: 1.0,
             invalidation_reason: None,
+            superseded_by: None,
             content_hash: None,
             embedding_state: Default::default(),
         };
@@ -854,6 +876,11 @@ mod tests {
         let update = MemoryUpdate {
             content: Some("Updated content".to_string()),
             memory_type: None,
+            user_id: None,
+            agent_id: None,
+            run_id: None,
+            namespace: None,
+            importance_score: Some(2.0),
             metadata: None,
             embedding: None,
             content_hash: None,
@@ -861,8 +888,12 @@ mod tests {
         };
         let updated = storage.update_memory(&id, update).await.unwrap();
         assert_eq!(updated.content, "Updated content");
+        assert_eq!(updated.importance_score, 2.0);
 
-        let list = storage.list_memories(10, 0).await.unwrap();
+        let list = storage
+            .list_memories(&empty_memory_query(), 10, 0)
+            .await
+            .unwrap();
         assert_eq!(list.len(), 1);
 
         let deleted = storage.delete_memory(&id).await.unwrap();
@@ -881,6 +912,9 @@ mod tests {
                 embedding: Some(vec![0.0; 768]),
                 memory_type: MemoryType::Semantic,
                 user_id: None,
+                agent_id: None,
+                run_id: None,
+                namespace: None,
                 metadata: None,
                 event_time: Datetime::default(),
                 ingestion_time: Datetime::default(),
@@ -888,6 +922,7 @@ mod tests {
                 valid_until: None,
                 importance_score: 1.0,
                 invalidation_reason: None,
+                superseded_by: None,
                 content_hash: None,
                 embedding_state: Default::default(),
             })
@@ -901,6 +936,9 @@ mod tests {
                 embedding: Some(vec![0.0; 768]),
                 memory_type: MemoryType::Semantic,
                 user_id: None,
+                agent_id: None,
+                run_id: None,
+                namespace: None,
                 metadata: None,
                 event_time: Datetime::default(),
                 ingestion_time: Datetime::default(),
@@ -908,13 +946,17 @@ mod tests {
                 valid_until: None,
                 importance_score: 1.0,
                 invalidation_reason: None,
+                superseded_by: None,
                 content_hash: None,
                 embedding_state: Default::default(),
             })
             .await
             .unwrap();
 
-        let results = storage.bm25_search("Rust", 10).await.unwrap();
+        let results = storage
+            .bm25_search("Rust", &empty_memory_query(), 10)
+            .await
+            .unwrap();
         assert_eq!(results.len(), 1);
         assert!(results[0].content.contains("Rust"));
         // Score must be > 0 (not all-zero flat scores from broken search::score())
@@ -1046,6 +1088,9 @@ mod tests {
                 embedding: Some(vec![0.0; 768]),
                 memory_type: MemoryType::Semantic,
                 user_id: None,
+                agent_id: None,
+                run_id: None,
+                namespace: None,
                 metadata: None,
                 event_time: Datetime::default(),
                 ingestion_time: Datetime::default(),
@@ -1053,13 +1098,14 @@ mod tests {
                 valid_until: None,
                 importance_score: 1.0,
                 invalidation_reason: None,
+                superseded_by: None,
                 content_hash: None,
                 embedding_state: Default::default(),
             })
             .await
             .unwrap();
 
-        let valid = storage.get_valid(None, 10).await.unwrap();
+        let valid = storage.get_valid(&empty_memory_query(), 10).await.unwrap();
         assert_eq!(valid.len(), 1);
 
         storage
@@ -1067,8 +1113,44 @@ mod tests {
             .await
             .unwrap();
 
-        let valid_after = storage.get_valid(None, 10).await.unwrap();
+        let valid_after = storage.get_valid(&empty_memory_query(), 10).await.unwrap();
         assert_eq!(valid_after.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_list_memories_with_scope_filter() {
+        let (storage, _tmp) = setup_test_db().await;
+
+        storage
+            .create_memory(
+                Memory::new("Scoped memory A".to_string())
+                    .with_user_id("user-a".to_string())
+                    .with_namespace("project-a".to_string()),
+            )
+            .await
+            .unwrap();
+
+        storage
+            .create_memory(
+                Memory::new("Scoped memory B".to_string())
+                    .with_user_id("user-b".to_string())
+                    .with_namespace("project-b".to_string()),
+            )
+            .await
+            .unwrap();
+
+        let filters = MemoryQuery {
+            user_id: Some("user-a".to_string()),
+            namespace: Some("project-a".to_string()),
+            ..Default::default()
+        };
+
+        let list = storage.list_memories(&filters, 10, 0).await.unwrap();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].content, "Scoped memory A");
+
+        let total = storage.count_memories_filtered(&filters).await.unwrap();
+        assert_eq!(total, 1);
     }
 
     #[tokio::test]
@@ -1082,6 +1164,9 @@ mod tests {
                 embedding: None,
                 memory_type: MemoryType::Semantic,
                 user_id: None,
+                agent_id: None,
+                run_id: None,
+                namespace: None,
                 metadata: None,
                 event_time: Datetime::default(),
                 ingestion_time: Datetime::default(),
@@ -1089,6 +1174,7 @@ mod tests {
                 valid_until: None,
                 importance_score: 1.0,
                 invalidation_reason: None,
+                superseded_by: None,
                 content_hash: None,
                 embedding_state: Default::default(),
             })
@@ -1368,6 +1454,9 @@ mod tests {
                 embedding: Some(vec![0.0; 768]),
                 memory_type: MemoryType::Semantic,
                 user_id: None,
+                agent_id: None,
+                run_id: None,
+                namespace: None,
                 metadata: None,
                 event_time: Datetime::default(),
                 ingestion_time: Datetime::default(),
@@ -1375,6 +1464,7 @@ mod tests {
                 valid_until: None,
                 importance_score: 1.0,
                 invalidation_reason: None,
+                superseded_by: None,
                 content_hash: None,
                 embedding_state: Default::default(),
             })
@@ -1388,6 +1478,9 @@ mod tests {
                 embedding: Some(vec![0.0; 768]),
                 memory_type: MemoryType::Semantic,
                 user_id: None,
+                agent_id: None,
+                run_id: None,
+                namespace: None,
                 metadata: None,
                 event_time: Datetime::default(),
                 ingestion_time: Datetime::default(),
@@ -1395,6 +1488,7 @@ mod tests {
                 valid_until: None,
                 importance_score: 1.0,
                 invalidation_reason: None,
+                superseded_by: None,
                 content_hash: None,
                 embedding_state: Default::default(),
             })
@@ -1403,7 +1497,7 @@ mod tests {
 
         // Test multi-word query with special chars (what AGENTS.md protocol searches for)
         let results = storage
-            .bm25_search("Status: in_progress", 10)
+            .bm25_search("Status: in_progress", &empty_memory_query(), 10)
             .await
             .unwrap();
         assert!(
@@ -1416,7 +1510,10 @@ mod tests {
         );
 
         // Test prefix search
-        let task_results = storage.bm25_search("TASK:", 10).await.unwrap();
+        let task_results = storage
+            .bm25_search("TASK:", &empty_memory_query(), 10)
+            .await
+            .unwrap();
         assert_eq!(
             task_results.len(),
             1,
@@ -1425,7 +1522,10 @@ mod tests {
         );
 
         // Test word inside content
-        let project_results = storage.bm25_search("memory-mcp", 10).await.unwrap();
+        let project_results = storage
+            .bm25_search("memory-mcp", &empty_memory_query(), 10)
+            .await
+            .unwrap();
         assert_eq!(
             project_results.len(),
             1,

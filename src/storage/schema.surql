@@ -11,6 +11,9 @@ DEFINE FIELD content          ON memories TYPE string;
 DEFINE FIELD embedding        ON memories TYPE option<array<float>>;
 DEFINE FIELD memory_type      ON memories TYPE string DEFAULT 'semantic';
 DEFINE FIELD user_id          ON memories TYPE option<string>;
+DEFINE FIELD agent_id         ON memories TYPE option<string>;
+DEFINE FIELD run_id           ON memories TYPE option<string>;
+DEFINE FIELD namespace        ON memories TYPE option<string>;
 DEFINE FIELD metadata         ON memories TYPE option<object> FLEXIBLE;
 DEFINE FIELD event_time       ON memories TYPE datetime DEFAULT time::now();
 DEFINE FIELD ingestion_time   ON memories TYPE datetime DEFAULT time::now();
@@ -30,6 +33,11 @@ DEFINE INDEX IF NOT EXISTS idx_memories_vec ON memories
     FIELDS embedding HNSW DIMENSION {dim} DIST COSINE;
 DEFINE INDEX IF NOT EXISTS idx_memories_fts ON memories 
     FIELDS content FULLTEXT ANALYZER simple BM25;
+DEFINE INDEX IF NOT EXISTS idx_memories_user_id ON memories FIELDS user_id;
+DEFINE INDEX IF NOT EXISTS idx_memories_agent_id ON memories FIELDS agent_id;
+DEFINE INDEX IF NOT EXISTS idx_memories_run_id ON memories FIELDS run_id;
+DEFINE INDEX IF NOT EXISTS idx_memories_namespace ON memories FIELDS namespace;
+DEFINE INDEX IF NOT EXISTS idx_memories_type ON memories FIELDS memory_type;
 
 -- Entities table
 DEFINE TABLE IF NOT EXISTS entities SCHEMAFULL;
