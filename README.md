@@ -30,6 +30,7 @@ It combines:
 2.  **Knowledge Graph** (PetGraph) for entity relationships.
 3.  **Code Indexing** with **symbol graph** (calls, extends, implements) for deep codebase understanding.
 4.  **Hybrid Retrieval** (Reciprocal Rank Fusion) for best results.
+5.  **Explicit consolidation** for exact duplicate memories via replacement links, without silently changing write semantics.
 
 ### 🏗️ Architecture
 
@@ -285,6 +286,11 @@ Or with Docker:
 ## ✨ Key Features
 
 - **Semantic Memory**: Stores text with vector embeddings (`qwen3` by default) for "vibe-based" retrieval.
+- **Governed Memory Retrieval**: Memory APIs now share first-class optional filters for `user_id`, `agent_id`, `run_id`, `namespace`, `memory_type`, metadata, and time windows. `list_memories` uses the same governance path and returns a filtered `total`.
+- **Memory Lexical Engine**: Memory BM25-style retrieval now uses a reusable in-memory lexical index that is warmed from DB at startup and kept in sync by memory CRUD / invalidation flows, instead of rebuilding the lexical model on every request.
+- **Layered Diagnostics**: Memory search/recall diagnostics expose retrieved candidates, post-filter hits, and returned hits; `metadata_filter` is explicitly reported as post-query subset matching.
+- **Importance-aware Recall**: `importance_score` participates in memory ranking, so promoted memories can outrank equally matching low-priority ones.
+- **Replacement Links Preserved**: `invalidate(..., superseded_by=...)` now round-trips on reads, so replacement chains survive retrieval and inspection.
 - **Graph Memory**: Tracks entities (`User`, `Project`, `Tech`) and their relations (`uses`, `likes`). Supports PageRank-based traversal.
 - **Code Intelligence**: Indexes local project directories (AST-based chunking) for Rust, Python, TypeScript, JavaScript, Go, Java, and **Dart/Flutter**. Tracks **calls, imports, extends, implements, and mixin** relationships between symbols.
 - **Temporal Validity**: Memories can have `valid_from` and `valid_until` dates.
@@ -299,19 +305,19 @@ The server exposes **18 tools** to the AI model, organized into logical categori
 ### 🧠 Core Memory Management
 | Tool | Description |
 |------|-------------|
-| `store_memory` | Store a new memory with content and optional metadata. |
-| `update_memory` | Update memory fields. |
+| `store_memory` | Store a new memory with content, optional scope fields, metadata, and optional `importance_score`. |
+| `update_memory` | Update memory fields, including scope and `importance_score`. |
 | `delete_memory` | Delete memory by ID. |
-| `list_memories` | List memories (newest first). |
+| `list_memories` | List memories (newest first) with optional scope/type/metadata/time filters; `total` is the filtered total. |
 | `get_memory` | Get full memory by ID. |
-| `invalidate` | Soft-delete memory, optionally linking replacement. |
-| `get_valid` | Get valid memories. Optional `timestamp` (ISO 8601) for point-in-time query. |
+| `invalidate` | Soft-delete memory, optionally linking replacement via `superseded_by`. |
+| `get_valid` | Get valid memories with optional point-in-time, scope, metadata, and time-window filters. |
 
 ### 🔎 Search & Retrieval
 | Tool | Description |
 |------|-------------|
-| `recall` | **Hybrid search** (Vector + Keyword + Graph via RRF). Default for memories. |
-| `search_memory` | Search memories. `mode`: `vector` (default) or `bm25`. |
+| `recall` | **Hybrid memory retrieval** (Vector + lexical + Graph via RRF) with layered diagnostics and optional filters. |
+| `search_memory` | Search memories. `mode`: `vector` (default) or `bm25`; BM25 mode uses the reusable in-memory memory lexical engine. |
 
 ### 🕸️ Knowledge Graph
 | Tool | Description |
@@ -408,6 +414,11 @@ HF_TOKEN="hf_your_token_here" memory-mcp --model gemma
 > Switching between models with the same dimensions (e.g., `e5_multi` <-> `nomic`) is theoretically possible but not recommended as semantic spaces differ.
 
 ## 🔮 Future Roadmap (Research & Ideas)
+
+### Current roadmap status
+- ✅ **Phase 1 complete**: first-class scope/filter plumbing, recall/list governance, optional-scope compatibility, metadata-filter semantics clarification, `superseded_by` read repair.
+- 🚧 **Phase 2 in progress**: diagnostics layering is done; memory lexical retrieval is now componentized around a reusable warmed engine.
+- ⏭️ **Next likely Phase 2 work**: dedup/consolidation flow and/or further lexical/index performance improvements.
 
 Based on analysis of advanced memory systems like [Hindsight](https://hindsight.vectorize.io/) (see their documentation for details on these mechanisms), we are exploring these "Cognitive Architecture" features for future releases:
 

@@ -3,7 +3,6 @@
 <identity>
 You are an AI agent operating with the **Memory MCP** and **VIDA Thinking Framework**.
 You must adhere to strict workflows, utilize specialized tools, and maintain context across sessions.
-Communication language with the user: Ukrainian.
 </identity>
 
 ---
@@ -16,6 +15,9 @@ Communication language with the user: Ukrainian.
 3. **[MUST NOT]** Never propose or implement "hotfixes". Demand root-cause solutions.
 4. **[MUST NOT]** Never delete files or code blocks without explicit discussion.
 5. **[MUST]** Always use `/vida-think` for architectural decisions, debugging, or complex refactoring.
+6. **[MUST]** After each implementation step, report progress against the active roadmap/phase to the user.
+7. **[MUST]** Treat stale `README.md` and `AGENTS.md` updates as part of task completion whenever behavior, workflow, or operator-facing semantics change.
+8. **[MUST]** Prefer explicit operator-visible write flows (e.g. dedicated consolidation/supersede actions) over silently changing existing write semantics when evolving memory behavior.
 
 ---
 
@@ -608,7 +610,6 @@ get_related(entity_id="WP:WP01", depth=2, direction="both")
 
 | Rule | Description |
 |------|-------------|
-| **Communication language** | Ukrainian only |
 | **Memory: start** | REQUIRED `search_text` + show to user |
 | **Memory: completion** | REQUIRED `invalidate` + `store_memory` |
 | **Memory: deletion** | FORBIDDEN `delete_memory`, only `invalidate` |
