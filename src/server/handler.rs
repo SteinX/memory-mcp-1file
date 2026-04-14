@@ -77,7 +77,17 @@ impl MemoryMcpServer {
             .map_err(to_rpc_error)
     }
 
-    #[tool(description = "List memories (newest first).")]
+    #[tool(description = "Store a new memory and explicitly supersede exact duplicates within the same optional scope/type boundary.")]
+    async fn consolidate_memory(
+        &self,
+        params: Parameters<ConsolidateMemoryParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        logic::memory::consolidate_memory(&self.state, params.0)
+            .await
+            .map_err(to_rpc_error)
+    }
+
+    #[tool(description = "List memories (newest first) with optional scope/type/metadata/time filters. Scope remains optional for forward compatibility.")]
     async fn list_memories(
         &self,
         params: Parameters<ListMemoriesParams>,
@@ -88,7 +98,7 @@ impl MemoryMcpServer {
     }
 
     #[tool(
-        description = "Search memories (query, mode?: vector|bm25). Vector=semantic similarity, bm25=exact keyword match."
+        description = "Search memories (query, mode?: vector|bm25) with optional filters: user_id, agent_id, run_id, namespace, memory_type, metadata_filter, valid_at, event/ingestion ranges."
     )]
     async fn search_memory(
         &self,
@@ -106,7 +116,7 @@ impl MemoryMcpServer {
     }
 
     #[tool(
-        description = "Best memory retrieval (query). Combines vector+BM25+graph via RRF fusion. Use as default."
+        description = "Best memory retrieval (query) with optional structured filters. Combines vector+BM25+graph via RRF fusion and returns lightweight diagnostics."
     )]
     async fn recall(&self, params: Parameters<RecallParams>) -> Result<CallToolResult, ErrorData> {
         logic::search::recall(&self.state, params.0)
@@ -194,7 +204,7 @@ impl MemoryMcpServer {
     }
 
     #[tool(
-        description = "Get valid memories. Optional timestamp (ISO 8601) for point-in-time query."
+        description = "Get valid memories. Supports optional timestamp (ISO 8601), scope filters, memory_type, metadata_filter, and event/ingestion ranges."
     )]
     async fn get_valid(
         &self,
@@ -204,6 +214,15 @@ impl MemoryMcpServer {
             let at_params = GetValidAtParams {
                 timestamp: ts.clone(),
                 user_id: params.0.user_id.clone(),
+                agent_id: params.0.agent_id.clone(),
+                run_id: params.0.run_id.clone(),
+                namespace: params.0.namespace.clone(),
+                memory_type: params.0.memory_type.clone(),
+                metadata_filter: params.0.metadata_filter.clone(),
+                event_after: params.0.event_after.clone(),
+                event_before: params.0.event_before.clone(),
+                ingestion_after: params.0.ingestion_after.clone(),
+                ingestion_before: params.0.ingestion_before.clone(),
                 limit: params.0.limit,
             };
             logic::memory::get_valid_at(&self.state, at_params)
@@ -365,24 +384,36 @@ impl MemoryMcpServer {
             "=== MEMORY ===",
             "store_memory(content=\"...\") — store new memory",
             "store_memory(content=\"...\", memory_type=\"semantic|episodic|procedural\", metadata={...}) — with type and metadata",
-            "store_memory(content=\"...\", user_id=\"agent-1\") — scoped to user/agent",
+            "store_memory(content=\"...\", user_id=\"user-1\", agent_id=\"agent-1\", namespace=\"project-a\") — first-class memory scope",
+            "store_memory(content=\"...\", importance_score=2.5) — set retrieval importance at write time",
+            "consolidate_memory(content=\"...\", namespace=\"project-a\") — create a replacement memory and supersede exact duplicates in the same optional scope/type boundary",
+            "consolidate_memory(content=\"...\", memory_type=\"semantic\", reason=\"duplicate_consolidated\") — explicit exact-duplicate consolidation with custom reason",
             "get_memory(id=\"abc123\") — get full memory by ID",
             "update_memory(id=\"abc123\", content=\"new text\") — update content (re-embeds automatically)",
-            "update_memory(id=\"abc123\", memory_type=\"semantic\", metadata={...}) — update type/metadata only",
+            "update_memory(id=\"abc123\", memory_type=\"semantic\", metadata={...}, run_id=\"run-42\") — update type/metadata/scope",
+            "update_memory(id=\"abc123\", importance_score=0.5) — lower or raise retrieval importance",
             "delete_memory(id=\"abc123\") — hard delete (prefer invalidate)",
             "invalidate(id=\"abc123\", reason=\"outdated\") — soft-delete with reason",
-            "invalidate(id=\"abc123\", superseded_by=\"def456\") — soft-delete linking replacement",
+            "invalidate(id=\"abc123\", superseded_by=\"def456\") — soft-delete linking replacement; reads now preserve this link",
             "list_memories(limit=20, offset=0) — list newest first, paginated",
+            "list_memories(limit=20, namespace=\"project-a\", userId=\"user-1\") — list within an optional scope boundary",
+            "list_memories(memoryType=\"semantic\", eventAfter=\"2026-01-01T00:00:00Z\") — list filtered by type/time window",
             "get_valid(limit=50) — all non-invalidated memories",
             "get_valid(timestamp=\"2026-01-15T00:00:00Z\") — point-in-time snapshot",
-            "get_valid(user_id=\"agent-1\") — filter by user/agent",
+            "get_valid(user_id=\"user-1\", agent_id=\"agent-1\", namespace=\"project-a\") — filter by first-class scope",
+            "get_valid(memory_type=\"semantic\", eventAfter=\"2026-01-01T00:00:00Z\") — filter by type and event time window",
             "",
             "=== SEARCH (memories) ===",
             "recall(query=\"authentication flow\") — BEST: hybrid vector+BM25+graph RRF fusion",
             "recall(query=\"...\", vectorWeight=0.7, bm25Weight=0.1, pprWeight=0.2) — tune RRF channel weights",
-            "recall(query=\"...\", limit=20) — control result count",
+            "recall(query=\"...\", limit=20, minScore=0.2) — control result count and fused cutoff",
+            "recall(query=\"...\", namespace=\"project-a\", memoryType=\"procedural\") — scoped hybrid recall",
+            "recall(query=\"...\", metadataFilter={\"source\":\"spec\"}) — metadata subset filter (post-query subset matching, see diagnostics)",
             "search_memory(query=\"auth token\", mode=\"vector\") — pure semantic similarity",
             "search_memory(query=\"DECISION:\", mode=\"bm25\") — exact keyword match",
+            "search_memory(query=\"token rotation\", agentId=\"agent-1\", runId=\"run-42\") — scoped memory search",
+            "search_memory(query=\"incident\", mode=\"bm25\", eventAfter=\"2026-01-01T00:00:00Z\") — lexical search with time filter",
+            "search_memory(query=\"...\", metadataFilter={\"source\":\"spec\"}) — metadata subset filter (post-query subset matching, see diagnostics)",
             "",
             "=== CODE INDEXING ===",
             "index_project(path=\"/project\") — index codebase (incremental)",

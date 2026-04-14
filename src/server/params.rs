@@ -1,6 +1,8 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+use crate::types::{Datetime, MemoryQuery, MemoryType};
+
 pub fn normalize_project_id(project_id: Option<String>) -> Option<String> {
     project_id.and_then(|project_id| {
         let trimmed = project_id.trim();
@@ -19,6 +21,18 @@ fn any_value_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
     schemars::json_schema!({})
 }
 
+fn parse_optional_datetime(value: Option<&str>, field: &str) -> anyhow::Result<Option<Datetime>> {
+    match value.map(str::trim).filter(|s| !s.is_empty()) {
+        Some(value) => {
+            let ts: chrono::DateTime<chrono::Utc> = value
+                .parse()
+                .map_err(|_| anyhow::anyhow!("Invalid {} format. Use ISO 8601", field))?;
+            Ok(Some(Datetime::from(ts)))
+        }
+        None => Ok(None),
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[schemars(title = "")]
 pub struct StoreMemoryParams {
@@ -27,6 +41,14 @@ pub struct StoreMemoryParams {
     pub memory_type: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub user_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub agent_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub run_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub namespace: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub importance_score: Option<f32>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     #[schemars(schema_with = "any_value_schema")]
     pub metadata: Option<serde_json::Value>,
@@ -46,6 +68,16 @@ pub struct UpdateMemoryParams {
     pub content: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub memory_type: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub user_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub agent_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub run_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub namespace: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub importance_score: Option<f32>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     #[schemars(schema_with = "any_value_schema")]
     pub metadata: Option<serde_json::Value>,
@@ -58,12 +90,36 @@ pub struct DeleteMemoryParams {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
 #[schemars(title = "")]
 pub struct ListMemoriesParams {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub limit: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub offset: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub user_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub agent_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub run_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub namespace: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub memory_type: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    #[schemars(schema_with = "any_value_schema")]
+    pub metadata_filter: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub valid_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub event_after: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub event_before: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ingestion_after: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ingestion_before: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -79,6 +135,29 @@ pub struct SearchParams {
     /// Minimum score threshold in [0.0, 1.0] applied after ranking.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub min_score: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub user_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub agent_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub run_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub namespace: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub memory_type: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    #[schemars(schema_with = "any_value_schema")]
+    pub metadata_filter: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub valid_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub event_after: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub event_before: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ingestion_after: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ingestion_before: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -98,6 +177,32 @@ pub struct RecallParams {
     /// Tune RRF: graph PPR channel (default: 0.30)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ppr_weight: Option<f32>,
+    /// Minimum fused score threshold in [0.0, 1.0] applied after fusion.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub min_score: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub user_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub agent_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub run_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub namespace: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub memory_type: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    #[schemars(schema_with = "any_value_schema")]
+    pub metadata_filter: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub valid_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub event_after: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub event_before: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ingestion_after: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ingestion_before: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -181,6 +286,25 @@ pub struct GetValidParams {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub user_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub agent_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub run_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub namespace: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub memory_type: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    #[schemars(schema_with = "any_value_schema")]
+    pub metadata_filter: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub event_after: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub event_before: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ingestion_after: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ingestion_before: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub limit: Option<usize>,
 }
 
@@ -191,7 +315,156 @@ pub struct GetValidAtParams {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub user_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub agent_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub run_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub namespace: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub memory_type: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    #[schemars(schema_with = "any_value_schema")]
+    pub metadata_filter: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub event_after: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub event_before: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ingestion_after: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ingestion_before: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub limit: Option<usize>,
+}
+
+impl SearchParams {
+    pub fn to_memory_query(&self) -> anyhow::Result<MemoryQuery> {
+        Ok(MemoryQuery {
+            user_id: self.user_id.clone(),
+            agent_id: self.agent_id.clone(),
+            run_id: self.run_id.clone(),
+            namespace: self.namespace.clone(),
+            memory_type: parse_memory_type(self.memory_type.as_deref())?,
+            metadata_filter: self.metadata_filter.clone(),
+            valid_at: parse_optional_datetime(self.valid_at.as_deref(), "valid_at")?,
+            event_after: parse_optional_datetime(self.event_after.as_deref(), "event_after")?,
+            event_before: parse_optional_datetime(self.event_before.as_deref(), "event_before")?,
+            ingestion_after: parse_optional_datetime(
+                self.ingestion_after.as_deref(),
+                "ingestion_after",
+            )?,
+            ingestion_before: parse_optional_datetime(
+                self.ingestion_before.as_deref(),
+                "ingestion_before",
+            )?,
+        })
+    }
+}
+
+impl RecallParams {
+    pub fn to_memory_query(&self) -> anyhow::Result<MemoryQuery> {
+        Ok(MemoryQuery {
+            user_id: self.user_id.clone(),
+            agent_id: self.agent_id.clone(),
+            run_id: self.run_id.clone(),
+            namespace: self.namespace.clone(),
+            memory_type: parse_memory_type(self.memory_type.as_deref())?,
+            metadata_filter: self.metadata_filter.clone(),
+            valid_at: parse_optional_datetime(self.valid_at.as_deref(), "valid_at")?,
+            event_after: parse_optional_datetime(self.event_after.as_deref(), "event_after")?,
+            event_before: parse_optional_datetime(self.event_before.as_deref(), "event_before")?,
+            ingestion_after: parse_optional_datetime(
+                self.ingestion_after.as_deref(),
+                "ingestion_after",
+            )?,
+            ingestion_before: parse_optional_datetime(
+                self.ingestion_before.as_deref(),
+                "ingestion_before",
+            )?,
+        })
+    }
+}
+
+impl GetValidParams {
+    pub fn to_memory_query(&self) -> anyhow::Result<MemoryQuery> {
+        Ok(MemoryQuery {
+            user_id: self.user_id.clone(),
+            agent_id: self.agent_id.clone(),
+            run_id: self.run_id.clone(),
+            namespace: self.namespace.clone(),
+            memory_type: parse_memory_type(self.memory_type.as_deref())?,
+            metadata_filter: self.metadata_filter.clone(),
+            valid_at: parse_optional_datetime(self.timestamp.as_deref(), "timestamp")?,
+            event_after: parse_optional_datetime(self.event_after.as_deref(), "event_after")?,
+            event_before: parse_optional_datetime(self.event_before.as_deref(), "event_before")?,
+            ingestion_after: parse_optional_datetime(
+                self.ingestion_after.as_deref(),
+                "ingestion_after",
+            )?,
+            ingestion_before: parse_optional_datetime(
+                self.ingestion_before.as_deref(),
+                "ingestion_before",
+            )?,
+        })
+    }
+}
+
+impl GetValidAtParams {
+    pub fn to_memory_query(&self) -> anyhow::Result<MemoryQuery> {
+        Ok(MemoryQuery {
+            user_id: self.user_id.clone(),
+            agent_id: self.agent_id.clone(),
+            run_id: self.run_id.clone(),
+            namespace: self.namespace.clone(),
+            memory_type: parse_memory_type(self.memory_type.as_deref())?,
+            metadata_filter: self.metadata_filter.clone(),
+            valid_at: parse_optional_datetime(Some(&self.timestamp), "timestamp")?,
+            event_after: parse_optional_datetime(self.event_after.as_deref(), "event_after")?,
+            event_before: parse_optional_datetime(self.event_before.as_deref(), "event_before")?,
+            ingestion_after: parse_optional_datetime(
+                self.ingestion_after.as_deref(),
+                "ingestion_after",
+            )?,
+            ingestion_before: parse_optional_datetime(
+                self.ingestion_before.as_deref(),
+                "ingestion_before",
+            )?,
+        })
+    }
+}
+
+impl ListMemoriesParams {
+    pub fn to_memory_query(&self) -> anyhow::Result<MemoryQuery> {
+        Ok(MemoryQuery {
+            user_id: self.user_id.clone(),
+            agent_id: self.agent_id.clone(),
+            run_id: self.run_id.clone(),
+            namespace: self.namespace.clone(),
+            memory_type: parse_memory_type(self.memory_type.as_deref())?,
+            metadata_filter: self.metadata_filter.clone(),
+            valid_at: parse_optional_datetime(self.valid_at.as_deref(), "valid_at")?,
+            event_after: parse_optional_datetime(self.event_after.as_deref(), "event_after")?,
+            event_before: parse_optional_datetime(self.event_before.as_deref(), "event_before")?,
+            ingestion_after: parse_optional_datetime(
+                self.ingestion_after.as_deref(),
+                "ingestion_after",
+            )?,
+            ingestion_before: parse_optional_datetime(
+                self.ingestion_before.as_deref(),
+                "ingestion_before",
+            )?,
+        })
+    }
+}
+
+fn parse_memory_type(value: Option<&str>) -> anyhow::Result<Option<MemoryType>> {
+    match value.map(str::trim).filter(|s| !s.is_empty()) {
+        Some(value) => value
+            .parse()
+            .map(Some)
+            .map_err(|_| anyhow::anyhow!("Invalid memory_type: '{}'", value)),
+        None => Ok(None),
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -202,6 +475,47 @@ pub struct InvalidateParams {
     pub reason: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub superseded_by: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[schemars(title = "")]
+pub struct ConsolidateMemoryParams {
+    pub content: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub memory_type: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub user_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub agent_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub run_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub namespace: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub importance_score: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    #[schemars(schema_with = "any_value_schema")]
+    pub metadata: Option<serde_json::Value>,
+}
+
+impl ConsolidateMemoryParams {
+    pub fn to_memory_query(&self) -> anyhow::Result<MemoryQuery> {
+        Ok(MemoryQuery {
+            user_id: self.user_id.clone(),
+            agent_id: self.agent_id.clone(),
+            run_id: self.run_id.clone(),
+            namespace: self.namespace.clone(),
+            memory_type: parse_memory_type(self.memory_type.as_deref())?,
+            metadata_filter: None,
+            valid_at: None,
+            event_after: None,
+            event_before: None,
+            ingestion_after: None,
+            ingestion_before: None,
+        })
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
