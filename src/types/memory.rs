@@ -37,6 +37,15 @@ pub struct Memory {
     pub user_id: Option<String>,
 
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub agent_id: Option<String>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub run_id: Option<String>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub namespace: Option<String>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub metadata: Option<serde_json::Value>,
 
     #[serde(default = "default_datetime")]
@@ -56,6 +65,9 @@ pub struct Memory {
 
     #[serde(skip_serializing_if = "Option::is_none")]
     pub invalidation_reason: Option<String>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub superseded_by: Option<String>,
 
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub content_hash: Option<String>,
@@ -95,6 +107,21 @@ pub struct MemoryUpdate {
     pub memory_type: Option<MemoryType>,
 
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub user_id: Option<String>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub agent_id: Option<String>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub run_id: Option<String>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub namespace: Option<String>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub importance_score: Option<f32>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub metadata: Option<serde_json::Value>,
 
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -116,6 +143,9 @@ impl Memory {
             embedding: None,
             memory_type: MemoryType::Semantic,
             user_id: None,
+            agent_id: None,
+            run_id: None,
+            namespace: None,
             metadata: None,
             event_time: now,
             ingestion_time: now,
@@ -123,6 +153,7 @@ impl Memory {
             valid_until: None,
             importance_score: 1.0,
             invalidation_reason: None,
+            superseded_by: None,
             content_hash: None,
             embedding_state: EmbeddingState::default(),
         }
@@ -135,6 +166,21 @@ impl Memory {
 
     pub fn with_user_id(mut self, user_id: String) -> Self {
         self.user_id = Some(user_id);
+        self
+    }
+
+    pub fn with_agent_id(mut self, agent_id: String) -> Self {
+        self.agent_id = Some(agent_id);
+        self
+    }
+
+    pub fn with_run_id(mut self, run_id: String) -> Self {
+        self.run_id = Some(run_id);
+        self
+    }
+
+    pub fn with_namespace(mut self, namespace: String) -> Self {
+        self.namespace = Some(namespace);
         self
     }
 

@@ -2,7 +2,78 @@ use serde::{Deserialize, Serialize};
 
 use super::code::{ChunkType, Language};
 use super::memory::MemoryType;
+use super::Datetime;
 use super::SurrealValue;
+
+fn default_importance_score() -> f32 {
+    1.0
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct MemoryQuery {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub user_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub agent_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub run_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub namespace: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub memory_type: Option<MemoryType>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub metadata_filter: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub valid_at: Option<Datetime>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub event_after: Option<Datetime>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub event_before: Option<Datetime>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ingestion_after: Option<Datetime>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ingestion_before: Option<Datetime>,
+}
+
+impl MemoryQuery {
+    pub fn uses_metadata_post_filter(&self) -> bool {
+        self.metadata_filter.is_some()
+    }
+
+    pub fn is_unfiltered(&self) -> bool {
+        self.user_id.is_none()
+            && self.agent_id.is_none()
+            && self.run_id.is_none()
+            && self.namespace.is_none()
+            && self.memory_type.is_none()
+            && self.metadata_filter.is_none()
+            && self.valid_at.is_none()
+            && self.event_after.is_none()
+            && self.event_before.is_none()
+            && self.ingestion_after.is_none()
+            && self.ingestion_before.is_none()
+    }
+
+    pub fn describe(&self) -> serde_json::Value {
+        serde_json::json!({
+            "userId": self.user_id,
+            "agentId": self.agent_id,
+            "runId": self.run_id,
+            "namespace": self.namespace,
+            "memoryType": self.memory_type.as_ref().map(|t| match t {
+                MemoryType::Episodic => "episodic",
+                MemoryType::Semantic => "semantic",
+                MemoryType::Procedural => "procedural",
+            }),
+            "metadataFilter": self.metadata_filter,
+            "validAt": self.valid_at,
+            "eventAfter": self.event_after,
+            "eventBefore": self.event_before,
+            "ingestionAfter": self.ingestion_after,
+            "ingestionBefore": self.ingestion_before,
+        })
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, SurrealValue)]
 pub struct SearchResult {
@@ -12,8 +83,21 @@ pub struct SearchResult {
     pub content_hash: Option<String>,
     pub memory_type: MemoryType,
     pub score: f32,
+    #[serde(default = "default_importance_score")]
+    pub importance_score: f32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub user_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub namespace: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub metadata: Option<serde_json::Value>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub superseded_by: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -32,6 +116,22 @@ pub struct ScoredMemory {
     pub vector_score: f32,
     pub bm25_score: f32,
     pub ppr_score: f32,
+    pub importance_score: f32,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub channels: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub user_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub namespace: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub metadata: Option<serde_json::Value>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub superseded_by: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -90,7 +90,9 @@ pub use embedding_state::{EmbedResult, EmbedTarget, EmbeddingState};
 pub use entity::{Direction, Entity, Relation};
 pub use error::{AppError, Result};
 pub use memory::{Memory, MemoryType, MemoryUpdate};
-pub use search::{CodeSearchResult, RecallResult, ScoredCodeChunk, ScoredMemory, SearchResult};
+pub use search::{
+    CodeSearchResult, MemoryQuery, RecallResult, ScoredCodeChunk, ScoredMemory, SearchResult,
+};
 pub use symbol::{
     CodeReference, CodeRelationType, CodeSymbol, ScoredSymbol, SymbolRelation, SymbolType,
 };
