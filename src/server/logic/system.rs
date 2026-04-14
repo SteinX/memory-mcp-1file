@@ -109,6 +109,9 @@ mod tests {
                 embedding: None,
                 memory_type: MemoryType::Semantic,
                 user_id: None,
+                agent_id: None,
+                run_id: None,
+                namespace: None,
                 metadata: None,
                 event_time: Default::default(),
                 ingestion_time: Default::default(),
@@ -116,6 +119,7 @@ mod tests {
                 valid_until: None,
                 importance_score: 1.0,
                 invalidation_reason: None,
+                superseded_by: None,
                 content_hash: None,
                 embedding_state: Default::default(),
             })
