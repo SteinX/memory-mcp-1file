@@ -400,6 +400,14 @@ impl StorageBackend for SurrealStorage {
         memory_ops::count_memories_filtered(&self.db, filters).await
     }
 
+    async fn find_memories_by_content_hash(
+        &self,
+        filters: &MemoryQuery,
+        content_hash: &str,
+    ) -> Result<Vec<Memory>> {
+        memory_ops::find_memories_by_content_hash(&self.db, filters, content_hash).await
+    }
+
     async fn vector_search(
         &self,
         embedding: &[f32],
@@ -1532,5 +1540,76 @@ mod tests {
             "search_text('memory-mcp') should return 1 result (got {})",
             project_results.len()
         );
+    }
+
+    #[tokio::test]
+    async fn test_find_memories_by_content_hash_respects_filters() {
+        let (storage, _tmp) = setup_test_db().await;
+
+        let shared_hash = "dup-hash-1".to_string();
+
+        storage
+            .create_memory(Memory {
+                id: None,
+                content: "Scoped duplicate A".to_string(),
+                embedding: Some(vec![0.0; 768]),
+                memory_type: MemoryType::Semantic,
+                user_id: Some("user-a".to_string()),
+                agent_id: None,
+                run_id: None,
+                namespace: Some("project-a".to_string()),
+                metadata: None,
+                event_time: Datetime::default(),
+                ingestion_time: Datetime::default(),
+                valid_from: Datetime::default(),
+                valid_until: None,
+                importance_score: 1.0,
+                invalidation_reason: None,
+                superseded_by: None,
+                content_hash: Some(shared_hash.clone()),
+                embedding_state: Default::default(),
+            })
+            .await
+            .unwrap();
+
+        storage
+            .create_memory(Memory {
+                id: None,
+                content: "Scoped duplicate B".to_string(),
+                embedding: Some(vec![0.0; 768]),
+                memory_type: MemoryType::Semantic,
+                user_id: Some("user-b".to_string()),
+                agent_id: None,
+                run_id: None,
+                namespace: Some("project-b".to_string()),
+                metadata: None,
+                event_time: Datetime::default(),
+                ingestion_time: Datetime::default(),
+                valid_from: Datetime::default(),
+                valid_until: None,
+                importance_score: 1.0,
+                invalidation_reason: None,
+                superseded_by: None,
+                content_hash: Some(shared_hash.clone()),
+                embedding_state: Default::default(),
+            })
+            .await
+            .unwrap();
+
+        let filters = MemoryQuery {
+            user_id: Some("user-a".to_string()),
+            namespace: Some("project-a".to_string()),
+            ..Default::default()
+        };
+
+        let results = storage
+            .find_memories_by_content_hash(&filters, &shared_hash)
+            .await
+            .unwrap();
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].content, "Scoped duplicate A");
+        assert_eq!(results[0].user_id.as_deref(), Some("user-a"));
+        assert_eq!(results[0].namespace.as_deref(), Some("project-a"));
     }
 }

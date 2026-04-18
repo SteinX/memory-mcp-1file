@@ -44,6 +44,13 @@ pub trait StorageBackend: Send + Sync {
     /// Count memories under the provided filter set
     async fn count_memories_filtered(&self, filters: &MemoryQuery) -> Result<usize>;
 
+    /// Find memories by exact content hash within the provided filter set.
+    async fn find_memories_by_content_hash(
+        &self,
+        filters: &MemoryQuery,
+        content_hash: &str,
+    ) -> Result<Vec<Memory>>;
+
     // ─────────────────────────────────────────────────────────────────────────
     // Vector search
     // ─────────────────────────────────────────────────────────────────────────

@@ -111,6 +111,23 @@ pub(super) async fn count_memories_filtered(
     Ok(memories.len())
 }
 
+pub(super) async fn find_memories_by_content_hash(
+    db: &Surreal<Db>,
+    filters: &MemoryQuery,
+    content_hash: &str,
+) -> Result<Vec<Memory>> {
+    let sql = format!(
+        "SELECT * FROM memories WHERE content_hash = $content_hash AND {} ORDER BY ingestion_time DESC",
+        base_filter_clause("time::now()")
+    );
+    let mut response = bind_memory_query(db.query(&sql), filters)
+        .bind(("content_hash", content_hash.to_string()))
+        .await?;
+    let mut memories: Vec<Memory> = response.take(0)?;
+    memories.retain(|m| metadata_matches(m.metadata.as_ref(), filters.metadata_filter.as_ref()));
+    Ok(memories)
+}
+
 pub(super) async fn bm25_search(
     db: &Surreal<Db>,
     query: &str,
@@ -140,7 +157,8 @@ pub(super) async fn bm25_search(
         r#"
         SELECT meta::id(id) AS id, content, content_hash, memory_type, 1.0f AS score,
                importance_score,
-               user_id, agent_id, run_id, namespace, metadata, superseded_by
+               user_id, agent_id, run_id, namespace, metadata, superseded_by,
+               valid_until, invalidation_reason
         FROM memories
         WHERE {where_clause}
           AND {}
@@ -200,7 +218,8 @@ pub(super) async fn vector_search(
         SELECT meta::id(id) AS id, content, content_hash, memory_type,
             vector::similarity::cosine(embedding, $vec) AS score,
             importance_score,
-            user_id, agent_id, run_id, namespace, metadata, superseded_by
+            user_id, agent_id, run_id, namespace, metadata, superseded_by,
+            valid_until, invalidation_reason
         FROM memories 
         WHERE embedding <|{knn_k},{ef}|> $vec
           AND embedding IS NOT NONE

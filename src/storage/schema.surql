@@ -38,6 +38,7 @@ DEFINE INDEX IF NOT EXISTS idx_memories_agent_id ON memories FIELDS agent_id;
 DEFINE INDEX IF NOT EXISTS idx_memories_run_id ON memories FIELDS run_id;
 DEFINE INDEX IF NOT EXISTS idx_memories_namespace ON memories FIELDS namespace;
 DEFINE INDEX IF NOT EXISTS idx_memories_type ON memories FIELDS memory_type;
+DEFINE INDEX IF NOT EXISTS idx_memories_content_hash ON memories FIELDS content_hash;
 
 -- Entities table
 DEFINE TABLE IF NOT EXISTS entities SCHEMAFULL;
