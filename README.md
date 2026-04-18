@@ -31,6 +31,15 @@ It combines:
 3.  **Code Indexing** with **symbol graph** (calls, extends, implements) for deep codebase understanding.
 4.  **Hybrid Retrieval** (Reciprocal Rank Fusion) for best results.
 5.  **Explicit consolidation** for exact duplicate memories via replacement links, without silently changing write semantics.
+6.  **Preview / Apply Alignment** with `plan_fingerprint`, plus matched-summary and execution-summary fields so consolidation can be previewed, verified, and audited before and after execution.
+7.  **Read-side Consolidation Traceability** so `get_memory`, `list_memories`, and `get_valid` expose a normalized `consolidation_trace` summary instead of forcing callers to reconstruct lifecycle state from raw fields.
+8.  **Replacement Lineage Navigation** so read APIs also expose a compact `replacement_lineage` summary for following supersession chains without reconstructing them client-side.
+9.  **Operator Attention Summaries** so preview/apply/read responses surface a compact `attention_summary` for multi-match, partial-supersede, lineage-cycle, truncation, and fingerprint-check signals without requiring callers to infer risk from raw fields.
+10. **Retrieval/Read Truth Alignment** so `search_memory` and `recall` also surface consolidation truth summaries instead of requiring a second hop to `get_memory` before a caller can see lifecycle state.
+11. **Plan Diagnostics Echo** so `preview_consolidate_memory` and `consolidate_memory` return a normalized `plan_diagnostics` view of the fingerprint inputs, making stale-plan mismatches explainable without reconstructing the plan by hand.
+12. **Hash-First Duplicate Lookup** so exact-duplicate consolidation can narrow candidates by `content_hash` first, while still falling back to exact-content matching for older memories that predate create-time hashing.
+13. **Lookup Diagnostics** so preview/apply responses explicitly show whether duplicate detection came from `hash-first` narrowing or `exact-content` fallback for legacy no-hash memories.
+14. **Operator Summary** so preview/apply/read/retrieval responses expose one compact `operator_summary` entrypoint that tells clients which diagnostic section to inspect first.
 
 ### 🏗️ Architecture
 
@@ -291,6 +300,7 @@ Or with Docker:
 - **Layered Diagnostics**: Memory search/recall diagnostics expose retrieved candidates, post-filter hits, and returned hits; `metadata_filter` is explicitly reported as post-query subset matching.
 - **Importance-aware Recall**: `importance_score` participates in memory ranking, so promoted memories can outrank equally matching low-priority ones.
 - **Replacement Links Preserved**: `invalidate(..., superseded_by=...)` now round-trips on reads, so replacement chains survive retrieval and inspection.
+- **Consolidation Preview**: `preview_consolidate_memory` shows exact-duplicate matches, replacement scope, and supersede reason before any write occurs.
 - **Graph Memory**: Tracks entities (`User`, `Project`, `Tech`) and their relations (`uses`, `likes`). Supports PageRank-based traversal.
 - **Code Intelligence**: Indexes local project directories (AST-based chunking) for Rust, Python, TypeScript, JavaScript, Go, Java, and **Dart/Flutter**. Tracks **calls, imports, extends, implements, and mixin** relationships between symbols.
 - **Temporal Validity**: Memories can have `valid_from` and `valid_until` dates.
@@ -308,6 +318,7 @@ The server exposes **18 tools** to the AI model, organized into logical categori
 | `store_memory` | Store a new memory with content, optional scope fields, metadata, and optional `importance_score`. |
 | `update_memory` | Update memory fields, including scope and `importance_score`. |
 | `delete_memory` | Delete memory by ID. |
+| `preview_consolidate_memory` | Preview exact-duplicate consolidation without writing any changes. |
 | `list_memories` | List memories (newest first) with optional scope/type/metadata/time filters; `total` is the filtered total. |
 | `get_memory` | Get full memory by ID. |
 | `invalidate` | Soft-delete memory, optionally linking replacement via `superseded_by`. |
@@ -417,8 +428,8 @@ HF_TOKEN="hf_your_token_here" memory-mcp --model gemma
 
 ### Current roadmap status
 - ✅ **Phase 1 complete**: first-class scope/filter plumbing, recall/list governance, optional-scope compatibility, metadata-filter semantics clarification, `superseded_by` read repair.
-- 🚧 **Phase 2 in progress**: diagnostics layering is done; memory lexical retrieval is now componentized around a reusable warmed engine.
-- ⏭️ **Next likely Phase 2 work**: dedup/consolidation flow and/or further lexical/index performance improvements.
+- ✅ **Phase 2 complete**: diagnostics layering, reusable warmed memory lexical engine, and explicit exact-duplicate consolidation are in place.
+- 🚧 **Phase 3 in progress**: consolidation preview/apply alignment and audit-style result summaries are being added as explicit operator-visible workflow support.
 
 Based on analysis of advanced memory systems like [Hindsight](https://hindsight.vectorize.io/) (see their documentation for details on these mechanisms), we are exploring these "Cognitive Architecture" features for future releases:
 
