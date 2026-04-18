@@ -87,6 +87,16 @@ impl MemoryMcpServer {
             .map_err(to_rpc_error)
     }
 
+    #[tool(description = "Preview exact-duplicate consolidation within the same optional scope/type boundary without writing any changes.")]
+    async fn preview_consolidate_memory(
+        &self,
+        params: Parameters<PreviewConsolidateMemoryParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        logic::memory::preview_consolidate_memory(&self.state, params.0)
+            .await
+            .map_err(to_rpc_error)
+    }
+
     #[tool(description = "List memories (newest first) with optional scope/type/metadata/time filters. Scope remains optional for forward compatibility.")]
     async fn list_memories(
         &self,
@@ -386,19 +396,21 @@ impl MemoryMcpServer {
             "store_memory(content=\"...\", memory_type=\"semantic|episodic|procedural\", metadata={...}) — with type and metadata",
             "store_memory(content=\"...\", user_id=\"user-1\", agent_id=\"agent-1\", namespace=\"project-a\") — first-class memory scope",
             "store_memory(content=\"...\", importance_score=2.5) — set retrieval importance at write time",
+            "preview_consolidate_memory(content=\"...\", namespace=\"project-a\") — preview which exact duplicates would be superseded without writing any changes",
+            "preview_consolidate_memory(content=\"...\", memory_type=\"semantic\", reason=\"duplicate_consolidated\") — inspect exact-duplicate consolidation plan, matched_summary, lookup_diagnostics, attention_summary, plan_fingerprint, and plan_diagnostics before execution",
             "consolidate_memory(content=\"...\", namespace=\"project-a\") — create a replacement memory and supersede exact duplicates in the same optional scope/type boundary",
-            "consolidate_memory(content=\"...\", memory_type=\"semantic\", reason=\"duplicate_consolidated\") — explicit exact-duplicate consolidation with custom reason",
-            "get_memory(id=\"abc123\") — get full memory by ID",
+            "consolidate_memory(content=\"...\", memory_type=\"semantic\", reason=\"duplicate_consolidated\", expected_plan_fingerprint=\"...\") — execute only if the current consolidation plan still matches the preview fingerprint, and inspect lookup_diagnostics, attention_summary, plus plan_diagnostics for operator review",
+            "get_memory(id=\"abc123\") — get full memory by ID, including consolidation_trace, replacement_lineage, and attention_summary when applicable",
             "update_memory(id=\"abc123\", content=\"new text\") — update content (re-embeds automatically)",
             "update_memory(id=\"abc123\", memory_type=\"semantic\", metadata={...}, run_id=\"run-42\") — update type/metadata/scope",
             "update_memory(id=\"abc123\", importance_score=0.5) — lower or raise retrieval importance",
             "delete_memory(id=\"abc123\") — hard delete (prefer invalidate)",
             "invalidate(id=\"abc123\", reason=\"outdated\") — soft-delete with reason",
             "invalidate(id=\"abc123\", superseded_by=\"def456\") — soft-delete linking replacement; reads now preserve this link",
-            "list_memories(limit=20, offset=0) — list newest first, paginated",
+            "list_memories(limit=20, offset=0) — list newest first, paginated, with consolidation_trace, replacement_lineage, and attention_summary summaries",
             "list_memories(limit=20, namespace=\"project-a\", userId=\"user-1\") — list within an optional scope boundary",
             "list_memories(memoryType=\"semantic\", eventAfter=\"2026-01-01T00:00:00Z\") — list filtered by type/time window",
-            "get_valid(limit=50) — all non-invalidated memories",
+            "get_valid(limit=50) — all non-invalidated memories, including consolidation_trace, replacement_lineage, and attention_summary summaries",
             "get_valid(timestamp=\"2026-01-15T00:00:00Z\") — point-in-time snapshot",
             "get_valid(user_id=\"user-1\", agent_id=\"agent-1\", namespace=\"project-a\") — filter by first-class scope",
             "get_valid(memory_type=\"semantic\", eventAfter=\"2026-01-01T00:00:00Z\") — filter by type and event time window",
@@ -408,9 +420,9 @@ impl MemoryMcpServer {
             "recall(query=\"...\", vectorWeight=0.7, bm25Weight=0.1, pprWeight=0.2) — tune RRF channel weights",
             "recall(query=\"...\", limit=20, minScore=0.2) — control result count and fused cutoff",
             "recall(query=\"...\", namespace=\"project-a\", memoryType=\"procedural\") — scoped hybrid recall",
-            "recall(query=\"...\", metadataFilter={\"source\":\"spec\"}) — metadata subset filter (post-query subset matching, see diagnostics)",
-            "search_memory(query=\"auth token\", mode=\"vector\") — pure semantic similarity",
-            "search_memory(query=\"DECISION:\", mode=\"bm25\") — exact keyword match",
+            "recall(query=\"...\", metadataFilter={\"source\":\"spec\"}) — metadata subset filter (post-query subset matching, see diagnostics); retrieval results also carry consolidation truth summaries",
+            "search_memory(query=\"auth token\", mode=\"vector\") — pure semantic similarity with consolidation truth summaries",
+            "search_memory(query=\"DECISION:\", mode=\"bm25\") — exact keyword match with consolidation truth summaries",
             "search_memory(query=\"token rotation\", agentId=\"agent-1\", runId=\"run-42\") — scoped memory search",
             "search_memory(query=\"incident\", mode=\"bm25\", eventAfter=\"2026-01-01T00:00:00Z\") — lexical search with time filter",
             "search_memory(query=\"...\", metadataFilter={\"source\":\"spec\"}) — metadata subset filter (post-query subset matching, see diagnostics)",

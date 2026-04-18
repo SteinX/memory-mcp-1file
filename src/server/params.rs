@@ -495,12 +495,55 @@ pub struct ConsolidateMemoryParams {
     pub importance_score: Option<f32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub expected_plan_fingerprint: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     #[schemars(schema_with = "any_value_schema")]
     pub metadata: Option<serde_json::Value>,
 }
 
 impl ConsolidateMemoryParams {
+    pub fn to_memory_query(&self) -> anyhow::Result<MemoryQuery> {
+        Ok(MemoryQuery {
+            user_id: self.user_id.clone(),
+            agent_id: self.agent_id.clone(),
+            run_id: self.run_id.clone(),
+            namespace: self.namespace.clone(),
+            memory_type: parse_memory_type(self.memory_type.as_deref())?,
+            metadata_filter: None,
+            valid_at: None,
+            event_after: None,
+            event_before: None,
+            ingestion_after: None,
+            ingestion_before: None,
+        })
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[schemars(title = "")]
+pub struct PreviewConsolidateMemoryParams {
+    pub content: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub memory_type: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub user_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub agent_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub run_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub namespace: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub importance_score: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    #[schemars(schema_with = "any_value_schema")]
+    pub metadata: Option<serde_json::Value>,
+}
+
+impl PreviewConsolidateMemoryParams {
     pub fn to_memory_query(&self) -> anyhow::Result<MemoryQuery> {
         Ok(MemoryQuery {
             user_id: self.user_id.clone(),

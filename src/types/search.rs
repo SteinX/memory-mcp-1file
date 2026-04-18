@@ -98,6 +98,24 @@ pub struct SearchResult {
 
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub superseded_by: Option<String>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub valid_until: Option<Datetime>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub invalidation_reason: Option<String>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub consolidation_trace: Option<serde_json::Value>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub replacement_lineage: Option<serde_json::Value>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attention_summary: Option<serde_json::Value>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub operator_summary: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -132,6 +150,24 @@ pub struct ScoredMemory {
 
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub superseded_by: Option<String>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub valid_until: Option<Datetime>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub invalidation_reason: Option<String>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub consolidation_trace: Option<serde_json::Value>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub replacement_lineage: Option<serde_json::Value>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attention_summary: Option<serde_json::Value>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub operator_summary: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
