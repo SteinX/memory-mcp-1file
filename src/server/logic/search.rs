@@ -14,6 +14,100 @@ use crate::types::{record_key_to_string, MemoryQuery, MemoryType, ScoredMemory, 
 
 use super::{error_response, normalize_limit, success_json};
 
+fn consolidation_trace_from_result(result: &SearchResult) -> serde_json::Value {
+    let invalidated = result.valid_until.is_some() || result.invalidation_reason.is_some();
+    let status = match (invalidated, result.superseded_by.as_ref()) {
+        (true, Some(_)) => "superseded",
+        (true, None) => "invalidated",
+        (false, Some(_)) => "replacement_linked",
+        (false, None) => "active",
+    };
+
+    json!({
+        "status": status,
+        "invalidated": invalidated,
+        "invalidation_reason": result.invalidation_reason,
+        "superseded_by": result.superseded_by,
+        "has_replacement": result.superseded_by.is_some(),
+    })
+}
+
+fn replacement_lineage_from_result(result: &SearchResult) -> serde_json::Value {
+    match result.superseded_by.as_ref() {
+        Some(id) => json!({
+            "chain_ids": [id],
+            "depth": 1,
+            "terminal_replacement_id": id,
+            "cycle_detected": false,
+            "truncated": false,
+        }),
+        None => json!({
+            "chain_ids": [],
+            "depth": 0,
+            "terminal_replacement_id": serde_json::Value::Null,
+            "cycle_detected": false,
+            "truncated": false,
+        }),
+    }
+}
+
+fn attention_summary_from_result(result: &SearchResult) -> serde_json::Value {
+    let lineage = replacement_lineage_from_result(result);
+    json!({
+        "requires_operator_attention": false,
+        "attention_flags": [],
+        "multiple_matches": false,
+        "partial_supersede": false,
+        "lineage_cycle_detected": lineage["cycle_detected"],
+        "lineage_truncated": lineage["truncated"],
+        "lineage_depth": lineage["depth"],
+        "fingerprint_checked": false,
+    })
+}
+
+fn operator_summary_from_result(result: &SearchResult) -> serde_json::Value {
+    let trace = consolidation_trace_from_result(result);
+    let lineage = replacement_lineage_from_result(result);
+    let attention = attention_summary_from_result(result);
+    let requires_operator_attention = attention["requires_operator_attention"]
+        .as_bool()
+        .unwrap_or(false);
+    let primary_signal = if requires_operator_attention {
+        "attention_summary"
+    } else {
+        "consolidation_trace"
+    };
+
+    json!({
+        "stage": "retrieval",
+        "primary_signal": primary_signal,
+        "requires_operator_attention": requires_operator_attention,
+        "attention_flags": attention["attention_flags"].clone(),
+        "lifecycle_status": trace["status"].clone(),
+        "lineage_depth": lineage["depth"].clone(),
+        "available_sections": [
+            "consolidation_trace",
+            "replacement_lineage",
+            "attention_summary"
+        ],
+    })
+}
+
+fn enrich_result_truth(mut result: SearchResult) -> SearchResult {
+    let lineage = replacement_lineage_from_result(&result);
+    let trace = consolidation_trace_from_result(&result);
+    let attention = attention_summary_from_result(&result);
+    result.consolidation_trace = Some(trace);
+    result.replacement_lineage = Some(lineage);
+    result.attention_summary = Some(attention);
+    result.operator_summary = Some(operator_summary_from_result(&result));
+    result
+}
+
+fn enrich_results_truth(results: Vec<SearchResult>) -> Vec<SearchResult> {
+    results.into_iter().map(enrich_result_truth).collect()
+}
+
 fn normalize_memory_content(content: &str) -> String {
     content.split_whitespace().collect::<Vec<_>>().join(" ")
 }
@@ -238,7 +332,7 @@ pub async fn search(state: &Arc<AppState>, params: SearchParams) -> anyhow::Resu
     };
     let vector_channel = apply_metadata_post_filter(vector_raw, &filters);
     let results = apply_min_score(
-        dedup_memory_results(vector_channel.results, limit),
+        enrich_results_truth(dedup_memory_results(vector_channel.results, limit)),
         params.min_score,
     );
 
@@ -269,7 +363,7 @@ pub async fn search_text(
     };
     let bm25_channel = lexical_memory_search(state, &params.query, &filters, limit).await;
     let results = apply_min_score(
-        dedup_memory_results(bm25_channel.results, limit),
+        enrich_results_truth(dedup_memory_results(bm25_channel.results, limit)),
         params.min_score,
     );
 
@@ -316,10 +410,10 @@ pub async fn recall(state: &Arc<AppState>, params: RecallParams) -> anyhow::Resu
         .await
         .unwrap_or_default();
     let vector_channel = apply_metadata_post_filter(vector_results_raw, &filters);
-    let vector_results = dedup_memory_results(vector_channel.results, fetch_limit);
+    let vector_results = enrich_results_truth(dedup_memory_results(vector_channel.results, fetch_limit));
 
     let bm25_channel = lexical_memory_search(state, &params.query, &filters, fetch_limit).await;
-    let bm25_results = dedup_memory_results(bm25_channel.results, fetch_limit);
+    let bm25_results = enrich_results_truth(dedup_memory_results(bm25_channel.results, fetch_limit));
 
     let vector_tuples: Vec<_> = vector_results
         .iter()
@@ -442,6 +536,12 @@ pub async fn recall(state: &Arc<AppState>, params: RecallParams) -> anyhow::Resu
                     namespace: result.namespace.clone(),
                     metadata: result.metadata.clone(),
                     superseded_by: result.superseded_by.clone(),
+                    valid_until: result.valid_until.clone(),
+                    invalidation_reason: result.invalidation_reason.clone(),
+                    consolidation_trace: result.consolidation_trace.clone(),
+                    replacement_lineage: result.replacement_lineage.clone(),
+                    attention_summary: result.attention_summary.clone(),
+                    operator_summary: result.operator_summary.clone(),
                 },
             ));
         }
@@ -498,7 +598,7 @@ mod tests {
     use crate::test_utils::TestContext;
     use crate::types::Memory;
 
-    async fn seed_memory(ctx: &TestContext, memory: Memory) {
+    async fn seed_memory(ctx: &TestContext, memory: Memory) -> String {
         let id = ctx.state.storage.create_memory(memory).await.unwrap();
         let stored = ctx
             .state
@@ -508,6 +608,7 @@ mod tests {
             .unwrap()
             .expect("seeded memory should exist");
         ctx.state.memory_search.upsert_memory(stored).await;
+        id
     }
 
     #[tokio::test]
@@ -515,14 +616,14 @@ mod tests {
         let ctx = TestContext::new().await;
 
         // Seed data
-        seed_memory(&ctx, Memory {
+        let _ = seed_memory(&ctx, Memory {
                 content: "Rust is a systems programming language".to_string(),
                 embedding: Some(vec![0.1; 768]), // Mock embedding
                 ..Memory::new("Rust is a systems programming language".to_string())
             })
             .await;
 
-        seed_memory(&ctx, Memory {
+        let _ = seed_memory(&ctx, Memory {
                 content: "prioritytest low".to_string(),
                 embedding: Some(vec![0.2; 768]),
                 importance_score: 0.5,
@@ -530,7 +631,7 @@ mod tests {
             })
             .await;
 
-        seed_memory(&ctx, Memory {
+        let _ = seed_memory(&ctx, Memory {
                 content: "prioritytest high".to_string(),
                 embedding: Some(vec![0.2; 768]),
                 importance_score: 4.0,
@@ -538,7 +639,7 @@ mod tests {
             })
             .await;
 
-        seed_memory(&ctx, Memory {
+        let _ = seed_memory(&ctx, Memory {
                 content: "Python is great for scripting".to_string(),
                 embedding: Some(vec![0.9; 768]),
                 ..Memory::new("Python is great for scripting".to_string())
@@ -599,6 +700,11 @@ mod tests {
         let content = json["results"][0]["content"].as_str().unwrap();
         assert!(content.contains("Python"));
         assert!(json["diagnostics"]["bm25_retrieved_candidates"].as_u64().is_some());
+        assert_eq!(json["results"][0]["consolidation_trace"]["status"], "active");
+        assert_eq!(json["results"][0]["replacement_lineage"]["depth"], 0);
+        assert_eq!(json["results"][0]["attention_summary"]["requires_operator_attention"], false);
+        assert_eq!(json["results"][0]["operator_summary"]["stage"], "retrieval");
+        assert_eq!(json["results"][0]["operator_summary"]["primary_signal"], "consolidation_trace");
 
         // 3. Recall (Hybrid)
         let recall_params = RecallParams {
@@ -627,6 +733,11 @@ mod tests {
         assert!(json["count"].as_u64().unwrap() > 0);
         assert!(json["diagnostics"]["vector_hits"].as_u64().is_some());
         assert!(json["diagnostics"]["fused_candidates"].as_u64().is_some());
+        assert_eq!(json["memories"][0]["consolidation_trace"]["status"], "active");
+        assert_eq!(json["memories"][0]["replacement_lineage"]["depth"], 0);
+        assert_eq!(json["memories"][0]["attention_summary"]["requires_operator_attention"], false);
+        assert_eq!(json["memories"][0]["operator_summary"]["stage"], "retrieval");
+        assert_eq!(json["memories"][0]["operator_summary"]["lifecycle_status"], "active");
 
         let priority_params = RecallParams {
             query: "prioritytest".to_string(),
@@ -672,7 +783,7 @@ mod tests {
             ingestion_before: None,
         };
 
-        seed_memory(&ctx, Memory {
+        let _ = seed_memory(&ctx, Memory {
                 content: "prioritytest tagged gold".to_string(),
                 embedding: Some(vec![0.3; 768]),
                 metadata: Some(serde_json::json!({"tier": "gold"})),
@@ -686,5 +797,49 @@ mod tests {
         let json: serde_json::Value = serde_json::from_str(text).unwrap();
         assert_eq!(json["diagnostics"]["metadata_filter"]["mode"], "post_query_subset_match");
         assert!(json["diagnostics"]["bm25_retrieved_candidates"].as_u64().unwrap() >= json["diagnostics"]["bm25_post_filter_hits"].as_u64().unwrap());
+
+        let superseded_seed = seed_memory(&ctx, Memory {
+                content: "retrieval superseded truth".to_string(),
+                embedding: Some(vec![0.4; 768]),
+                ..Memory::new("retrieval superseded truth".to_string())
+            })
+            .await;
+        let _ = crate::server::logic::memory::invalidate(
+            &ctx.state,
+            crate::server::params::InvalidateParams {
+                id: superseded_seed,
+                reason: Some("deduplicated".to_string()),
+                superseded_by: Some("replacement-truth".to_string()),
+            },
+        )
+        .await
+        .unwrap();
+
+        let result = search_text(
+            &ctx.state,
+            SearchParams {
+                query: "retrieval superseded truth".to_string(),
+                limit: Some(5),
+                mode: Some("bm25".to_string()),
+                min_score: None,
+                user_id: None,
+                agent_id: None,
+                run_id: None,
+                namespace: None,
+                memory_type: None,
+                metadata_filter: None,
+                valid_at: None,
+                event_after: None,
+                event_before: None,
+                ingestion_after: None,
+                ingestion_before: None,
+            },
+        )
+        .await
+        .unwrap();
+        let val = serde_json::to_value(&result).unwrap();
+        let text = val["content"][0]["text"].as_str().unwrap();
+        let json: serde_json::Value = serde_json::from_str(text).unwrap();
+        assert_eq!(json["count"], 0);
     }
 }

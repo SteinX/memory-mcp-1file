@@ -198,6 +198,7 @@ pub struct MemoryMeta {
     pub namespace: Option<String>,
     pub metadata: Option<serde_json::Value>,
     pub superseded_by: Option<String>,
+    pub invalidation_reason: Option<String>,
 }
 
 impl MemoryMeta {
@@ -223,6 +224,7 @@ impl MemoryMeta {
             namespace: memory.namespace,
             metadata: memory.metadata,
             superseded_by: memory.superseded_by,
+            invalidation_reason: memory.invalidation_reason,
         })
     }
 
@@ -240,6 +242,12 @@ impl MemoryMeta {
             namespace: self.namespace.clone(),
             metadata: self.metadata.clone(),
             superseded_by: self.superseded_by.clone(),
+            valid_until: self.valid_until.clone(),
+            invalidation_reason: self.invalidation_reason.clone(),
+            consolidation_trace: None,
+            replacement_lineage: None,
+            attention_summary: None,
+            operator_summary: None,
         }
     }
 }
@@ -997,6 +1005,13 @@ mod tests {
             &self,
             _: &crate::types::MemoryQuery,
         ) -> crate::Result<usize> {
+            unreachable!()
+        }
+        async fn find_memories_by_content_hash(
+            &self,
+            _: &crate::types::MemoryQuery,
+            _: &str,
+        ) -> crate::Result<Vec<crate::types::Memory>> {
             unreachable!()
         }
         async fn vector_search(
