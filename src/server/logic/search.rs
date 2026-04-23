@@ -10,8 +10,9 @@ use crate::graph::{
 };
 use crate::server::params::{RecallParams, SearchParams};
 use crate::storage::StorageBackend;
-use crate::types::{record_key_to_string, MemoryQuery, MemoryType, ScoredMemory, SearchResult};
+use crate::types::{record_key_to_string, ExportIdentity, MemoryQuery, MemoryType, ScoredMemory, SearchResult};
 
+use super::contracts::{export_contract_meta, summary_collection_response, with_surface_guidance};
 use super::{error_response, normalize_limit, success_json};
 
 fn consolidation_trace_from_result(result: &SearchResult) -> serde_json::Value {
@@ -106,6 +107,28 @@ fn enrich_result_truth(mut result: SearchResult) -> SearchResult {
 
 fn enrich_results_truth(results: Vec<SearchResult>) -> Vec<SearchResult> {
     results.into_iter().map(enrich_result_truth).collect()
+}
+
+fn memory_search_contract_json() -> serde_json::Value {
+    let contract = with_surface_guidance(
+        export_contract_meta(
+            ExportIdentity {
+                stable_memory_id: None,
+                stable_node_ids: true,
+                node_ids_are_project_scoped: false,
+                stable_edge_ids: false,
+                edge_ids_are_local_only: true,
+                node_id_semantics: Some("stable_public_memory_id".to_string()),
+                edge_id_semantics: Some("no_public_edge_ids".to_string()),
+                ..Default::default()
+            },
+            None,
+        ),
+        &["results", "memories", "contract", "summary"],
+        &["count", "filters", "diagnostics", "weights", "query"],
+        &[],
+    );
+    serde_json::to_value(contract).unwrap_or_else(|_| json!({}))
 }
 
 fn normalize_memory_content(content: &str) -> String {
@@ -338,6 +361,8 @@ pub async fn search(state: &Arc<AppState>, params: SearchParams) -> anyhow::Resu
 
     Ok(success_json(json!({
         "results": results,
+        "summary": summary_collection_response("collection", results.len(), Some(results.len()), false, None),
+        "contract": memory_search_contract_json(),
         "count": results.len(),
         "query": params.query,
         "filters": filters.describe(),
@@ -369,6 +394,8 @@ pub async fn search_text(
 
     Ok(success_json(json!({
         "results": results,
+        "summary": summary_collection_response("collection", results.len(), Some(results.len()), false, None),
+        "contract": memory_search_contract_json(),
         "count": results.len(),
         "query": params.query,
         "filters": filters.describe(),
@@ -568,6 +595,8 @@ pub async fn recall(state: &Arc<AppState>, params: RecallParams) -> anyhow::Resu
 
     Ok(success_json(json!({
         "memories": scored_memories,
+        "summary": summary_collection_response("collection", scored_memories.len(), Some(scored_memories.len()), false, None),
+        "contract": memory_search_contract_json(),
         "count": scored_memories.len(),
         "query": params.query,
         "filters": filters.describe(),
@@ -674,6 +703,9 @@ mod tests {
         // BM25 and hybrid paths.
         assert!(json["count"].as_u64().is_some());
         assert!(json["diagnostics"]["vector_retrieved_candidates"].as_u64().is_some());
+        assert_eq!(json["contract"]["schema_version"], 1);
+        assert_eq!(json["contract"]["identity"]["node_id_semantics"], "stable_public_memory_id");
+        assert_eq!(json["summary"]["result_kind"], "collection");
 
         // 2. BM25 Search
         let text_params = SearchParams {
@@ -700,6 +732,8 @@ mod tests {
         let content = json["results"][0]["content"].as_str().unwrap();
         assert!(content.contains("Python"));
         assert!(json["diagnostics"]["bm25_retrieved_candidates"].as_u64().is_some());
+        assert_eq!(json["contract"]["identity"]["node_id_semantics"], "stable_public_memory_id");
+        assert_eq!(json["summary"]["result_kind"], "collection");
         assert_eq!(json["results"][0]["consolidation_trace"]["status"], "active");
         assert_eq!(json["results"][0]["replacement_lineage"]["depth"], 0);
         assert_eq!(json["results"][0]["attention_summary"]["requires_operator_attention"], false);
@@ -733,6 +767,8 @@ mod tests {
         assert!(json["count"].as_u64().unwrap() > 0);
         assert!(json["diagnostics"]["vector_hits"].as_u64().is_some());
         assert!(json["diagnostics"]["fused_candidates"].as_u64().is_some());
+        assert_eq!(json["contract"]["identity"]["node_id_semantics"], "stable_public_memory_id");
+        assert_eq!(json["summary"]["result_kind"], "collection");
         assert_eq!(json["memories"][0]["consolidation_trace"]["status"], "active");
         assert_eq!(json["memories"][0]["replacement_lineage"]["depth"], 0);
         assert_eq!(json["memories"][0]["attention_summary"]["requires_operator_attention"], false);

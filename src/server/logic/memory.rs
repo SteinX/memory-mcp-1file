@@ -14,8 +14,9 @@ use crate::server::params::{
 };
 use crate::storage::StorageBackend;
 use crate::types::EmbeddingState;
-use crate::types::{record_key_to_string, Memory, MemoryType, MemoryUpdate};
+use crate::types::{record_key_to_string, ExportIdentity, Memory, MemoryType, MemoryUpdate};
 
+use super::contracts::{export_contract_meta, summary_collection_response, with_surface_guidance};
 use super::{error_response, normalize_limit, strip_embedding, strip_embeddings, success_json};
 
 fn normalize_importance_score(value: Option<f32>) -> anyhow::Result<Option<f32>> {
@@ -58,6 +59,32 @@ async fn invalidate_and_sync_memory(
         }
     }
     Ok(success)
+}
+
+fn memory_contract_json(memory_id: Option<&str>) -> serde_json::Value {
+    let contract = with_surface_guidance(
+        export_contract_meta(
+            ExportIdentity {
+                stable_memory_id: memory_id.map(|id| id.to_string()),
+                stable_node_ids: true,
+                node_ids_are_project_scoped: false,
+                stable_edge_ids: false,
+                edge_ids_are_local_only: true,
+                node_id_semantics: Some("stable_public_memory_id".to_string()),
+                edge_id_semantics: Some("no_public_edge_ids".to_string()),
+                ..Default::default()
+            },
+            None,
+        ),
+        &["memory", "memories", "contract", "summary"],
+        &["count", "total", "filters", "metadata_filter_diagnostics"],
+        &[],
+    );
+    serde_json::to_value(contract).unwrap_or_else(|_| json!({}))
+}
+
+fn memory_collection_contract_json() -> serde_json::Value {
+    memory_contract_json(None)
 }
 
 fn resolved_consolidation_reason(reason: Option<&str>) -> &str {
@@ -752,7 +779,12 @@ pub async fn get_memory(
     match state.storage.get_memory(&params.id).await {
         Ok(Some(mut memory)) => {
             strip_embedding(&mut memory);
-            Ok(success_json(memory_with_trace(state, &memory).await))
+            let memory_json = memory_with_trace(state, &memory).await;
+            Ok(success_json(json!({
+                "memory": memory_json,
+                "summary": summary_collection_response("memory", 1, Some(1), false, None),
+                "contract": memory_contract_json(Some(&params.id))
+            })))
         }
         Ok(None) => Ok(error_response(format!("Memory not found: {}", params.id))),
         Err(e) => Ok(error_response(e)),
@@ -854,6 +886,8 @@ pub async fn list_memories(
 
     Ok(success_json(json!({
         "memories": memories_json,
+        "summary": summary_collection_response("collection", memories.len(), Some(total), false, None),
+        "contract": memory_collection_contract_json(),
         "total": total,
         "limit": limit,
         "offset": offset,
@@ -886,6 +920,8 @@ pub async fn get_valid(
             let memories_json = memories_with_trace(state, &memories).await;
             Ok(success_json(json!({
                 "memories": memories_json,
+                "summary": summary_collection_response("collection", memories.len(), Some(memories.len()), false, None),
+                "contract": memory_collection_contract_json(),
                 "count": memories.len(),
                 "filters": filters.describe(),
                 "metadata_filter_diagnostics": {
@@ -919,6 +955,8 @@ pub async fn get_valid_at(
             let memories_json = memories_with_trace(state, &memories).await;
             Ok(success_json(json!({
                 "memories": memories_json,
+                "summary": summary_collection_response("collection", memories.len(), Some(memories.len()), false, None),
+                "contract": memory_collection_contract_json(),
                 "count": memories.len(),
                 "timestamp": params.timestamp,
                 "filters": filters.describe(),
@@ -1000,13 +1038,16 @@ mod tests {
         let val = serde_json::to_value(&result).unwrap();
         let text = val["content"][0]["text"].as_str().unwrap();
         let memory_json: serde_json::Value = serde_json::from_str(text).unwrap();
-        assert_eq!(memory_json["content"], "Logic test memory");
-        assert_eq!(memory_json["agent_id"], "agent-a");
-        assert_eq!(memory_json["namespace"], "project-alpha");
-        assert_eq!(memory_json["importance_score"], 2.5);
-        assert_eq!(memory_json["consolidation_trace"]["status"], "active");
-        assert_eq!(memory_json["operator_summary"]["stage"], "read");
-        assert_eq!(memory_json["operator_summary"]["primary_signal"], "consolidation_trace");
+        assert_eq!(memory_json["memory"]["content"], "Logic test memory");
+        assert_eq!(memory_json["memory"]["agent_id"], "agent-a");
+        assert_eq!(memory_json["memory"]["namespace"], "project-alpha");
+        assert_eq!(memory_json["memory"]["importance_score"], 2.5);
+        assert_eq!(memory_json["memory"]["consolidation_trace"]["status"], "active");
+        assert_eq!(memory_json["memory"]["operator_summary"]["stage"], "read");
+        assert_eq!(memory_json["memory"]["operator_summary"]["primary_signal"], "consolidation_trace");
+        assert_eq!(memory_json["summary"]["result_kind"], "memory");
+        assert_eq!(memory_json["contract"]["identity"]["stable_memory_id"], id);
+        assert_eq!(memory_json["contract"]["identity"]["node_id_semantics"], "stable_public_memory_id");
 
         // 2.1 Invalidate with superseded_by and verify read model preserves it
         let invalidate_params = InvalidateParams {
@@ -1020,16 +1061,16 @@ mod tests {
         let val = serde_json::to_value(&result).unwrap();
         let text = val["content"][0]["text"].as_str().unwrap();
         let invalidated_json: serde_json::Value = serde_json::from_str(text).unwrap();
-        assert_eq!(invalidated_json["superseded_by"], "replacement-123");
-        assert_eq!(invalidated_json["consolidation_trace"]["status"], "superseded");
-        assert_eq!(invalidated_json["consolidation_trace"]["has_replacement"], true);
-        assert_eq!(invalidated_json["replacement_lineage"]["depth"], 1);
-        assert_eq!(invalidated_json["replacement_lineage"]["terminal_replacement_id"], "replacement-123");
-        assert_eq!(invalidated_json["attention_summary"]["lineage_depth"], 1);
-        assert_eq!(invalidated_json["attention_summary"]["requires_operator_attention"], false);
-        assert_eq!(invalidated_json["operator_summary"]["stage"], "read");
-        assert_eq!(invalidated_json["operator_summary"]["lifecycle_status"], "superseded");
-        assert_eq!(lineage_ids(&invalidated_json), vec!["replacement-123".to_string()]);
+        assert_eq!(invalidated_json["memory"]["superseded_by"], "replacement-123");
+        assert_eq!(invalidated_json["memory"]["consolidation_trace"]["status"], "superseded");
+        assert_eq!(invalidated_json["memory"]["consolidation_trace"]["has_replacement"], true);
+        assert_eq!(invalidated_json["memory"]["replacement_lineage"]["depth"], 1);
+        assert_eq!(invalidated_json["memory"]["replacement_lineage"]["terminal_replacement_id"], "replacement-123");
+        assert_eq!(invalidated_json["memory"]["attention_summary"]["lineage_depth"], 1);
+        assert_eq!(invalidated_json["memory"]["attention_summary"]["requires_operator_attention"], false);
+        assert_eq!(invalidated_json["memory"]["operator_summary"]["stage"], "read");
+        assert_eq!(invalidated_json["memory"]["operator_summary"]["lifecycle_status"], "superseded");
+        assert_eq!(lineage_ids(&invalidated_json["memory"]), vec!["replacement-123".to_string()]);
 
         // 3. List
         let list_params = ListMemoriesParams {
@@ -1054,6 +1095,97 @@ mod tests {
         assert_eq!(list_json["memories"].as_array().unwrap().len(), 0);
         assert_eq!(list_json["total"], 0);
         assert_eq!(list_json["filters"]["userId"], "user1");
+        assert_eq!(list_json["summary"]["result_kind"], "collection");
+        assert_eq!(list_json["contract"]["identity"]["node_id_semantics"], "stable_public_memory_id");
+    }
+
+    #[tokio::test]
+    async fn memory_collection_surfaces_expose_contract_metadata() {
+        let ctx = TestContext::new().await;
+
+        let store_result = store_memory(
+            &ctx.state,
+            StoreMemoryParams {
+                content: "Contract memory item".to_string(),
+                memory_type: Some("semantic".to_string()),
+                user_id: Some("user-contract".to_string()),
+                agent_id: None,
+                run_id: None,
+                namespace: Some("project-contract".to_string()),
+                importance_score: Some(1.0),
+                metadata: None,
+            },
+        )
+        .await
+        .unwrap();
+        let store_val = serde_json::to_value(&store_result).unwrap();
+        let store_text = store_val["content"][0]["text"].as_str().unwrap();
+        let store_json: serde_json::Value = serde_json::from_str(store_text).unwrap();
+        let id = store_json["id"].as_str().unwrap().to_string();
+
+        let get_result = get_memory(&ctx.state, GetMemoryParams { id: id.clone() }).await.unwrap();
+        let get_val = serde_json::to_value(&get_result).unwrap();
+        let get_text = get_val["content"][0]["text"].as_str().unwrap();
+        let get_json: serde_json::Value = serde_json::from_str(get_text).unwrap();
+        assert_eq!(get_json["contract"]["schema_version"], 1);
+        assert_eq!(get_json["contract"]["identity"]["stable_memory_id"], id);
+        assert_eq!(get_json["contract"]["identity"]["node_id_semantics"], "stable_public_memory_id");
+        assert_eq!(get_json["summary"]["result_kind"], "memory");
+
+        let list_result = list_memories(
+            &ctx.state,
+            ListMemoriesParams {
+                limit: Some(10),
+                offset: None,
+                user_id: Some("user-contract".to_string()),
+                agent_id: None,
+                run_id: None,
+                namespace: Some("project-contract".to_string()),
+                memory_type: None,
+                metadata_filter: None,
+                valid_at: None,
+                event_after: None,
+                event_before: None,
+                ingestion_after: None,
+                ingestion_before: None,
+            },
+        )
+        .await
+        .unwrap();
+        let list_val = serde_json::to_value(&list_result).unwrap();
+        let list_text = list_val["content"][0]["text"].as_str().unwrap();
+        let list_json: serde_json::Value = serde_json::from_str(list_text).unwrap();
+        assert_eq!(list_json["contract"]["schema_version"], 1);
+        assert_eq!(list_json["contract"]["identity"]["stable_node_ids"], true);
+        assert_eq!(list_json["contract"]["identity"]["node_ids_are_project_scoped"], false);
+        assert_eq!(list_json["contract"]["identity"]["node_id_semantics"], "stable_public_memory_id");
+        assert_eq!(list_json["summary"]["result_kind"], "collection");
+        assert_eq!(list_json["summary"]["counts"]["results"], 1);
+
+        let valid_result = get_valid(
+            &ctx.state,
+            GetValidParams {
+                limit: Some(10),
+                timestamp: None,
+                user_id: Some("user-contract".to_string()),
+                agent_id: None,
+                run_id: None,
+                namespace: Some("project-contract".to_string()),
+                memory_type: None,
+                metadata_filter: None,
+                event_after: None,
+                event_before: None,
+                ingestion_after: None,
+                ingestion_before: None,
+            },
+        )
+        .await
+        .unwrap();
+        let valid_val = serde_json::to_value(&valid_result).unwrap();
+        let valid_text = valid_val["content"][0]["text"].as_str().unwrap();
+        let valid_json: serde_json::Value = serde_json::from_str(valid_text).unwrap();
+        assert_eq!(valid_json["contract"]["identity"]["node_id_semantics"], "stable_public_memory_id");
+        assert_eq!(valid_json["summary"]["result_kind"], "collection");
     }
 
     #[tokio::test]
