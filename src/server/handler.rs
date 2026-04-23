@@ -47,7 +47,7 @@ impl MemoryMcpServer {
             .map_err(to_rpc_error)
     }
 
-    #[tool(description = "Get full memory by ID.")]
+    #[tool(description = "Get full memory by ID. Memory IDs are stable public identities; response includes additive contract and summary metadata.")]
     async fn get_memory(
         &self,
         params: Parameters<GetMemoryParams>,
@@ -97,7 +97,7 @@ impl MemoryMcpServer {
             .map_err(to_rpc_error)
     }
 
-    #[tool(description = "List memories (newest first) with optional scope/type/metadata/time filters. Scope remains optional for forward compatibility.")]
+    #[tool(description = "List memories (newest first) with optional scope/type/metadata/time filters. Scope remains optional for forward compatibility. Response includes additive contract and summary metadata.")]
     async fn list_memories(
         &self,
         params: Parameters<ListMemoriesParams>,
@@ -108,7 +108,7 @@ impl MemoryMcpServer {
     }
 
     #[tool(
-        description = "Search memories (query, mode?: vector|bm25) with optional filters: user_id, agent_id, run_id, namespace, memory_type, metadata_filter, valid_at, event/ingestion ranges."
+        description = "Search memories (query, mode?: vector|bm25) with optional filters: user_id, agent_id, run_id, namespace, memory_type, metadata_filter, valid_at, event/ingestion ranges. Memory IDs remain the stable public identity; response includes additive contract and summary metadata."
     )]
     async fn search_memory(
         &self,
@@ -126,7 +126,7 @@ impl MemoryMcpServer {
     }
 
     #[tool(
-        description = "Best memory retrieval (query) with optional structured filters. Combines vector+BM25+graph via RRF fusion and returns lightweight diagnostics."
+        description = "Best memory retrieval (query) with optional structured filters. Combines vector+BM25+graph via RRF fusion and returns lightweight diagnostics plus additive contract and summary metadata."
     )]
     async fn recall(&self, params: Parameters<RecallParams>) -> Result<CallToolResult, ErrorData> {
         logic::search::recall(&self.state, params.0)
@@ -135,7 +135,7 @@ impl MemoryMcpServer {
     }
 
     #[tool(
-        description = "Knowledge graph ops. Actions: create_entity(name, entity_type?, description?) | create_relation(from_entity, to_entity, relation_type, weight?) | get_related(entity_id, depth?, direction?) | detect_communities()"
+        description = "Knowledge graph ops. Actions: create_entity(name, entity_type?, description?) | create_relation(from_entity, to_entity, relation_type, weight?) | get_related(entity_id, depth?, direction?) | detect_communities(). get_related returns preferred exported nodes/edges plus additive contract and summary metadata; raw entities/relations remain compatibility fields."
     )]
     async fn knowledge_graph(
         &self,
@@ -214,7 +214,7 @@ impl MemoryMcpServer {
     }
 
     #[tool(
-        description = "Get valid memories. Supports optional timestamp (ISO 8601), scope filters, memory_type, metadata_filter, and event/ingestion ranges."
+        description = "Get valid memories. Supports optional timestamp (ISO 8601), scope filters, memory_type, metadata_filter, and event/ingestion ranges. Response includes additive contract and summary metadata."
     )]
     async fn get_valid(
         &self,
@@ -276,7 +276,7 @@ impl MemoryMcpServer {
     }
 
     #[tool(
-        description = "Code retrieval (query, mode?: vector|hybrid). Default hybrid = vector+BM25+graph fusion. Filters: path_prefix?, language?, chunk_type?"
+        description = "Code retrieval (query, mode?: vector|hybrid). Default hybrid = vector+BM25+graph fusion. Filters: path_prefix?, language?, chunk_type? Results include additive contract and summary metadata. Important: results[].id is a local chunk-record reference, not a stable public ID; stable refind locator is project_id + file_path + start_line + end_line."
     )]
     async fn recall_code(
         &self,
@@ -298,7 +298,7 @@ impl MemoryMcpServer {
         }
     }
 
-    #[tool(description = "Project info. Actions: list() | status(project_id) | stats(project_id)")]
+    #[tool(description = "Project info. Actions: list() | status(project_id) | stats(project_id) | projection(project_id). Status/stats/list responses include additive contract and normalized summary metadata, including lifecycle, generation, and projection/materialization contract fields. Projection returns an on-demand, export-only project projection document built from current canonical data.")]
     async fn project_info(
         &self,
         params: Parameters<ProjectInfoParams>,
@@ -335,9 +335,37 @@ impl MemoryMcpServer {
                     .await
                     .map_err(to_rpc_error)
             }
+            "projection" => {
+                let project_id = params.0.project_id.ok_or_else(|| ErrorData {
+                    code: ErrorCode(-32602),
+                    message: "project_id required for projection action".into(),
+                    data: None,
+                })?;
+                let projection_params = crate::server::params::GetProjectProjectionParams {
+                    project_id,
+                    relation_scope: params.0.relation_scope.clone(),
+                    sort_mode: params.0.sort_mode.clone(),
+                };
+                logic::code::get_project_projection(&self.state, projection_params)
+                    .await
+                    .map_err(to_rpc_error)
+            }
+            "projection_by_locator" => {
+                let locator = params.0.locator.ok_or_else(|| ErrorData {
+                    code: ErrorCode(-32602),
+                    message: "locator required for projection_by_locator action".into(),
+                    data: None,
+                })?;
+                let locator_params = crate::server::params::GetProjectionByLocatorParams {
+                    locator,
+                };
+                logic::code::get_project_projection_by_locator(&self.state, locator_params)
+                    .await
+                    .map_err(to_rpc_error)
+            }
             other => Err(ErrorData {
                 code: ErrorCode(-32602),
-                message: format!("Invalid action '{}'. Use: list, status, stats", other).into(),
+                message: format!("Invalid action '{}'. Use: list, status, stats, projection, projection_by_locator", other).into(),
                 data: None,
             }),
         }
@@ -353,7 +381,7 @@ impl MemoryMcpServer {
             .map_err(to_rpc_error)
     }
 
-    #[tool(description = "Search code symbols by name.")]
+    #[tool(description = "Search code symbols by name. Symbol IDs are stable project-scoped symbol identities; responses include additive contract and summary metadata.")]
     async fn search_symbols(
         &self,
         params: Parameters<SearchSymbolsParams>,
@@ -364,7 +392,7 @@ impl MemoryMcpServer {
     }
 
     #[tool(
-        description = "Navigate symbol call graph. Actions: callers(symbol_id) | callees(symbol_id) | related(symbol_id, depth?, direction?)"
+        description = "Navigate symbol call graph. Actions: callers(symbol_id) | callees(symbol_id) | related(symbol_id, depth?, direction?). Related traversal returns preferred exported nodes/edges plus additive contract and summary metadata; frontier is an unexpanded boundary hint, not a cursor."
     )]
     async fn symbol_graph(
         &self,
@@ -400,28 +428,28 @@ impl MemoryMcpServer {
             "preview_consolidate_memory(content=\"...\", memory_type=\"semantic\", reason=\"duplicate_consolidated\") — inspect exact-duplicate consolidation plan, matched_summary, lookup_diagnostics, attention_summary, plan_fingerprint, and plan_diagnostics before execution",
             "consolidate_memory(content=\"...\", namespace=\"project-a\") — create a replacement memory and supersede exact duplicates in the same optional scope/type boundary",
             "consolidate_memory(content=\"...\", memory_type=\"semantic\", reason=\"duplicate_consolidated\", expected_plan_fingerprint=\"...\") — execute only if the current consolidation plan still matches the preview fingerprint, and inspect lookup_diagnostics, attention_summary, plus plan_diagnostics for operator review",
-            "get_memory(id=\"abc123\") — get full memory by ID, including consolidation_trace, replacement_lineage, and attention_summary when applicable",
+            "get_memory(id=\"abc123\") — get full memory by ID, including consolidation_trace, replacement_lineage, attention_summary, and additive contract/summary metadata; memory IDs are stable public identities",
             "update_memory(id=\"abc123\", content=\"new text\") — update content (re-embeds automatically)",
             "update_memory(id=\"abc123\", memory_type=\"semantic\", metadata={...}, run_id=\"run-42\") — update type/metadata/scope",
             "update_memory(id=\"abc123\", importance_score=0.5) — lower or raise retrieval importance",
             "delete_memory(id=\"abc123\") — hard delete (prefer invalidate)",
             "invalidate(id=\"abc123\", reason=\"outdated\") — soft-delete with reason",
             "invalidate(id=\"abc123\", superseded_by=\"def456\") — soft-delete linking replacement; reads now preserve this link",
-            "list_memories(limit=20, offset=0) — list newest first, paginated, with consolidation_trace, replacement_lineage, and attention_summary summaries",
+            "list_memories(limit=20, offset=0) — list newest first, paginated, with consolidation_trace, replacement_lineage, attention_summary, and additive contract/summary metadata",
             "list_memories(limit=20, namespace=\"project-a\", userId=\"user-1\") — list within an optional scope boundary",
             "list_memories(memoryType=\"semantic\", eventAfter=\"2026-01-01T00:00:00Z\") — list filtered by type/time window",
-            "get_valid(limit=50) — all non-invalidated memories, including consolidation_trace, replacement_lineage, and attention_summary summaries",
+            "get_valid(limit=50) — all non-invalidated memories, including consolidation_trace, replacement_lineage, attention_summary, and additive contract/summary metadata",
             "get_valid(timestamp=\"2026-01-15T00:00:00Z\") — point-in-time snapshot",
             "get_valid(user_id=\"user-1\", agent_id=\"agent-1\", namespace=\"project-a\") — filter by first-class scope",
             "get_valid(memory_type=\"semantic\", eventAfter=\"2026-01-01T00:00:00Z\") — filter by type and event time window",
             "",
             "=== SEARCH (memories) ===",
-            "recall(query=\"authentication flow\") — BEST: hybrid vector+BM25+graph RRF fusion",
+            "recall(query=\"authentication flow\") — BEST: hybrid vector+BM25+graph RRF fusion with additive contract/summary metadata",
             "recall(query=\"...\", vectorWeight=0.7, bm25Weight=0.1, pprWeight=0.2) — tune RRF channel weights",
             "recall(query=\"...\", limit=20, minScore=0.2) — control result count and fused cutoff",
             "recall(query=\"...\", namespace=\"project-a\", memoryType=\"procedural\") — scoped hybrid recall",
             "recall(query=\"...\", metadataFilter={\"source\":\"spec\"}) — metadata subset filter (post-query subset matching, see diagnostics); retrieval results also carry consolidation truth summaries",
-            "search_memory(query=\"auth token\", mode=\"vector\") — pure semantic similarity with consolidation truth summaries",
+            "search_memory(query=\"auth token\", mode=\"vector\") — pure semantic similarity with consolidation truth summaries and stable public memory IDs",
             "search_memory(query=\"DECISION:\", mode=\"bm25\") — exact keyword match with consolidation truth summaries",
             "search_memory(query=\"token rotation\", agentId=\"agent-1\", runId=\"run-42\") — scoped memory search",
             "search_memory(query=\"incident\", mode=\"bm25\", eventAfter=\"2026-01-01T00:00:00Z\") — lexical search with time filter",
@@ -431,12 +459,16 @@ impl MemoryMcpServer {
             "index_project(path=\"/project\") — index codebase (incremental)",
             "index_project(path=\"/project\", force=true, confirm_failed_restart=true) — full re-index from scratch after explicit confirmation",
             "project_info(action=\"list\") — list all indexed projects",
-            "project_info(action=\"status\", project_id=\"...\") — indexing progress, stuck chunks, failed files",
-            "project_info(action=\"stats\", project_id=\"...\") — file/symbol/chunk/language counts",
+            "project_info(action=\"status\", project_id=\"...\") — indexing progress, stuck chunks, failed files, plus additive contract/summary metadata",
+            "project_info(action=\"stats\", project_id=\"...\") — file/symbol/chunk/language counts, plus additive contract/summary metadata",
+            "project_info(action=\"projection\", project_id=\"...\") — build and return an on-demand export-only project projection document from current canonical data; response now also includes an ephemeral locator record",
+            "project_info(action=\"projection_by_locator\", locator=\"...\") — read back a same-process ephemeral projection by locator; locator is opaque, non-persistable, and not generation-stable",
+            "project_info(action=\"projection\", project_id=\"...\", relation_scope=\"imports\") — projection with only import edges",
+            "project_info(action=\"projection\", project_id=\"...\", relation_scope=\"type_links\") — projection with only extends/implements edges",
             "delete_project(project_id=\"...\") — remove indexed project and all its data",
             "",
             "=== CODE SEARCH ===",
-            "recall_code(query=\"error handling middleware\") — BEST: hybrid BM25+vector+PPR graph",
+            "recall_code(query=\"error handling middleware\") — BEST: hybrid BM25+vector+PPR graph. results[].id is local-only; stable refind locator is project_id + file_path + start_line + end_line",
             "recall_code(query=\"...\", mode=\"vector\") — pure semantic vector search",
             "recall_code(query=\"...\", mode=\"hybrid\") — explicit hybrid (default)",
             "recall_code(query=\"...\", vectorWeight=0.5, bm25Weight=0.3, pprWeight=0.2) — tune fusion weights",
@@ -446,11 +478,11 @@ impl MemoryMcpServer {
             "recall_code(query=\"...\", pathPrefix=\"src/\", language=\"rust\", limit=20) — all filters combined",
             "",
             "=== SYMBOLS ===",
-            "search_symbols(query=\"UserRepository\") — find by name (exact + fuzzy)",
+            "search_symbols(query=\"UserRepository\") — find by name (exact + fuzzy). Symbol IDs are stable project-scoped identities",
             "search_symbols(query=\"auth\", symbol_type=\"class\") — filter: class|function|method|interface|enum",
             "search_symbols(query=\"...\", path_prefix=\"src/\", limit=20, offset=0) — paginated + path filter",
             "search_symbols(query=\"...\", project_id=\"proj123\") — filter by project",
-            "symbol_graph(action=\"related\", symbol_id=\"abc123\") — related symbols (imports, calls, inheritance)",
+            "symbol_graph(action=\"related\", symbol_id=\"abc123\") — related symbols (imports, calls, inheritance); preferred exported fields are nodes/edges, and frontier is an unexpanded boundary hint, not a cursor",
             "symbol_graph(action=\"related\", symbol_id=\"abc123\", depth=3, direction=\"out\") — deep outgoing traversal",
             "symbol_graph(action=\"related\", symbol_id=\"abc123\", depth=2, direction=\"in\") — who depends on this",
             "symbol_graph(action=\"related\", symbol_id=\"abc123\", direction=\"both\") — full neighborhood",
@@ -462,7 +494,7 @@ impl MemoryMcpServer {
             "knowledge_graph(action=\"create_entity\", name=\"AuthModule\", user_id=\"agent-1\") — scoped entity",
             "knowledge_graph(action=\"create_relation\", from_entity=\"AuthModule\", to_entity=\"UserRepo\", relation_type=\"depends_on\") — create edge",
             "knowledge_graph(action=\"create_relation\", from_entity=\"...\", to_entity=\"...\", relation_type=\"...\", weight=0.9) — weighted edge",
-            "knowledge_graph(action=\"get_related\", entity_id=\"AuthModule\") — direct neighbors",
+            "knowledge_graph(action=\"get_related\", entity_id=\"AuthModule\") — direct neighbors; preferred exported fields are nodes/edges and edge IDs remain local-only",
             "knowledge_graph(action=\"get_related\", entity_id=\"AuthModule\", depth=3, direction=\"both\") — deep traversal",
             "knowledge_graph(action=\"get_related\", entity_id=\"...\", direction=\"in\") — incoming only",
             "knowledge_graph(action=\"detect_communities\") — find clusters in the graph",
