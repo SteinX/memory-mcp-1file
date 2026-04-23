@@ -118,7 +118,7 @@ pub(super) async fn create_symbol_relation(
     db: &Surreal<Db>,
     relation: SymbolRelation,
 ) -> Result<String> {
-    let sql = "RELATE $from->symbol_relation->$to SET relation_type = $rtype, project_id = $pid, file_path = $fpath, line_number = $lnum, created_at = $cat";
+    let sql = "RELATE $from->symbol_relation->$to SET relation_type = $rtype, relation_class = $rclass, provenance = $prov, confidence_class = $cclass, freshness_generation = $fgen, staleness_state = $sstate, project_id = $pid, file_path = $fpath, line_number = $lnum, created_at = $cat";
     let from = relation.from_symbol.clone();
     let to = relation.to_symbol.clone();
 
@@ -127,6 +127,11 @@ pub(super) async fn create_symbol_relation(
         .bind(("from", from))
         .bind(("to", to))
         .bind(("rtype", relation.relation_type.to_string()))
+        .bind(("rclass", relation.relation_class.to_string()))
+        .bind(("prov", relation.provenance.to_string()))
+        .bind(("cclass", relation.confidence_class.to_string()))
+        .bind(("fgen", relation.freshness_generation as i64))
+        .bind(("sstate", relation.staleness_state.to_string()))
         .bind(("pid", relation.project_id))
         .bind(("fpath", relation.file_path))
         .bind(("lnum", relation.line_number as i64))
@@ -159,6 +164,11 @@ pub(super) async fn create_symbol_relations_batch(
                 "from": thing_to_string(&r.from_symbol),
                 "to": thing_to_string(&r.to_symbol),
                 "relation_type": r.relation_type.to_string(),
+                "relation_class": r.relation_class.to_string(),
+                "provenance": r.provenance.to_string(),
+                "confidence_class": r.confidence_class.to_string(),
+                "freshness_generation": r.freshness_generation as i64,
+                "staleness_state": r.staleness_state.to_string(),
                 "project_id": r.project_id,
                 "file_path": r.file_path,
                 "line_number": r.line_number as i64,
@@ -172,6 +182,11 @@ pub(super) async fn create_symbol_relations_batch(
         FOR $r IN $relations {
             RELATE (type::record($r.from))->symbol_relation->(type::record($r.to))
             SET relation_type = $r.relation_type,
+                relation_class = $r.relation_class,
+                provenance = $r.provenance,
+                confidence_class = $r.confidence_class,
+                freshness_generation = $r.freshness_generation,
+                staleness_state = $r.staleness_state,
                 project_id = $r.project_id,
                 file_path = $r.file_path,
                 line_number = $r.line_number;

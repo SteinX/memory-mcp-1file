@@ -164,6 +164,9 @@ pub(super) async fn get_index_status(
 }
 
 pub(super) async fn update_index_status(db: &Surreal<Db>, status: IndexStatus) -> Result<()> {
+    let mut status = status;
+    status.refresh_lifecycle_states();
+
     let sql = r#"
         UPDATE index_status SET 
             status = $status,
@@ -176,7 +179,12 @@ pub(super) async fn update_index_status(db: &Surreal<Db>, status: IndexStatus) -
             error_message = $error_message,
             failed_files = $failed_files,
             failed_embeddings = $failed_embeddings,
-            embedding_version = $embedding_version
+            embedding_version = $embedding_version,
+            structural_state = $structural_state,
+            semantic_state = $semantic_state,
+            projection_state = $projection_state,
+            structural_generation = $structural_generation,
+            semantic_generation = $semantic_generation
         WHERE project_id = $project_id
     "#;
 
@@ -194,6 +202,11 @@ pub(super) async fn update_index_status(db: &Surreal<Db>, status: IndexStatus) -
         .bind(("failed_files", status.failed_files.clone()))
         .bind(("failed_embeddings", status.failed_embeddings))
         .bind(("embedding_version", status.embedding_version))
+        .bind(("structural_state", status.structural_state.clone()))
+        .bind(("semantic_state", status.semantic_state.clone()))
+        .bind(("projection_state", status.projection_state.clone()))
+        .bind(("structural_generation", status.structural_generation as i64))
+        .bind(("semantic_generation", status.semantic_generation as i64))
         .await?;
 
     let updated: Vec<IndexStatus> = response.take(0).unwrap_or_default();

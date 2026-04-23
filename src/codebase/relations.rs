@@ -8,6 +8,7 @@ use crate::types::safe_thing;
 use crate::types::symbol::{
     CodeReference, CodeRelationType, CodeSymbol, SymbolRef, SymbolRelation,
 };
+use crate::types::{ConfidenceClass, RelationClass, RelationProvenance, StalenessState};
 
 /// Statistics from relation creation.
 #[derive(Debug, Default)]
@@ -68,11 +69,31 @@ pub async fn create_symbol_relations(
             }
         };
 
+        let (relation_class, provenance, confidence_class) =
+            if symbol_index.resolve(&reference.to_symbol, &ctx).is_some() {
+                (
+                    reference.relation_class,
+                    reference.provenance,
+                    reference.confidence_class,
+                )
+            } else {
+                (
+                    RelationClass::Inferred,
+                    RelationProvenance::HeuristicResolver,
+                    ConfidenceClass::Ambiguous,
+                )
+            };
+
         // 3. Collect the relation for batch write
         batch.push(SymbolRelation::new(
             from_thing,
             to_thing,
             reference.relation_type,
+            relation_class,
+            provenance,
+            confidence_class,
+            reference.freshness_generation,
+            reference.staleness_state,
             reference.file_path.clone(),
             reference.line,
             project_id.to_string(),
@@ -166,6 +187,11 @@ pub fn detect_containment_references(symbols: &[CodeSymbol]) -> Vec<CodeReferenc
                         from_symbol_line: parent.start_line,
                         to_symbol: sym.name.clone(),
                         relation_type: CodeRelationType::Contains,
+                        relation_class: RelationClass::Observed,
+                        provenance: RelationProvenance::ContainmentDerived,
+                        confidence_class: ConfidenceClass::Extracted,
+                        freshness_generation: 0,
+                        staleness_state: StalenessState::Current,
                         file_path: file_path.to_string(),
                         line: sym.start_line,
                         column: 0,
