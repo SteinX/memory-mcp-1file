@@ -148,7 +148,8 @@ Add this to your configuration file (e.g., `claude_desktop_config.json`):
         "--memory=3g",
         "-v", "mcp-data:/data",
         "-v", "/absolute/path/to/your/project:/project:ro",
-        "ghcr.io/pomazanbohdan/memory-mcp-1file:latest"
+        "ghcr.io/pomazanbohdan/memory-mcp-1file:latest",
+        "--stdio"
       ]
     }
   }
@@ -165,7 +166,7 @@ Add this to your configuration file (e.g., `claude_desktop_config.json`):
 4.  **Name**: `memory`
 5.  **Command**:
     ```bash
-    docker run --init -i --rm --memory=3g -v mcp-data:/data -v "/Users/yourname/projects/current:/project:ro" ghcr.io/pomazanbohdan/memory-mcp-1file:latest
+    docker run --init -i --rm --memory=3g -v mcp-data:/data -v "/Users/yourname/projects/current:/project:ro" ghcr.io/pomazanbohdan/memory-mcp-1file:latest --stdio
     ```
     *(Remember to update the project path when switching workspaces if you need code indexing)*
 
@@ -175,8 +176,12 @@ Add this to your configuration file (e.g., `claude_desktop_config.json`):
 docker run --init -i --rm --memory=3g \
   -v mcp-data:/data \
   -v $(pwd):/project:ro \
-  ghcr.io/pomazanbohdan/memory-mcp-1file:latest
+  ghcr.io/pomazanbohdan/memory-mcp-1file:latest \
+  --stdio
 ```
+
+> [!NOTE]
+> The published Docker image defaults to **HTTP SSE** mode for standalone/server use. When wiring it into MCP desktop or CLI clients, append `--stdio` as shown above so the container speaks the stdio transport the client expects.
 
 ### NPX / Bunx (No Docker required)
 
@@ -283,7 +288,8 @@ Or with Docker:
         "run", "--init", "-i", "--rm", "--memory=3g",
         "-v", "mcp-data:/data",
         "-v", "${workspaceFolder}:/project:ro",
-        "ghcr.io/pomazanbohdan/memory-mcp-1file:latest"
+        "ghcr.io/pomazanbohdan/memory-mcp-1file:latest",
+        "--stdio"
       ]
     }
   }
@@ -294,7 +300,7 @@ Or with Docker:
 
 ## ✨ Key Features
 
-- **Semantic Memory**: Stores text with vector embeddings (`qwen3` by default) for "vibe-based" retrieval.
+- **Semantic Memory**: Stores text with vector embeddings (`gemma` by default, `qwen3` available) for "vibe-based" retrieval.
 - **Governed Memory Retrieval**: Memory APIs now share first-class optional filters for `user_id`, `agent_id`, `run_id`, `namespace`, `memory_type`, metadata, and time windows. `list_memories` uses the same governance path and returns a filtered `total`.
 - **Memory Lexical Engine**: Memory BM25-style retrieval now uses a reusable in-memory lexical index that is warmed from DB at startup and kept in sync by memory CRUD / invalidation flows, instead of rebuilding the lexical model on every request.
 - **Layered Diagnostics**: Memory search/recall diagnostics expose retrieved candidates, post-filter hits, and returned hits; `metadata_filter` is explicitly reported as post-query subset matching.
@@ -303,6 +309,8 @@ Or with Docker:
 - **Consolidation Preview**: `preview_consolidate_memory` shows exact-duplicate matches, replacement scope, and supersede reason before any write occurs.
 - **Graph Memory**: Tracks entities (`User`, `Project`, `Tech`) and their relations (`uses`, `likes`). Supports PageRank-based traversal.
 - **Code Intelligence**: Indexes local project directories (AST-based chunking) for Rust, Python, TypeScript, JavaScript, Go, Java, and **Dart/Flutter**. Tracks **calls, imports, extends, implements, and mixin** relationships between symbols.
+- **Plugin-Facing Contract Freeze**: Code/project read surfaces expose additive `contract` + `summary` metadata with a machine-readable `reason_code` taxonomy (`missing`, `stale`, `partial`, `degraded`, `invalid_locator`, `generation_mismatch`, `unsupported`) while preserving legacy string `reason` fields for compatibility.
+- **Explicit Projection Locator Lifecycle**: `project_info(action="projection")` returns an ephemeral locator record with typed lifecycle and lookup metadata, and `project_info(action="projection_by_locator")` returns the same contract on resolve/miss without promoting locators to stable public IDs.
 - **Temporal Validity**: Memories can have `valid_from` and `valid_until` dates.
 - **SurrealDB Backend**: Fast, embedded, single-file database.
 
@@ -315,35 +323,47 @@ The server exposes **18 tools** to the AI model, organized into logical categori
 ### 🧠 Core Memory Management
 | Tool | Description |
 |------|-------------|
-| `store_memory` | Store a new memory with content, optional scope fields, metadata, and optional `importance_score`. |
+| `store_memory` | Store a new memory with content, optional scope fields, metadata, and optional `importance_score`. Read/list surfaces now also expose additive `contract` + `summary` metadata. |
 | `update_memory` | Update memory fields, including scope and `importance_score`. |
 | `delete_memory` | Delete memory by ID. |
 | `preview_consolidate_memory` | Preview exact-duplicate consolidation without writing any changes. |
-| `list_memories` | List memories (newest first) with optional scope/type/metadata/time filters; `total` is the filtered total. |
-| `get_memory` | Get full memory by ID. |
+| `list_memories` | List memories (newest first) with optional scope/type/metadata/time filters; `total` is the filtered total. Also returns additive `contract` + normalized `summary` metadata. |
+| `get_memory` | Get full memory by ID. Memory IDs are the stable public identity on memory read/list surfaces. |
 | `invalidate` | Soft-delete memory, optionally linking replacement via `superseded_by`. |
-| `get_valid` | Get valid memories with optional point-in-time, scope, metadata, and time-window filters. |
+| `get_valid` | Get valid memories with optional point-in-time, scope, metadata, and time-window filters. Also returns additive `contract` + normalized `summary` metadata. |
 
 ### 🔎 Search & Retrieval
 | Tool | Description |
 |------|-------------|
-| `recall` | **Hybrid memory retrieval** (Vector + lexical + Graph via RRF) with layered diagnostics and optional filters. |
-| `search_memory` | Search memories. `mode`: `vector` (default) or `bm25`; BM25 mode uses the reusable in-memory memory lexical engine. |
+| `recall` | **Hybrid memory retrieval** (Vector + lexical + Graph via RRF) with layered diagnostics and optional filters. Retrieval surfaces also expose additive `contract` + `summary` metadata. |
+| `search_memory` | Search memories. `mode`: `vector` (default) or `bm25`; BM25 mode uses the reusable in-memory memory lexical engine. Returned memory IDs remain the stable public memory identity. |
 
 ### 🕸️ Knowledge Graph
 | Tool | Description |
 |------|-------------|
-| `knowledge_graph` | Unified KG operations. `action`: `create_entity` \| `create_relation` \| `get_related` \| `detect_communities`. |
+| `knowledge_graph` | Unified KG operations. `action`: `create_entity` \| `create_relation` \| `get_related` \| `detect_communities`. `get_related` now returns exported `nodes` / `edges`, additive `contract` + `summary` metadata, and keeps legacy `entities` / `relations` only for compatibility. |
 
 ### 💻 Codebase Intelligence
 | Tool | Description |
 |------|-------------|
 | `index_project` | Index codebase directory for code search. |
 | `delete_project` | Delete indexed project. |
-| `recall_code` | Code retrieval. `mode`: `vector` or `hybrid` (default). Hybrid uses vector+BM25+graph fusion. |
-| `search_symbols` | Search code symbols by name. |
-| `symbol_graph` | Navigate symbol graph. `action`: `callers` \| `callees` \| `related`. |
-| `project_info` | Project info. `action`: `list` \| `status` \| `stats`. |
+| `recall_code` | Code retrieval. `mode`: `vector` or `hybrid` (default). Hybrid uses vector+BM25+graph fusion. Results now expose additive `contract` + `summary` metadata. **Important:** `results[].id` is a local chunk-record reference, not a stable public ID; the stable re-find locator is `project_id + file_path + start_line + end_line`. |
+| `search_symbols` | Search code symbols by name. Search responses expose additive `contract` + `summary` metadata; symbol IDs are stable project-scoped symbol identities. |
+| `symbol_graph` | Navigate symbol graph. `action`: `callers` \| `callees` \| `related`. Related traversal exposes exported `nodes` / `edges`, additive `contract` + `summary`, and keeps legacy `symbols` / `relations` for compatibility. `frontier` is an unexpanded boundary hint, **not** a cursor. |
+| `project_info` | Project info. `action`: `list` \| `status` \| `stats` \| `projection` \| `projection_by_locator`. Status/list/stats surfaces expose additive `contract` + normalized `summary`, including lifecycle, generation, and projection/materialization contract metadata. `projection` returns an on-demand export plus an ephemeral locator record; `projection_by_locator` resolves that locator only within the same process and now returns typed locator lookup/lifecycle metadata on both success and miss. |
+
+### Contract compatibility notes for plugin / MCP integrators
+
+- `contract` and `summary` remain **additive-first** surfaces. Clients must ignore unknown fields and unknown enum values.
+- `summary.partial.reason_code` is the canonical machine-readable contract reason. Current Phase 5A values are: `missing`, `stale`, `partial`, `degraded`, `invalid_locator`, `generation_mismatch`, and `unsupported`.
+- `summary.partial.reason` is retained as a legacy compatibility string. Existing values like `projection_stale`, `indexing_in_progress`, and `progress:NN.N` remain readable, but new integrations should key off `reason_code`.
+- `project_info(action="projection")` returns `locator.lookup.state = "created"`; `project_info(action="projection_by_locator")` returns `locator.lookup.state = "resolved"` on success and `"missing"` on miss.
+- Projection locators are **opaque, same-process, non-persistable, and not generation-stable**. They are convenience handles for immediate readback, not stable public identities.
+- Stable identities remain unchanged:
+  - memory read/list/search surfaces → public memory IDs
+  - symbol graph/search surfaces → stable project-scoped symbol IDs
+  - `recall_code` re-find contract → `project_id + file_path + start_line + end_line`
 
 ### ⚙️ System & Maintenance
 | Tool | Description |
@@ -359,8 +379,8 @@ Environment variables or CLI args:
 
 | Arg | Env | Default | Description |
 |-----|-----|---------|-------------|
-| `--data-dir` | `DATA_DIR` | `./data` | DB location |
-| `--model` | `EMBEDDING_MODEL` | `qwen3` | Embedding model (`qwen3`, `gemma`, `bge_m3`, `nomic`, `e5_multi`, `e5_small`) |
+| `--data-dir` | `DATA_DIR` | platform-local app data dir (`memory-mcp`) | DB location |
+| `--model` | `EMBEDDING_MODEL` | `gemma` | Embedding model (`qwen3`, `gemma`, `bge_m3`, `nomic`, `e5_multi`, `e5_small`) |
 | `--mrl-dim` | `MRL_DIM` | *(native)* | Output dimension for MRL-supported models (e.g. 64, 128, 256, 512, 1024 for Qwen3). Defaults to the model's native maximum dimension (1024 for Qwen3). |
 | `--batch-size` | `BATCH_SIZE` | `8` | Maximum batch size for embedding inference |
 | `--cache-size` | `CACHE_SIZE` | `1000` | LRU cache capacity for embeddings |
@@ -369,7 +389,7 @@ Environment variables or CLI args:
 | `--log-level` | `LOG_LEVEL` | `info` | Verbosity |
 | `--log-file` | `LOG_FILE` | *(None)* | Log file path. If specified, logs will be written to this file in addition to stderr. The file will be rotated when it reaches the maximum size. Rotated files are named with startup timestamp (e.g., `app.2026-04-09_14-30-00.log.1`). |
 | `--log-file-max-size-mb` | `LOG_FILE_MAX_SIZE_MB` | `10` | Maximum log file size in MB before rotation. Only effective when `--log-file` is specified. |
-| *(None)* | `HF_TOKEN` | *(None)* | HuggingFace Token (ONLY required for gated models like `gemma`) |
+| *(None)* | `HF_TOKEN` | *(None)* | Optional HuggingFace token for private/rate-limited model downloads |
 | *(None)* | `EMBEDDING_QUEUE_CAPACITY` | `256` | Max size of the background embedding queue |
 | *(None)* | `EMBEDDING_BATCH_SIZE` | `8` | How many files to process in one embedding chunk |
 | *(None)* | `INDEX_BATCH_SIZE` | `20` | How many files to process in one incremental chunk |
@@ -382,8 +402,8 @@ You can switch the embedding model using the `--model` arg or `EMBEDDING_MODEL` 
 
 | Argument Value | HuggingFace Repo | Dimensions | Size | Use Case |
 | :--- | :--- | :--- | :--- | :--- |
-| `qwen3` | `Qwen/Qwen3-Embedding-0.6B` | 1024 (MRL) | 1.2 GB | **Default**. Top open-source 2026 model, 32K context, MRL support. |
-| `gemma` | `onnx-community/embeddinggemma-300m-ONNX` | 768 (MRL) | ~195 MB | Lighter alternative with MRL support. (Requires proprietary license agreement) |
+| `qwen3` | `Qwen/Qwen3-Embedding-0.6B` | 1024 (MRL) | 1.2 GB | Highest-quality bundled option. Larger download and storage footprint. |
+| `gemma` | `unsloth/embeddinggemma-300m-qat-q4_0-unquantized` | 768 (MRL) | ~195 MB | **Default**. Smaller download, lower RAM, good Docker-friendly baseline. |
 | `bge_m3` | `BAAI/bge-m3` | 1024 | 2.3 GB | State-of-the-art multilingual hybrid retrieval. Heavy. |
 | `nomic` | `nomic-ai/nomic-embed-text-v1.5` | 768 | 1.9 GB | High quality long-context BERT-compatible. |
 | `e5_multi` | `intfloat/multilingual-e5-base` | 768 | 1.1 GB | Legacy; kept for backward compatibility. |
@@ -397,24 +417,31 @@ Use the `--mrl-dim` argument to specify the desired size. If omitted, the defaul
 
 **Warning:** Once your database is created with a specific dimension, you cannot change it without wiping the data directory.
 
-### 🔒 Gated Models & Authentication (Gemma)
+### 📦 Model Selection Notes
 
-By default, the server uses **Qwen3**, which is fully open-source and downloads automatically without any authentication.
+By default, the server uses **Gemma** because it is the lightest bundled model and starts more comfortably in Docker-sized environments.
 
-However, if you choose to use **Gemma** (`--model gemma`), you must authenticate because it is a "Gated Model" with a proprietary license. 
-
-To use Gemma:
-1. Go to [google/embeddinggemma-300m](https://huggingface.co/google/embeddinggemma-300m) on Hugging Face.
-2. Log in and click **"Agree to access repository"**.
-3. Generate an Access Token at [HF Tokens](https://huggingface.co/settings/tokens) (Read access is enough).
-4. Start the server with the token:
+To use Gemma explicitly:
 
 ```bash
-# Using environment variable
-HF_TOKEN="hf_your_token_here" memory-mcp --model gemma
-
-# Or via .env file (see .env.example)
+memory-mcp --model gemma
 ```
+
+Gemma currently works out of the box with the bundled downloader. `HF_TOKEN` is still optional and can help with higher rate limits or private/rate-limited HuggingFace access, but the current server code does not require any separate Gemma-specific license-acceptance flow.
+
+If you want the highest-quality bundled model instead, switch to **Qwen3** explicitly:
+
+```bash
+memory-mcp --model qwen3
+```
+
+When running in Docker, remember that changing models also changes embedding dimensions and storage requirements. Reuse the same `/data` volume only when the stored data was created with the same model/dimension settings.
+
+### 🐳 Docker Image Notes
+
+- The published image defaults to **HTTP SSE** on port `8080` and binds to `0.0.0.0`, so `-p 8080:8080` works as expected.
+- MCP desktop/CLI integrations should append `--stdio`, because those clients speak stdio rather than HTTP.
+- The release pipeline now publishes both **linux/amd64** (`x86_64-unknown-linux-musl`) and **linux/arm64** (`aarch64-unknown-linux-musl`) artifacts, and the published container image resolves the correct binary per target architecture.
 
 > [!WARNING]
 > **Changing Models & Data Compatibility**
@@ -427,9 +454,30 @@ HF_TOKEN="hf_your_token_here" memory-mcp --model gemma
 ## 🔮 Future Roadmap (Research & Ideas)
 
 ### Current roadmap status
-- ✅ **Phase 1 complete**: first-class scope/filter plumbing, recall/list governance, optional-scope compatibility, metadata-filter semantics clarification, `superseded_by` read repair.
-- ✅ **Phase 2 complete**: diagnostics layering, reusable warmed memory lexical engine, and explicit exact-duplicate consolidation are in place.
-- 🚧 **Phase 3 in progress**: consolidation preview/apply alignment and audit-style result summaries are being added as explicit operator-visible workflow support.
+- ✅ **Phase 0 — Baseline Foundations** complete
+- ✅ **Phase 1 — Canonical Contract Foundation** complete
+- ✅ **Phase 2 — Public Surface Normalization** complete
+- ✅ **Phase 3 — Later-Phase Contract Freeze + MVP Preparation** effectively complete for the MCP server repo
+- ✅ **Phase 4 — Projection Builder (non-plugin scope)** effectively complete for the MCP server repo, including:
+  - export-only on-demand projection build via `project_info(action="projection")`
+  - deterministic builder flow and request/options contract
+  - shaping semantics
+  - ephemeral same-process locator + read-back path
+- ⏸️ **Phase 5 — Plugin-facing Workflow Integration** is intentionally **out of scope for this repository** unless future work explicitly chooses to implement plugin-side workflow assets here.
+
+### Repository closure status
+
+From the MCP server repository perspective, the remaining work is now **closure and handoff**, not major new server capability work:
+
+- the public contract layer (`contract` + `summary`) is already in place across memory, graph, code search, symbol, and project surfaces;
+- projection/materialization semantics are explicit, but still truthfully non-persistent and non-addressable beyond same-process ephemeral locator read-back;
+- stable vs transient identity rules are already frozen and documented;
+- plugin orchestration, cache policy, stale UX, retry policy, and workflow commands are expected to live **outside this repo**.
+
+See also:
+- [`ARCHITECTURE.md`](./ARCHITECTURE.md) — plugin-facing MCP contract notes
+- `SERVER_PLUGIN_BOUNDARY_STATUS.md` — final repo-side closure and handoff status
+- `PLUGIN_IMPLEMENTATION_PLAN.md` — detailed plugin-side implementation plan
 
 Based on analysis of advanced memory systems like [Hindsight](https://hindsight.vectorize.io/) (see their documentation for details on these mechanisms), we are exploring these "Cognitive Architecture" features for future releases:
 

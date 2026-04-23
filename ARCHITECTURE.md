@@ -144,3 +144,50 @@ sequenceDiagram
 * `src/storage/`: Abstraction over SurrealDB.
 * `src/graph/`: Graph algorithms (PageRank, Community Detection).
 * `src/codebase/`: Code indexing and chunking logic.
+
+## Plugin-Facing MCP Contract Notes
+
+Phase 5A freezes the public integration contract for the current code/project read surfaces without introducing new product capabilities.
+
+### Additive compatibility policy
+
+- Public MCP responses use additive `contract` and `summary` metadata.
+- Clients must ignore unknown fields and unknown enum values.
+- Internal DB record shapes and local edge/chunk IDs are not public contract.
+
+### Canonical reason taxonomy
+
+`summary.partial.reason_code` is the machine-readable contract field for partial/degraded/unsupported states. The current exported values are:
+
+- `missing`
+- `stale`
+- `partial`
+- `degraded`
+- `invalid_locator`
+- `generation_mismatch`
+- `unsupported`
+
+Legacy string `summary.partial.reason` values are still emitted for compatibility, but plugin logic should prefer `reason_code`.
+
+### Projection locator lifecycle
+
+`project_info(action="projection")` returns an on-demand export-only projection plus a locator record. That locator is intentionally limited:
+
+- scope: same-process ephemeral projection registry
+- opaque: clients must not parse locator internals as contract
+- non-persistable: locators are convenience handles, not durable IDs
+- not generation-stable: a locator is bound to the semantic generation captured at projection creation time
+- same-process readback only: `project_info(action="projection_by_locator")` resolves only locators present in the current process registry
+
+The locator record now includes typed lifecycle and lookup metadata:
+
+- `locator.lifecycle.*` describes survivability, scope, and persistence guarantees
+- `locator.lookup.state` distinguishes `created`, `resolved`, and `missing`
+- `locator.lookup.reason_code` is populated on structured miss/failure cases such as `invalid_locator`
+
+### Stable vs transient identities
+
+- Memory APIs: public memory IDs are stable read/list/search identities.
+- Symbol APIs: symbol IDs are stable project-scoped identities.
+- Code recall APIs: `results[].id` is local-only; the stable re-find locator is `project_id + file_path + start_line + end_line`.
+- Projection locators: transient handles only, never promoted to stable public identity.

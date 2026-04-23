@@ -47,7 +47,7 @@ memory-mcp --db-path /data # Custom database path
 
 | Platform | Architecture |
 |---|---|
-| Linux | x86_64 (musl) |
+| Linux | x86_64 (musl), ARM64 (musl) |
 | macOS | x86_64, ARM64 (Apple Silicon) |
 | Windows | x86_64 |
 
