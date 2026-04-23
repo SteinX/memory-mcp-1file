@@ -390,6 +390,8 @@ mod tests {
         let (tx, rx) = mpsc::channel(100);
         let metrics = std::sync::Arc::new(EmbeddingMetrics::new());
         let adaptive_queue = AdaptiveEmbeddingQueue::with_defaults(tx.clone(), metrics);
+        let forgetting_config = crate::forgetting::config::ForgettingConfig::default();
+        let (access_tracker, _) = crate::forgetting::access::create_access_channel(forgetting_config.clone());
 
         let (shutdown_tx, _) = tokio::sync::watch::channel(false);
         let _worker = EmbeddingWorker::new(
@@ -399,6 +401,8 @@ mod tests {
             store.clone(),
             Arc::new(crate::config::AppState {
                 config: crate::config::AppConfig::default(),
+                forgetting_config,
+                access_tracker,
                 storage,
                 embedding: service,
                 embedding_store: store,

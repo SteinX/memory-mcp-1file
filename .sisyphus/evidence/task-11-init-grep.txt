@@ -1,0 +1,31 @@
+Task: T11 Server Init
+Date: 2026-04-24
+
+Startup wiring evidence:
+
+src/main.rs
+- use memory_mcp::forgetting::access::create_access_channel;
+- use memory_mcp::forgetting::capacity::CapacityController;
+- use memory_mcp::forgetting::config::ForgettingConfig;
+- let forgetting_config = ForgettingConfig::from_env();
+- let (access_tracker, access_writer) = create_access_channel(forgetting_config.clone());
+- forgetting_config: forgetting_config.clone(),
+- access_tracker,
+- access_writer.run(access_writer_storage, access_writer_shutdown).await;
+- tracing::info!("Access writer shutdown complete");
+- let capacity_controller = CapacityController::new(
+
+src/config.rs
+- pub forgetting_config: ForgettingConfig,
+- pub access_tracker: AccessTracker,
+
+src/server/handler.rs
+- logic::search::search_text_with_access_tracking(... Some(&self.state.access_tracker))
+- logic::search::search_with_access_tracking(... Some(&self.state.access_tracker))
+- logic::search::recall_with_access_tracking(... Some(&self.state.access_tracker))
+
+src/server/logic/search.rs
+- fn emit_access_events(access_tracker: Option<&AccessTracker>, results: &[ScoredMemory])
+- pub async fn search_with_access_tracking(...)
+- pub async fn search_text_with_access_tracking(...)
+- pub async fn recall_with_access_tracking(...)

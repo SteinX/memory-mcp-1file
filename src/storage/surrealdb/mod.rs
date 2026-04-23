@@ -379,6 +379,14 @@ impl StorageBackend for SurrealStorage {
         memory_ops::update_memory(&self.db, id, update).await
     }
 
+    async fn record_memory_access(
+        &self,
+        id: &str,
+        accessed_at: chrono::DateTime<chrono::Utc>,
+    ) -> Result<()> {
+        memory_ops::record_memory_access(&self.db, id, accessed_at).await
+    }
+
     async fn delete_memory(&self, id: &str) -> Result<bool> {
         memory_ops::delete_memory(&self.db, id).await
     }
@@ -398,6 +406,21 @@ impl StorageBackend for SurrealStorage {
 
     async fn count_memories_filtered(&self, filters: &MemoryQuery) -> Result<usize> {
         memory_ops::count_memories_filtered(&self.db, filters).await
+    }
+
+    async fn count_valid_memories(&self) -> Result<usize> {
+        memory_ops::count_valid_memories(&self.db).await
+    }
+
+    async fn list_capacity_candidates(&self) -> Result<Vec<crate::storage::traits::CapacityMemoryCandidate>> {
+        memory_ops::list_capacity_candidates(&self.db).await
+    }
+
+    async fn get_memory_last_accessed_at(
+        &self,
+        id: &str,
+    ) -> Result<Option<chrono::DateTime<chrono::Utc>>> {
+        memory_ops::get_memory_last_accessed_at(&self.db, id).await
     }
 
     async fn find_memories_by_content_hash(
@@ -865,6 +888,8 @@ mod tests {
             valid_from: Datetime::default(),
             valid_until: None,
             importance_score: 1.0,
+            access_count: 0,
+            last_accessed_at: None,
             invalidation_reason: None,
             superseded_by: None,
             content_hash: None,
@@ -930,6 +955,8 @@ mod tests {
                 valid_from: Datetime::default(),
                 valid_until: None,
                 importance_score: 1.0,
+                access_count: 0,
+                last_accessed_at: None,
                 invalidation_reason: None,
                 superseded_by: None,
                 content_hash: None,
@@ -954,6 +981,8 @@ mod tests {
                 valid_from: Datetime::default(),
                 valid_until: None,
                 importance_score: 1.0,
+                access_count: 0,
+                last_accessed_at: None,
                 invalidation_reason: None,
                 superseded_by: None,
                 content_hash: None,
@@ -1240,6 +1269,8 @@ mod tests {
                 valid_from: Datetime::default(),
                 valid_until: None,
                 importance_score: 1.0,
+                access_count: 0,
+                last_accessed_at: None,
                 invalidation_reason: None,
                 superseded_by: None,
                 content_hash: None,
@@ -1316,6 +1347,8 @@ mod tests {
                 valid_from: Datetime::default(),
                 valid_until: None,
                 importance_score: 1.0,
+                access_count: 0,
+                last_accessed_at: None,
                 invalidation_reason: None,
                 superseded_by: None,
                 content_hash: None,
@@ -1606,6 +1639,8 @@ mod tests {
                 valid_from: Datetime::default(),
                 valid_until: None,
                 importance_score: 1.0,
+                access_count: 0,
+                last_accessed_at: None,
                 invalidation_reason: None,
                 superseded_by: None,
                 content_hash: None,
@@ -1630,6 +1665,8 @@ mod tests {
                 valid_from: Datetime::default(),
                 valid_until: None,
                 importance_score: 1.0,
+                access_count: 0,
+                last_accessed_at: None,
                 invalidation_reason: None,
                 superseded_by: None,
                 content_hash: None,
@@ -1699,6 +1736,8 @@ mod tests {
                 valid_from: Datetime::default(),
                 valid_until: None,
                 importance_score: 1.0,
+                access_count: 0,
+                last_accessed_at: None,
                 invalidation_reason: None,
                 superseded_by: None,
                 content_hash: Some(shared_hash.clone()),
@@ -1723,6 +1762,8 @@ mod tests {
                 valid_from: Datetime::default(),
                 valid_until: None,
                 importance_score: 1.0,
+                access_count: 0,
+                last_accessed_at: None,
                 invalidation_reason: None,
                 superseded_by: None,
                 content_hash: Some(shared_hash.clone()),

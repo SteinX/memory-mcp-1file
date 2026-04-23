@@ -1,0 +1,14 @@
+Task: T11 Server Init
+Date: 2026-04-24
+
+Command:
+rtk cargo build
+
+Result:
+   Compiling memory-mcp v0.8.2 (/Users/xiayiming1/Documents/Workspace/memory-mcp-1file)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 13.06s
+cargo build (0 crates compiled)
+
+Verification notes:
+- Background forgetting tasks compile after adding Send guarantees to the object-safe memory storage adapter and the relevant StorageBackend futures.
+- Server startup wiring now builds with ForgettingConfig and AccessTracker on AppState, plus spawned AccessWriter and CapacityController tasks.

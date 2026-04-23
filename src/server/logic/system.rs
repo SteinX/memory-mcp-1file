@@ -118,6 +118,8 @@ mod tests {
                 valid_from: Default::default(),
                 valid_until: None,
                 importance_score: 1.0,
+                access_count: 0,
+                last_accessed_at: None,
                 invalidation_reason: None,
                 superseded_by: None,
                 content_hash: None,

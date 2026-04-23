@@ -20,6 +20,8 @@ DEFINE FIELD ingestion_time   ON memories TYPE datetime DEFAULT time::now();
 DEFINE FIELD valid_from       ON memories TYPE datetime DEFAULT time::now();
 DEFINE FIELD valid_until      ON memories TYPE option<datetime>;
 DEFINE FIELD importance_score ON memories TYPE float DEFAULT 1.0;
+DEFINE FIELD access_count     ON memories TYPE int VALUE $value OR 0 DEFAULT 0;
+DEFINE FIELD last_accessed_at ON memories TYPE option<datetime> DEFAULT NONE;
 DEFINE FIELD invalidation_reason ON memories TYPE option<string>;
 DEFINE FIELD superseded_by    ON memories TYPE option<string>;
 DEFINE FIELD content_hash     ON memories TYPE option<string>;

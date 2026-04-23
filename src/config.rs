@@ -6,6 +6,8 @@ use std::sync::Arc;
 use tokio::sync::{watch, RwLock, Semaphore};
 
 use crate::embedding::{AdaptiveEmbeddingQueue, EmbeddingService, EmbeddingStore};
+use crate::forgetting::access::AccessTracker;
+use crate::forgetting::config::ForgettingConfig;
 use crate::search::{CodeSearchEngine, MemorySearchEngine};
 use crate::storage::SurrealStorage;
 
@@ -129,6 +131,8 @@ impl Default for IndexProgressTracker {
 
 pub struct AppState {
     pub config: AppConfig,
+    pub forgetting_config: ForgettingConfig,
+    pub access_tracker: AccessTracker,
     pub storage: Arc<SurrealStorage>,
     pub embedding: Arc<EmbeddingService>,
     pub embedding_store: Arc<EmbeddingStore>,

@@ -15,6 +15,9 @@ use memory_mcp::config::{AppConfig, AppState};
 use memory_mcp::embedding::{
     EmbeddingConfig, EmbeddingService, EmbeddingStore, EmbeddingWorker, ModelType,
 };
+use memory_mcp::forgetting::access::create_access_channel;
+use memory_mcp::forgetting::capacity::CapacityController;
+use memory_mcp::forgetting::config::ForgettingConfig;
 use memory_mcp::lifecycle::{
     install_panic_hook, record_runtime_event_with_details, spawn_heartbeat,
 };
@@ -470,6 +473,8 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
     let (queue_tx, queue_rx) = tokio::sync::mpsc::channel(256);
     let adaptive_queue =
         memory_mcp::embedding::AdaptiveEmbeddingQueue::with_defaults(queue_tx, metrics.clone());
+    let forgetting_config = ForgettingConfig::from_env();
+    let (access_tracker, access_writer) = create_access_channel(forgetting_config.clone());
 
     let (shutdown_tx, _shutdown_rx) = tokio::sync::watch::channel(false);
 
@@ -487,6 +492,8 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
             // New fields: use compile-time defaults (values are documented in AppConfig::default)
             ..AppConfig::default()
         },
+        forgetting_config: forgetting_config.clone(),
+        access_tracker,
         storage: storage.clone(),
         embedding: embedding.clone(),
         embedding_store: embedding_store.clone(),
@@ -519,6 +526,25 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
             Ok(count) => tracing::info!(count, "Embedding worker finished"),
             Err(e) => tracing::error!("Embedding worker panicked: {}", e),
         }
+    });
+
+    let access_writer_shutdown = state.shutdown_rx();
+    let access_writer_storage: Arc<dyn memory_mcp::storage::MemoryStorage + Send + Sync> =
+        state.storage.clone();
+    tokio::spawn(async move {
+        access_writer
+            .run(access_writer_storage, access_writer_shutdown)
+            .await;
+        tracing::info!("Access writer shutdown complete");
+    });
+
+    let capacity_controller = CapacityController::new(
+        forgetting_config,
+        state.storage.clone(),
+        state.shutdown_rx(),
+    );
+    tokio::spawn(async move {
+        capacity_controller.run().await;
     });
 
     let monitor_state = state.clone();

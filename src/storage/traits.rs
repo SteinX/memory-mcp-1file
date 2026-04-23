@@ -4,12 +4,93 @@
 //! Implemented by SurrealStorage.
 
 use std::collections::HashMap;
+use std::future::Future;
+use std::pin::Pin;
+
+use chrono::{DateTime, Utc};
 
 use crate::types::{
     CodeChunk, CodeSymbol, Direction, Entity, IndexStatus, ManifestEntry, Memory, MemoryUpdate,
-    MemoryQuery, Relation, ScoredCodeChunk, SearchResult, SymbolRelation,
+    MemoryQuery, MemoryType, Relation, ScoredCodeChunk, SearchResult, SymbolRelation,
 };
 use crate::Result;
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct CapacityMemoryCandidate {
+    pub id: String,
+    pub memory_type: MemoryType,
+    pub event_time: Option<DateTime<Utc>>,
+    pub ingestion_time: Option<DateTime<Utc>>,
+    pub access_count: u32,
+    pub last_accessed_at: Option<DateTime<Utc>>,
+    pub importance_score: f32,
+}
+
+/// Object-safe storage surface used by fire-and-forget access tracking.
+pub trait MemoryStorage: Send + Sync {
+    fn record_memory_access(
+        &self,
+        id: String,
+        accessed_at: DateTime<Utc>,
+    ) -> Pin<Box<dyn Future<Output = Result<()>> + Send + '_>>;
+
+    fn count_valid_memories(&self) -> Pin<Box<dyn Future<Output = Result<usize>> + Send + '_>>;
+
+    fn list_capacity_candidates(
+        &self,
+    ) -> Pin<Box<dyn Future<Output = Result<Vec<CapacityMemoryCandidate>>> + Send + '_>>;
+
+    fn get_memory_last_accessed_at(
+        &self,
+        id: String,
+    ) -> Pin<Box<dyn Future<Output = Result<Option<DateTime<Utc>>>> + Send + '_>>;
+
+    fn invalidate_memory(
+        &self,
+        id: String,
+        reason: Option<String>,
+    ) -> Pin<Box<dyn Future<Output = Result<bool>> + Send + '_>>;
+}
+
+impl<T> MemoryStorage for T
+where
+    T: StorageBackend + Send + Sync,
+{
+    fn record_memory_access(
+        &self,
+        id: String,
+        accessed_at: DateTime<Utc>,
+    ) -> Pin<Box<dyn Future<Output = Result<()>> + Send + '_>> {
+        Box::pin(async move {
+            StorageBackend::record_memory_access(self, &id, accessed_at).await
+        })
+    }
+
+    fn count_valid_memories(&self) -> Pin<Box<dyn Future<Output = Result<usize>> + Send + '_>> {
+        Box::pin(async move { StorageBackend::count_valid_memories(self).await })
+    }
+
+    fn list_capacity_candidates(
+        &self,
+    ) -> Pin<Box<dyn Future<Output = Result<Vec<CapacityMemoryCandidate>>> + Send + '_>> {
+        Box::pin(async move { StorageBackend::list_capacity_candidates(self).await })
+    }
+
+    fn get_memory_last_accessed_at(
+        &self,
+        id: String,
+    ) -> Pin<Box<dyn Future<Output = Result<Option<DateTime<Utc>>>> + Send + '_>> {
+        Box::pin(async move { StorageBackend::get_memory_last_accessed_at(self, &id).await })
+    }
+
+    fn invalidate_memory(
+        &self,
+        id: String,
+        reason: Option<String>,
+    ) -> Pin<Box<dyn Future<Output = Result<bool>> + Send + '_>> {
+        Box::pin(async move { StorageBackend::invalidate(self, &id, reason.as_deref(), None).await })
+    }
+}
 
 /// Storage backend trait for all database operations
 #[allow(async_fn_in_trait)]
@@ -27,6 +108,13 @@ pub trait StorageBackend: Send + Sync {
     /// Update an existing memory
     async fn update_memory(&self, id: &str, update: MemoryUpdate) -> Result<Memory>;
 
+    /// Increment access_count and update last_accessed_at for a memory.
+    fn record_memory_access(
+        &self,
+        id: &str,
+        accessed_at: chrono::DateTime<chrono::Utc>,
+    ) -> impl Future<Output = Result<()>> + Send;
+
     /// Delete a memory by ID, returns true if deleted
     async fn delete_memory(&self, id: &str) -> Result<bool>;
 
@@ -43,6 +131,20 @@ pub trait StorageBackend: Send + Sync {
 
     /// Count memories under the provided filter set
     async fn count_memories_filtered(&self, filters: &MemoryQuery) -> Result<usize>;
+
+    /// Count currently valid memories for capacity-control checks.
+    fn count_valid_memories(&self) -> impl Future<Output = Result<usize>> + Send;
+
+    /// List valid memories with the fields needed for capacity-based ranking.
+    fn list_capacity_candidates(
+        &self,
+    ) -> impl Future<Output = Result<Vec<CapacityMemoryCandidate>>> + Send;
+
+    /// Fetch the latest last_accessed_at value for a memory.
+    fn get_memory_last_accessed_at(
+        &self,
+        id: &str,
+    ) -> impl Future<Output = Result<Option<DateTime<Utc>>>> + Send;
 
     /// Find memories by exact content hash within the provided filter set.
     async fn find_memories_by_content_hash(
@@ -154,12 +256,12 @@ pub trait StorageBackend: Send + Sync {
     ) -> Result<Vec<Memory>>;
 
     /// Invalidate a memory (soft delete by setting valid_until)
-    async fn invalidate(
+    fn invalidate(
         &self,
         id: &str,
         reason: Option<&str>,
         superseded_by: Option<&str>,
-    ) -> Result<bool>;
+    ) -> impl Future<Output = Result<bool>> + Send;
 
     // ─────────────────────────────────────────────────────────────────────────
     // Code operations

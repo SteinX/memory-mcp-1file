@@ -1,10 +1,120 @@
 use surrealdb::engine::local::Db;
 use surrealdb::Surreal;
 
+use crate::storage::traits::CapacityMemoryCandidate;
 use crate::types::{Memory, MemoryQuery, MemoryUpdate, SearchResult};
+use crate::types::SurrealValue;
 use crate::Result;
 
 use super::helpers::{generate_id, parse_thing};
+
+#[derive(Debug, serde::Deserialize, SurrealValue)]
+struct SearchRow {
+    id: String,
+    content: String,
+    #[serde(default)]
+    content_hash: Option<String>,
+    #[serde(default)]
+    memory_type: crate::types::MemoryType,
+    score: f32,
+    #[serde(default = "default_importance_score")]
+    importance_score: f32,
+    #[serde(default)]
+    event_time: Option<chrono::DateTime<chrono::Utc>>,
+    #[serde(default)]
+    ingestion_time: Option<chrono::DateTime<chrono::Utc>>,
+    #[serde(default)]
+    access_count: u32,
+    #[serde(default)]
+    last_accessed_at: Option<chrono::DateTime<chrono::Utc>>,
+    #[serde(default)]
+    user_id: Option<String>,
+    #[serde(default)]
+    agent_id: Option<String>,
+    #[serde(default)]
+    run_id: Option<String>,
+    #[serde(default)]
+    namespace: Option<String>,
+    #[serde(default)]
+    metadata: Option<serde_json::Value>,
+    #[serde(default)]
+    superseded_by: Option<String>,
+    #[serde(default)]
+    valid_until: Option<crate::types::Datetime>,
+    #[serde(default)]
+    invalidation_reason: Option<String>,
+    #[serde(default)]
+    consolidation_trace: Option<serde_json::Value>,
+    #[serde(default)]
+    replacement_lineage: Option<serde_json::Value>,
+    #[serde(default)]
+    attention_summary: Option<serde_json::Value>,
+    #[serde(default)]
+    operator_summary: Option<serde_json::Value>,
+}
+
+#[derive(Debug, serde::Deserialize, SurrealValue)]
+struct CapacityCandidateRow {
+    id: String,
+    memory_type: crate::types::MemoryType,
+    #[serde(default)]
+    event_time: Option<chrono::DateTime<chrono::Utc>>,
+    #[serde(default)]
+    ingestion_time: Option<chrono::DateTime<chrono::Utc>>,
+    #[serde(default)]
+    access_count: u32,
+    #[serde(default)]
+    last_accessed_at: Option<chrono::DateTime<chrono::Utc>>,
+    #[serde(default = "default_importance_score")]
+    importance_score: f32,
+}
+
+impl From<CapacityCandidateRow> for CapacityMemoryCandidate {
+    fn from(row: CapacityCandidateRow) -> Self {
+        Self {
+            id: row.id,
+            memory_type: row.memory_type,
+            event_time: row.event_time,
+            ingestion_time: row.ingestion_time,
+            access_count: row.access_count,
+            last_accessed_at: row.last_accessed_at,
+            importance_score: row.importance_score,
+        }
+    }
+}
+
+fn default_importance_score() -> f32 {
+    1.0
+}
+
+impl From<SearchRow> for SearchResult {
+    fn from(row: SearchRow) -> Self {
+        Self {
+            id: row.id,
+            content: row.content,
+            content_hash: row.content_hash,
+            memory_type: row.memory_type,
+            score: row.score,
+            importance_score: row.importance_score,
+            event_time: row.event_time,
+            ingestion_time: row.ingestion_time,
+            access_count: row.access_count,
+            last_accessed_at: row.last_accessed_at,
+            user_id: row.user_id,
+            agent_id: row.agent_id,
+            run_id: row.run_id,
+            namespace: row.namespace,
+            metadata: row.metadata,
+            superseded_by: row.superseded_by,
+            valid_until: row.valid_until,
+            invalidation_reason: row.invalidation_reason,
+            consolidation_trace: row.consolidation_trace,
+            replacement_lineage: row.replacement_lineage,
+            attention_summary: row.attention_summary,
+            operator_summary: row.operator_summary,
+        }
+    }
+}
 
 pub(super) async fn create_memory(db: &Surreal<Db>, mut memory: Memory) -> Result<String> {
     let id = generate_id();
@@ -64,6 +174,27 @@ pub(super) async fn update_memory(
     updated.ok_or_else(|| crate::types::AppError::NotFound(id.to_string()))
 }
 
+pub(super) async fn record_memory_access(
+    db: &Surreal<Db>,
+    id: &str,
+    accessed_at: chrono::DateTime<chrono::Utc>,
+) -> Result<()> {
+    let sql = r#"
+        UPDATE memories
+        SET access_count = math::max(0, access_count) + 1,
+            last_accessed_at = $accessed_at
+        WHERE id = (type::record($id))
+    "#;
+
+    let response = db
+        .query(sql)
+        .bind(("id", format!("memories:{id}")))
+        .bind(("accessed_at", accessed_at))
+        .await?;
+    response.check()?;
+    Ok(())
+}
+
 pub(super) async fn delete_memory(db: &Surreal<Db>, id: &str) -> Result<bool> {
     let deleted: Option<Memory> = db.delete(("memories", id)).await?;
     Ok(deleted.is_some())
@@ -109,6 +240,61 @@ pub(super) async fn count_memories_filtered(
     let mut memories: Vec<Memory> = response.take(0)?;
     memories.retain(|m| metadata_matches(m.metadata.as_ref(), filters.metadata_filter.as_ref()));
     Ok(memories.len())
+}
+
+pub(super) async fn count_valid_memories(db: &Surreal<Db>) -> Result<usize> {
+    let sql = r#"
+        SELECT count() AS count
+        FROM memories
+        WHERE valid_until IS NONE OR valid_until > time::now()
+        GROUP ALL
+    "#;
+    let mut response = db.query(sql).await?;
+    let result: Option<serde_json::Value> = response.take(0)?;
+    let count = result
+        .and_then(|v| v.get("count").and_then(|c| c.as_u64()))
+        .unwrap_or(0) as usize;
+    Ok(count)
+}
+
+pub(super) async fn list_capacity_candidates(
+    db: &Surreal<Db>,
+) -> Result<Vec<CapacityMemoryCandidate>> {
+    let sql = r#"
+        SELECT meta::id(id) AS id,
+               memory_type,
+               event_time,
+               ingestion_time,
+               access_count,
+               last_accessed_at,
+               importance_score
+        FROM memories
+        WHERE valid_until IS NONE OR valid_until > time::now()
+    "#;
+    let mut response = db.query(sql).await?;
+    let rows: Vec<CapacityCandidateRow> = response.take(0)?;
+    Ok(rows.into_iter().map(CapacityMemoryCandidate::from).collect())
+}
+
+pub(super) async fn get_memory_last_accessed_at(
+    db: &Surreal<Db>,
+    id: &str,
+) -> Result<Option<chrono::DateTime<chrono::Utc>>> {
+    #[derive(Debug, serde::Deserialize, SurrealValue)]
+    struct LastAccessRow {
+        #[serde(default)]
+        last_accessed_at: Option<chrono::DateTime<chrono::Utc>>,
+    }
+
+    let sql = r#"
+        SELECT last_accessed_at
+        FROM memories
+        WHERE id = type::record($id)
+        LIMIT 1
+    "#;
+    let mut response = db.query(sql).bind(("id", format!("memories:{id}"))).await?;
+    let row: Option<LastAccessRow> = response.take(0)?;
+    Ok(row.and_then(|row| row.last_accessed_at))
 }
 
 pub(super) async fn find_memories_by_content_hash(
@@ -157,6 +343,7 @@ pub(super) async fn bm25_search(
         r#"
         SELECT meta::id(id) AS id, content, content_hash, memory_type, 1.0f AS score,
                importance_score,
+               event_time, ingestion_time, access_count, last_accessed_at,
                user_id, agent_id, run_id, namespace, metadata, superseded_by,
                valid_until, invalidation_reason
         FROM memories
@@ -173,7 +360,11 @@ pub(super) async fn bm25_search(
         response = response.bind((format!("w{i}"), word.to_string()));
     }
     let mut response = response.await?;
-    let mut results: Vec<SearchResult> = response.take(0)?;
+    let mut results: Vec<SearchResult> = response
+        .take::<Vec<SearchRow>>(0)?
+        .into_iter()
+        .map(SearchResult::from)
+        .collect();
     results.retain(|r| metadata_matches(r.metadata.as_ref(), filters.metadata_filter.as_ref()));
 
     // Compute relevance score in Rust: normalized term frequency.
@@ -218,6 +409,7 @@ pub(super) async fn vector_search(
         SELECT meta::id(id) AS id, content, content_hash, memory_type,
             vector::similarity::cosine(embedding, $vec) AS score,
             importance_score,
+            event_time, ingestion_time, access_count, last_accessed_at,
             user_id, agent_id, run_id, namespace, metadata, superseded_by,
             valid_until, invalidation_reason
         FROM memories 
@@ -233,7 +425,11 @@ pub(super) async fn vector_search(
         .bind(("vec", embedding.to_vec()))
         .bind(("limit", limit))
         .await?;
-    let mut results: Vec<SearchResult> = response.take(0)?;
+    let mut results: Vec<SearchResult> = response
+        .take::<Vec<SearchRow>>(0)?
+        .into_iter()
+        .map(SearchResult::from)
+        .collect();
     results.retain(|r| metadata_matches(r.metadata.as_ref(), filters.metadata_filter.as_ref()));
     Ok(results)
 }
