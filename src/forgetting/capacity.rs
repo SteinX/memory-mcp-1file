@@ -202,7 +202,7 @@ impl CapacityController {
             attention_summary: None,
             operator_summary: None,
         };
-        let (_, _, final_score) = compute_decay(&search_result, candidate.importance_score);
+        let (_, _, final_score) = compute_decay(&self.config, &search_result, candidate.importance_score);
         final_score
     }
 
@@ -503,10 +503,13 @@ mod tests {
             shared_lock,
         );
 
+        let notified = notify.notified();
+        tokio::pin!(notified);
         let first_run = controller_a.run_cycle();
-        tokio::pin!(first_run);
-        notify.notified().await;
-        let second_run = controller_b.run_cycle();
+        let second_run = async {
+            notified.await;
+            controller_b.run_cycle().await
+        };
         let (first_stats, second_stats) = tokio::join!(first_run, second_run);
         let first_stats = first_stats.unwrap();
         let second_stats = second_stats.unwrap();

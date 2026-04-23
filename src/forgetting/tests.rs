@@ -114,7 +114,7 @@ fn ac4_and_ac7_zero_access_decay_is_finite_and_scored_memory_exposes_decay_facto
     result.access_count = 0;
     result.last_accessed_at = None;
 
-    let (decay, bonus, final_score) = compute_decay(&result, 1.0);
+    let (decay, bonus, final_score) = compute_decay(&ForgettingConfig::default(), &result, 1.0);
 
     assert!(decay.is_finite());
     assert!(bonus.is_finite());

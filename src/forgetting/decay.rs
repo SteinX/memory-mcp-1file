@@ -7,7 +7,7 @@ use crate::types::{MemoryType, SearchResult};
 use super::config::{
     DEFAULT_DECAY_LAMBDA, DEFAULT_EPISODIC_HALF_LIFE_DAYS, DEFAULT_MIN_DECAY,
     DEFAULT_PROCEDURAL_HALF_LIFE_DAYS, DEFAULT_REINFORCEMENT_ALPHA, DEFAULT_REINFORCEMENT_CAP,
-    DEFAULT_SEMANTIC_HALF_LIFE_DAYS,
+    DEFAULT_SEMANTIC_HALF_LIFE_DAYS, ForgettingConfig,
 };
 
 /// Compute effective age in days, slowed by access reinforcement.
@@ -33,7 +33,11 @@ pub fn effective_age_days(actual_age_days: f64, access_count: u32) -> f64 {
 /// The floor keeps very old memories retrievable instead of collapsing to zero.
 #[must_use]
 pub fn decay_factor(effective_age: f64, memory_type: &MemoryType) -> f32 {
-    let half_life_days = f64::from(half_life_days_for(memory_type));
+    let half_life_days = f64::from(match memory_type {
+        MemoryType::Episodic => DEFAULT_EPISODIC_HALF_LIFE_DAYS,
+        MemoryType::Semantic => DEFAULT_SEMANTIC_HALF_LIFE_DAYS,
+        MemoryType::Procedural => DEFAULT_PROCEDURAL_HALF_LIFE_DAYS,
+    });
     let exponent = -f64::from(DEFAULT_DECAY_LAMBDA) * effective_age / half_life_days;
     let decay = exponent.exp().max(f64::from(DEFAULT_MIN_DECAY));
 
@@ -74,7 +78,11 @@ pub fn apply_decay_scoring(
 /// This preserves deterministic behavior for records missing timestamps while
 /// still favoring the most specific available time source.
 #[must_use]
-pub fn compute_decay(result: &SearchResult, current_score: f32) -> (f32, f32, f32) {
+pub fn compute_decay(
+    config: &ForgettingConfig,
+    result: &SearchResult,
+    current_score: f32,
+) -> (f32, f32, f32) {
     let now = Utc::now();
     let anchor_time = result
         .event_time
@@ -82,19 +90,13 @@ pub fn compute_decay(result: &SearchResult, current_score: f32) -> (f32, f32, f3
         .unwrap_or(now);
     let actual_age_days = (now - anchor_time).num_milliseconds() as f64 / 86_400_000.0;
     let effective_age = effective_age_days(actual_age_days, result.access_count);
-    let decay = decay_factor(effective_age, &result.memory_type);
+    let half_life_days = f64::from(config.half_life_days_for(&result.memory_type));
+    let exponent = -f64::from(config.decay_lambda) * effective_age / half_life_days;
+    let decay = exponent.exp().max(f64::from(config.min_decay)) as f32;
     let bonus = reinforcement_bonus(result.access_count);
     let final_score = apply_decay_scoring(current_score, decay, bonus);
 
     (decay, bonus, final_score)
-}
-
-fn half_life_days_for(memory_type: &MemoryType) -> f32 {
-    match memory_type {
-        MemoryType::Episodic => DEFAULT_EPISODIC_HALF_LIFE_DAYS,
-        MemoryType::Semantic => DEFAULT_SEMANTIC_HALF_LIFE_DAYS,
-        MemoryType::Procedural => DEFAULT_PROCEDURAL_HALF_LIFE_DAYS,
-    }
 }
 
 #[cfg(test)]
@@ -195,7 +197,7 @@ mod tests {
         let mut result = search_result(MemoryType::Episodic);
         result.event_time = Some(Utc::now() + Duration::days(7));
 
-        let (decay, bonus, final_score) = compute_decay(&result, 1.0);
+        let (decay, bonus, final_score) = compute_decay(&ForgettingConfig::default(), &result, 1.0);
 
         approx_eq(decay, 1.0, 1e-5);
         approx_eq(bonus, 0.0, 1e-6);
@@ -207,7 +209,7 @@ mod tests {
         let mut result = search_result(MemoryType::Semantic);
         result.ingestion_time = Some(Utc::now() - Duration::days(180));
 
-        let (decay, bonus, final_score) = compute_decay(&result, 2.0);
+        let (decay, bonus, final_score) = compute_decay(&ForgettingConfig::default(), &result, 2.0);
 
         approx_eq(decay, 0.5, 0.02);
         approx_eq(bonus, 0.0, 1e-6);
