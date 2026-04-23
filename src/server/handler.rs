@@ -115,11 +115,19 @@ impl MemoryMcpServer {
         params: Parameters<SearchParams>,
     ) -> Result<CallToolResult, ErrorData> {
         if params.0.mode.as_deref() == Some("bm25") {
-            logic::search::search_text(&self.state, params.0)
+            logic::search::search_text_with_access_tracking(
+                &self.state,
+                params.0,
+                Some(&self.state.access_tracker),
+            )
                 .await
                 .map_err(to_rpc_error)
         } else {
-            logic::search::search(&self.state, params.0)
+            logic::search::search_with_access_tracking(
+                &self.state,
+                params.0,
+                Some(&self.state.access_tracker),
+            )
                 .await
                 .map_err(to_rpc_error)
         }
@@ -129,7 +137,11 @@ impl MemoryMcpServer {
         description = "Best memory retrieval (query) with optional structured filters. Combines vector+BM25+graph via RRF fusion and returns lightweight diagnostics plus additive contract and summary metadata."
     )]
     async fn recall(&self, params: Parameters<RecallParams>) -> Result<CallToolResult, ErrorData> {
-        logic::search::recall(&self.state, params.0)
+        logic::search::recall_with_access_tracking(
+            &self.state,
+            params.0,
+            Some(&self.state.access_tracker),
+        )
             .await
             .map_err(to_rpc_error)
     }

@@ -5,6 +5,12 @@ use rmcp::model::CallToolResult;
 use serde_json::json;
 
 use crate::config::AppState;
+use crate::forgetting::access::AccessTracker;
+use crate::forgetting::config::decay_enabled;
+use crate::forgetting::decay::{
+    apply_decay_scoring, decay_factor as compute_decay_factor, effective_age_days,
+    reinforcement_bonus,
+};
 use crate::graph::{
     rrf_merge, run_ppr, DEFAULT_BM25_WEIGHT, DEFAULT_PPR_WEIGHT, DEFAULT_VECTOR_WEIGHT,
 };
@@ -163,14 +169,6 @@ fn dedup_memory_results(mut results: Vec<SearchResult>, limit: usize) -> Vec<Sea
     out
 }
 
-fn apply_min_score(mut results: Vec<SearchResult>, min_score: Option<f32>) -> Vec<SearchResult> {
-    if let Some(ms) = min_score {
-        let threshold = ms.clamp(0.0, 1.0);
-        results.retain(|r| r.score >= threshold);
-    }
-    results
-}
-
 fn apply_min_score_scored(
     mut results: Vec<ScoredMemory>,
     min_score: Option<f32>,
@@ -180,6 +178,94 @@ fn apply_min_score_scored(
         results.retain(|r| r.score >= threshold);
     }
     results
+}
+
+fn emit_access_events(access_tracker: Option<&AccessTracker>, results: &[ScoredMemory]) {
+    if let Some(access_tracker) = access_tracker {
+        for result in results {
+            access_tracker.track(result.id.clone());
+        }
+    }
+}
+
+enum SingleSearchMode {
+    Vector,
+    Bm25,
+}
+
+fn score_single_mode_results(
+    results: Vec<SearchResult>,
+    limit: usize,
+    mode: SingleSearchMode,
+) -> Vec<ScoredMemory> {
+    let decay_enabled = decay_enabled();
+    let now = chrono::Utc::now();
+
+    let mut scored: Vec<ScoredMemory> = results
+        .into_iter()
+        .map(|result| {
+            let base_score = result.score;
+            let (decay_factor, final_score) = if decay_enabled {
+                let actual_age_days = result
+                    .event_time
+                    .as_ref()
+                    .or(result.ingestion_time.as_ref())
+                    .map(|anchor_time| {
+                        (now - anchor_time.to_owned()).num_milliseconds() as f64 / 86_400_000.0
+                    })
+                    .unwrap_or(0.0)
+                    .max(0.0);
+                let effective_age = effective_age_days(actual_age_days, result.access_count);
+                let decay_factor = compute_decay_factor(effective_age, &result.memory_type);
+                let reinforcement = reinforcement_bonus(result.access_count);
+                let final_score = apply_decay_scoring(base_score, decay_factor, reinforcement);
+                (decay_factor, final_score)
+            } else {
+                (1.0, base_score)
+            };
+
+            let (vector_score, bm25_score) = match mode {
+                SingleSearchMode::Vector => (result.score, 0.0),
+                SingleSearchMode::Bm25 => (0.0, result.score),
+            };
+
+            ScoredMemory {
+                id: result.id,
+                content: result.content,
+                memory_type: result.memory_type,
+                score: final_score,
+                decay_factor,
+                vector_score,
+                bm25_score,
+                ppr_score: 0.0,
+                importance_score: result.importance_score,
+                channels: channel_names(vector_score, bm25_score, 0.0),
+                user_id: result.user_id,
+                agent_id: result.agent_id,
+                run_id: result.run_id,
+                namespace: result.namespace,
+                metadata: result.metadata,
+                superseded_by: result.superseded_by,
+                valid_until: result.valid_until,
+                invalidation_reason: result.invalidation_reason,
+                consolidation_trace: result.consolidation_trace,
+                replacement_lineage: result.replacement_lineage,
+                attention_summary: result.attention_summary,
+                operator_summary: result.operator_summary,
+            }
+        })
+        .collect();
+
+    if decay_enabled {
+        scored.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+    }
+
+    scored.truncate(limit);
+    scored
 }
 
 fn channel_names(vector_score: f32, bm25_score: f32, ppr_score: f32) -> Vec<String> {
@@ -332,7 +418,11 @@ fn apply_metadata_post_filter(results: Vec<SearchResult>, filters: &MemoryQuery)
     }
 }
 
-pub async fn search(state: &Arc<AppState>, params: SearchParams) -> anyhow::Result<CallToolResult> {
+async fn search_impl(
+    state: &Arc<AppState>,
+    params: SearchParams,
+    access_tracker: Option<&AccessTracker>,
+) -> anyhow::Result<CallToolResult> {
     crate::ensure_embedding_ready!(state);
     let filters = match params.to_memory_query() {
         Ok(filters) => filters,
@@ -354,10 +444,15 @@ pub async fn search(state: &Arc<AppState>, params: SearchParams) -> anyhow::Resu
         Err(e) => return Ok(error_response(e)),
     };
     let vector_channel = apply_metadata_post_filter(vector_raw, &filters);
-    let results = apply_min_score(
-        enrich_results_truth(dedup_memory_results(vector_channel.results, limit)),
+    let results = apply_min_score_scored(
+        score_single_mode_results(
+            enrich_results_truth(dedup_memory_results(vector_channel.results, fetch_limit)),
+            limit,
+            SingleSearchMode::Vector,
+        ),
         params.min_score,
     );
+    emit_access_events(access_tracker, &results);
 
     Ok(success_json(json!({
         "results": results,
@@ -377,20 +472,39 @@ pub async fn search(state: &Arc<AppState>, params: SearchParams) -> anyhow::Resu
     })))
 }
 
-pub async fn search_text(
+pub async fn search_with_access_tracking(
     state: &Arc<AppState>,
     params: SearchParams,
+    access_tracker: Option<&AccessTracker>,
+) -> anyhow::Result<CallToolResult> {
+    search_impl(state, params, access_tracker).await
+}
+
+pub async fn search(state: &Arc<AppState>, params: SearchParams) -> anyhow::Result<CallToolResult> {
+    search_impl(state, params, None).await
+}
+
+async fn search_text_impl(
+    state: &Arc<AppState>,
+    params: SearchParams,
+    access_tracker: Option<&AccessTracker>,
 ) -> anyhow::Result<CallToolResult> {
     let limit = normalize_limit(params.limit);
     let filters = match params.to_memory_query() {
         Ok(filters) => filters,
         Err(e) => return Ok(error_response(e)),
     };
-    let bm25_channel = lexical_memory_search(state, &params.query, &filters, limit).await;
-    let results = apply_min_score(
-        enrich_results_truth(dedup_memory_results(bm25_channel.results, limit)),
+    let fetch_limit = overfetch_limit(limit, &filters);
+    let bm25_channel = lexical_memory_search(state, &params.query, &filters, fetch_limit).await;
+    let results = apply_min_score_scored(
+        score_single_mode_results(
+            enrich_results_truth(dedup_memory_results(bm25_channel.results, fetch_limit)),
+            limit,
+            SingleSearchMode::Bm25,
+        ),
         params.min_score,
     );
+    emit_access_events(access_tracker, &results);
 
     Ok(success_json(json!({
         "results": results,
@@ -410,7 +524,26 @@ pub async fn search_text(
     })))
 }
 
-pub async fn recall(state: &Arc<AppState>, params: RecallParams) -> anyhow::Result<CallToolResult> {
+pub async fn search_text_with_access_tracking(
+    state: &Arc<AppState>,
+    params: SearchParams,
+    access_tracker: Option<&AccessTracker>,
+) -> anyhow::Result<CallToolResult> {
+    search_text_impl(state, params, access_tracker).await
+}
+
+pub async fn search_text(
+    state: &Arc<AppState>,
+    params: SearchParams,
+) -> anyhow::Result<CallToolResult> {
+    search_text_impl(state, params, None).await
+}
+
+async fn recall_impl(
+    state: &Arc<AppState>,
+    params: RecallParams,
+    access_tracker: Option<&AccessTracker>,
+) -> anyhow::Result<CallToolResult> {
     use petgraph::graph::{DiGraph, NodeIndex};
     use std::collections::HashMap;
 
@@ -536,18 +669,39 @@ pub async fn recall(state: &Arc<AppState>, params: RecallParams) -> anyhow::Resu
             .or_insert((r, r.memory_type.clone(), dedup_key(r)));
     }
 
-    let mut scored_candidates: Vec<(String, ScoredMemory)> = Vec::with_capacity(limit);
+    let mut scored_candidates: Vec<(String, ScoredMemory)> = Vec::with_capacity(merged.len());
     let mut seen_keys = std::collections::HashSet::new();
+    let decay_enabled = decay_enabled();
+    let now = chrono::Utc::now();
     for (id, scores) in merged {
         if let Some((result, mem_type, k)) = content_map.get(&id) {
             let boosted_score = scores.combined_score * importance_multiplier(result.importance_score);
+            let (decay_factor, final_score) = if decay_enabled {
+                let actual_age_days = result
+                    .event_time
+                    .as_ref()
+                    .or(result.ingestion_time.as_ref())
+                    .map(|anchor_time| {
+                        (now - anchor_time.to_owned()).num_milliseconds() as f64 / 86_400_000.0
+                    })
+                    .unwrap_or(0.0)
+                    .max(0.0);
+                let effective_age = effective_age_days(actual_age_days, result.access_count);
+                let decay_factor = compute_decay_factor(effective_age, &result.memory_type);
+                let reinforcement = reinforcement_bonus(result.access_count);
+                let final_score = apply_decay_scoring(boosted_score, decay_factor, reinforcement);
+                (decay_factor, final_score)
+            } else {
+                (1.0, boosted_score)
+            };
             scored_candidates.push((
                 k.clone(),
                 ScoredMemory {
                     id: id.clone(),
                     content: result.content.clone(),
                     memory_type: mem_type.clone(),
-                    score: boosted_score,
+                    score: final_score,
+                    decay_factor,
                     vector_score: scores.vector_score,
                     bm25_score: scores.bm25_score,
                     ppr_score: scores.ppr_score,
@@ -592,6 +746,7 @@ pub async fn recall(state: &Arc<AppState>, params: RecallParams) -> anyhow::Resu
 
     let fused_candidates = scored_memories.len();
     let scored_memories = apply_min_score_scored(scored_memories, params.min_score);
+    emit_access_events(access_tracker, &scored_memories);
 
     Ok(success_json(json!({
         "memories": scored_memories,
@@ -621,11 +776,25 @@ pub async fn recall(state: &Arc<AppState>, params: RecallParams) -> anyhow::Resu
     })))
 }
 
+pub async fn recall_with_access_tracking(
+    state: &Arc<AppState>,
+    params: RecallParams,
+    access_tracker: Option<&AccessTracker>,
+) -> anyhow::Result<CallToolResult> {
+    recall_impl(state, params, access_tracker).await
+}
+
+pub async fn recall(state: &Arc<AppState>, params: RecallParams) -> anyhow::Result<CallToolResult> {
+    recall_impl(state, params, None).await
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::test_utils::TestContext;
-    use crate::types::Memory;
+    use crate::types::{Datetime, Memory, MemoryType};
+    use chrono::{Duration, Utc};
+    use tokio::sync::mpsc;
 
     async fn seed_memory(ctx: &TestContext, memory: Memory) -> String {
         let id = ctx.state.storage.create_memory(memory).await.unwrap();
@@ -877,5 +1046,123 @@ mod tests {
         let text = val["content"][0]["text"].as_str().unwrap();
         let json: serde_json::Value = serde_json::from_str(text).unwrap();
         assert_eq!(json["count"], 0);
+    }
+
+    #[tokio::test]
+    async fn test_recall_applies_decay_and_prefers_fresher_episodic_memory() {
+        let ctx = TestContext::new().await;
+        let now = Utc::now();
+
+        let _ = seed_memory(&ctx, Memory {
+                content: "decay ordering fresh episodic".to_string(),
+                embedding: Some(vec![0.4; 768]),
+                memory_type: MemoryType::Episodic,
+                event_time: Datetime::from(now),
+                ingestion_time: Datetime::from(now),
+                ..Memory::new("decay ordering fresh episodic".to_string())
+            })
+            .await;
+
+        let old_time = now - Duration::days(30);
+        let _ = seed_memory(&ctx, Memory {
+                content: "decay ordering old episodic".to_string(),
+                embedding: Some(vec![0.4; 768]),
+                memory_type: MemoryType::Episodic,
+                event_time: Datetime::from(old_time),
+                ingestion_time: Datetime::from(old_time),
+                ..Memory::new("decay ordering old episodic".to_string())
+            })
+            .await;
+
+        let recall_params = RecallParams {
+            query: "decay ordering episodic".to_string(),
+            limit: Some(2),
+            vector_weight: None,
+            bm25_weight: None,
+            ppr_weight: None,
+            min_score: None,
+            user_id: None,
+            agent_id: None,
+            run_id: None,
+            namespace: None,
+            memory_type: Some("episodic".to_string()),
+            metadata_filter: None,
+            valid_at: None,
+            event_after: None,
+            event_before: None,
+            ingestion_after: None,
+            ingestion_before: None,
+        };
+
+        let result = recall(&ctx.state, recall_params).await.unwrap();
+        let val = serde_json::to_value(&result).unwrap();
+        let text = val["content"][0]["text"].as_str().unwrap();
+        let json: serde_json::Value = serde_json::from_str(text).unwrap();
+
+        assert_eq!(json["memories"][0]["content"], "decay ordering fresh episodic");
+        assert!(
+            json["memories"][0]["score"].as_f64().unwrap()
+                > json["memories"][1]["score"].as_f64().unwrap()
+        );
+        assert!(
+            json["memories"][0]["decay_factor"].as_f64().unwrap()
+                > json["memories"][1]["decay_factor"].as_f64().unwrap()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_search_text_tracks_only_returned_results() {
+        let ctx = TestContext::new().await;
+        let _ = seed_memory(&ctx, Memory {
+                content: "track final result one".to_string(),
+                embedding: Some(vec![0.25; 768]),
+                ..Memory::new("track final result one".to_string())
+            })
+            .await;
+        let _ = seed_memory(&ctx, Memory {
+                content: "track final result two".to_string(),
+                embedding: Some(vec![0.26; 768]),
+                ..Memory::new("track final result two".to_string())
+            })
+            .await;
+
+        let (sender, mut receiver) = mpsc::channel(8);
+        let tracker = AccessTracker::new(sender);
+
+        let result = search_text_impl(
+            &ctx.state,
+            SearchParams {
+                query: "track final result".to_string(),
+                limit: Some(1),
+                mode: Some("bm25".to_string()),
+                min_score: None,
+                user_id: None,
+                agent_id: None,
+                run_id: None,
+                namespace: None,
+                memory_type: None,
+                metadata_filter: None,
+                valid_at: None,
+                event_after: None,
+                event_before: None,
+                ingestion_after: None,
+                ingestion_before: None,
+            },
+            Some(&tracker),
+        )
+        .await
+        .unwrap();
+
+        let val = serde_json::to_value(&result).unwrap();
+        let text = val["content"][0]["text"].as_str().unwrap();
+        let json: serde_json::Value = serde_json::from_str(text).unwrap();
+        let returned_id = json["results"][0]["id"].as_str().unwrap().to_string();
+
+        let mut tracked_ids = Vec::new();
+        while let Ok(event) = receiver.try_recv() {
+            tracked_ids.push(event.memory_id);
+        }
+
+        assert_eq!(tracked_ids, vec![returned_id]);
     }
 }

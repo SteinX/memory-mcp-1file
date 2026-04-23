@@ -236,6 +236,10 @@ impl MemoryMeta {
             memory_type: self.memory_type.clone(),
             score,
             importance_score: self.importance_score,
+            event_time: None,
+            ingestion_time: None,
+            access_count: 0,
+            last_accessed_at: None,
             user_id: self.user_id.clone(),
             agent_id: self.agent_id.clone(),
             run_id: self.run_id.clone(),
@@ -987,6 +991,13 @@ mod tests {
         ) -> crate::Result<crate::types::Memory> {
             unreachable!()
         }
+        async fn record_memory_access(
+            &self,
+            _: &str,
+            _: chrono::DateTime<chrono::Utc>,
+        ) -> crate::Result<()> {
+            unreachable!()
+        }
         async fn delete_memory(&self, _: &str) -> crate::Result<bool> {
             unreachable!()
         }
@@ -1005,6 +1016,20 @@ mod tests {
             &self,
             _: &crate::types::MemoryQuery,
         ) -> crate::Result<usize> {
+            unreachable!()
+        }
+        async fn count_valid_memories(&self) -> crate::Result<usize> {
+            unreachable!()
+        }
+        async fn list_capacity_candidates(
+            &self,
+        ) -> crate::Result<Vec<crate::storage::traits::CapacityMemoryCandidate>> {
+            unreachable!()
+        }
+        async fn get_memory_last_accessed_at(
+            &self,
+            _: &str,
+        ) -> crate::Result<Option<chrono::DateTime<chrono::Utc>>> {
             unreachable!()
         }
         async fn find_memories_by_content_hash(
