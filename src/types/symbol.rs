@@ -1,3 +1,6 @@
+use super::entity::{
+    ConfidenceClass, RelationClass, RelationProvenance, StalenessState,
+};
 use super::{Datetime, SurrealValue, Thing};
 use serde::{Deserialize, Serialize};
 
@@ -160,6 +163,11 @@ pub struct CodeReference {
     pub from_symbol_line: u32,
     pub to_symbol: String,
     pub relation_type: CodeRelationType,
+    pub relation_class: RelationClass,
+    pub provenance: RelationProvenance,
+    pub confidence_class: ConfidenceClass,
+    pub freshness_generation: u64,
+    pub staleness_state: StalenessState,
     pub file_path: String,
     pub line: u32,
     pub column: u32,
@@ -178,6 +186,11 @@ pub struct CodeReferenceBuilder {
     from_symbol_line: Option<u32>,
     to_symbol: Option<String>,
     relation_type: Option<CodeRelationType>,
+    relation_class: Option<RelationClass>,
+    provenance: Option<RelationProvenance>,
+    confidence_class: Option<ConfidenceClass>,
+    freshness_generation: Option<u64>,
+    staleness_state: Option<StalenessState>,
     file_path: Option<String>,
     line: Option<u32>,
     column: Option<u32>,
@@ -209,6 +222,31 @@ impl CodeReferenceBuilder {
         self
     }
 
+    pub fn relation_class(mut self, relation_class: RelationClass) -> Self {
+        self.relation_class = Some(relation_class);
+        self
+    }
+
+    pub fn provenance(mut self, provenance: RelationProvenance) -> Self {
+        self.provenance = Some(provenance);
+        self
+    }
+
+    pub fn confidence_class(mut self, confidence_class: ConfidenceClass) -> Self {
+        self.confidence_class = Some(confidence_class);
+        self
+    }
+
+    pub fn freshness_generation(mut self, freshness_generation: u64) -> Self {
+        self.freshness_generation = Some(freshness_generation);
+        self
+    }
+
+    pub fn staleness_state(mut self, staleness_state: StalenessState) -> Self {
+        self.staleness_state = Some(staleness_state);
+        self
+    }
+
     pub fn file_path(mut self, file_path: impl Into<String>) -> Self {
         self.file_path = Some(file_path.into());
         self
@@ -231,6 +269,13 @@ impl CodeReferenceBuilder {
             from_symbol_line: self.from_symbol_line.expect("from_symbol_line is required"),
             to_symbol: self.to_symbol.expect("to_symbol is required"),
             relation_type: self.relation_type.expect("relation_type is required"),
+            relation_class: self.relation_class.unwrap_or(RelationClass::Observed),
+            provenance: self
+                .provenance
+                .unwrap_or(RelationProvenance::ParserExtracted),
+            confidence_class: self.confidence_class.unwrap_or(ConfidenceClass::Extracted),
+            freshness_generation: self.freshness_generation.unwrap_or(0),
+            staleness_state: self.staleness_state.unwrap_or(StalenessState::Current),
             file_path: self.file_path.expect("file_path is required"),
             line: self.line.expect("line is required"),
             column: self.column.expect("column is required"),
@@ -251,6 +296,16 @@ pub struct SymbolRelation {
 
     pub relation_type: CodeRelationType,
 
+    pub relation_class: RelationClass,
+
+    pub provenance: RelationProvenance,
+
+    pub confidence_class: ConfidenceClass,
+
+    pub freshness_generation: u64,
+
+    pub staleness_state: StalenessState,
+
     pub file_path: String,
     pub line_number: u32,
     pub project_id: String,
@@ -264,6 +319,11 @@ impl SymbolRelation {
         from_symbol: Thing,
         to_symbol: Thing,
         relation_type: CodeRelationType,
+        relation_class: RelationClass,
+        provenance: RelationProvenance,
+        confidence_class: ConfidenceClass,
+        freshness_generation: u64,
+        staleness_state: StalenessState,
         file_path: String,
         line_number: u32,
         project_id: String,
@@ -273,6 +333,11 @@ impl SymbolRelation {
             from_symbol,
             to_symbol,
             relation_type,
+            relation_class,
+            provenance,
+            confidence_class,
+            freshness_generation,
+            staleness_state,
             file_path,
             line_number,
             project_id,

@@ -2,6 +2,7 @@ pub mod code;
 pub mod embedding_state;
 pub mod entity;
 pub mod error;
+pub mod export;
 pub mod memory;
 pub mod safe_thing;
 pub mod search;
@@ -71,6 +72,13 @@ impl_string_surreal_value!(
     ChunkType,
     Language,
     IndexState,
+    StructuralState,
+    SemanticState,
+    ProjectionState,
+    RelationClass,
+    RelationProvenance,
+    ConfidenceClass,
+    StalenessState,
     SymbolType,
     CodeRelationType,
     Direction,
@@ -85,10 +93,24 @@ pub fn record_key_to_string(key: &RecordIdKey) -> String {
     }
 }
 
-pub use code::{ChunkType, CodeChunk, IndexState, IndexStatus, Language, ManifestEntry};
+pub use code::{
+    ChunkType, CodeChunk, IndexState, IndexStatus, Language, ManifestEntry, ProjectionState,
+    SemanticState, StructuralState,
+};
 pub use embedding_state::{EmbedResult, EmbedTarget, EmbeddingState};
 pub use entity::{Direction, Entity, Relation};
 pub use error::{AppError, Result};
+pub use export::{
+    CompatibilityPolicy, ContractReasonCode, CountSummary, ExportContractMeta,
+    ExportIdentity, ExportResponseSummary, ExportedGraphEdge, ExportedGraphNode,
+    ExportedProjectProjection, ExportedSymbolEdge, ExportedSymbolNode, FrontierSummary,
+    GenerationBasis, LifecycleView, PartialSummary, ProjectProjectionInputs,
+    ProjectProjectionRequest, ProjectionContractState, ProjectionEnvelope,
+    ProjectionLifecycleView, ProjectionLocatorLifecycle, ProjectionLocatorLookup,
+    ProjectionLocatorLookupState, ProjectionLocatorRecord, ProjectionMaterializationEnvelope,
+    ProjectionShapingSummary, SemanticLifecycleView, StructuralLifecycleView,
+    SurfaceGuidance, TraversalDefaults, TraversalSummary,
+};
 pub use memory::{Memory, MemoryType, MemoryUpdate};
 pub use search::{
     CodeSearchResult, MemoryQuery, RecallResult, ScoredCodeChunk, ScoredMemory, SearchResult,
@@ -96,4 +118,5 @@ pub use search::{
 pub use symbol::{
     CodeReference, CodeRelationType, CodeSymbol, ScoredSymbol, SymbolRelation, SymbolType,
 };
+pub use entity::{ConfidenceClass, RelationClass, RelationProvenance, StalenessState};
 pub use thing_id::ThingId;

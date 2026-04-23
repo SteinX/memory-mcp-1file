@@ -9,12 +9,106 @@ fn default_datetime() -> Datetime {
     Datetime::default()
 }
 
+fn default_freshness_generation() -> u64 {
+    0
+}
+
+fn default_relation_class() -> RelationClass {
+    RelationClass::Observed
+}
+
+fn default_relation_provenance() -> RelationProvenance {
+    RelationProvenance::ImportedManual
+}
+
+fn default_confidence_class() -> ConfidenceClass {
+    ConfidenceClass::Extracted
+}
+
+fn default_staleness_state() -> StalenessState {
+    StalenessState::Current
+}
+
 fn default_entity_type() -> String {
     "unknown".to_string()
 }
 
 fn default_name() -> String {
     String::new()
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[serde(rename_all = "snake_case")]
+pub enum RelationClass {
+    Observed,
+    Inferred,
+}
+
+impl std::fmt::Display for RelationClass {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            RelationClass::Observed => write!(f, "observed"),
+            RelationClass::Inferred => write!(f, "inferred"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[serde(rename_all = "snake_case")]
+pub enum RelationProvenance {
+    ParserExtracted,
+    ContainmentDerived,
+    DeterministicSymbolLink,
+    HeuristicResolver,
+    EmbeddingInferred,
+    ImportedManual,
+}
+
+impl std::fmt::Display for RelationProvenance {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            RelationProvenance::ParserExtracted => write!(f, "parser_extracted"),
+            RelationProvenance::ContainmentDerived => write!(f, "containment_derived"),
+            RelationProvenance::DeterministicSymbolLink => write!(f, "deterministic_symbol_link"),
+            RelationProvenance::HeuristicResolver => write!(f, "heuristic_resolver"),
+            RelationProvenance::EmbeddingInferred => write!(f, "embedding_inferred"),
+            RelationProvenance::ImportedManual => write!(f, "imported_manual"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[serde(rename_all = "snake_case")]
+pub enum ConfidenceClass {
+    Extracted,
+    Inferred,
+    Ambiguous,
+}
+
+impl std::fmt::Display for ConfidenceClass {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ConfidenceClass::Extracted => write!(f, "extracted"),
+            ConfidenceClass::Inferred => write!(f, "inferred"),
+            ConfidenceClass::Ambiguous => write!(f, "ambiguous"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[serde(rename_all = "snake_case")]
+pub enum StalenessState {
+    Current,
+    Stale,
+}
+
+impl std::fmt::Display for StalenessState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            StalenessState::Current => write!(f, "current"),
+            StalenessState::Stale => write!(f, "stale"),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default, SurrealValue)]
@@ -56,6 +150,21 @@ pub struct Relation {
     pub to_entity: Thing,
 
     pub relation_type: String,
+
+    #[serde(default = "default_relation_class")]
+    pub relation_class: RelationClass,
+
+    #[serde(default = "default_relation_provenance")]
+    pub provenance: RelationProvenance,
+
+    #[serde(default = "default_confidence_class")]
+    pub confidence_class: ConfidenceClass,
+
+    #[serde(default = "default_freshness_generation")]
+    pub freshness_generation: u64,
+
+    #[serde(default = "default_staleness_state")]
+    pub staleness_state: StalenessState,
 
     #[serde(default = "default_weight")]
     pub weight: f32,

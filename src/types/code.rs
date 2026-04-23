@@ -107,6 +107,27 @@ pub struct IndexStatus {
     /// to trigger automatic re-embedding on next startup.
     #[serde(default)]
     pub embedding_version: u32,
+
+    /// Structural readiness of canonical code facts (files/chunks/symbols/observed relations).
+    #[serde(default)]
+    pub structural_state: StructuralState,
+
+    /// Semantic readiness of derived embedding-backed capabilities.
+    #[serde(default)]
+    pub semantic_state: SemanticState,
+
+    /// Freshness of exported/materialized projections relative to canonical facts.
+    /// Projection generation is not implemented yet, so the system currently stays stale.
+    #[serde(default)]
+    pub projection_state: ProjectionState,
+
+    /// Monotonic counter for canonical structural facts (files/chunks/symbols/observed relations).
+    #[serde(default)]
+    pub structural_generation: u64,
+
+    /// Monotonic counter for semantic enrichment aligned to structural generations.
+    #[serde(default)]
+    pub semantic_generation: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -116,6 +137,32 @@ pub enum IndexState {
     EmbeddingPending,
     Completed,
     Failed,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum StructuralState {
+    #[default]
+    Pending,
+    Ready,
+    Failed,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum SemanticState {
+    #[default]
+    Pending,
+    Ready,
+    Failed,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ProjectionState {
+    #[default]
+    Stale,
+    Current,
 }
 
 impl std::fmt::Display for IndexState {
@@ -129,9 +176,38 @@ impl std::fmt::Display for IndexState {
     }
 }
 
+impl std::fmt::Display for StructuralState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            StructuralState::Pending => write!(f, "pending"),
+            StructuralState::Ready => write!(f, "ready"),
+            StructuralState::Failed => write!(f, "failed"),
+        }
+    }
+}
+
+impl std::fmt::Display for SemanticState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SemanticState::Pending => write!(f, "pending"),
+            SemanticState::Ready => write!(f, "ready"),
+            SemanticState::Failed => write!(f, "failed"),
+        }
+    }
+}
+
+impl std::fmt::Display for ProjectionState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ProjectionState::Stale => write!(f, "stale"),
+            ProjectionState::Current => write!(f, "current"),
+        }
+    }
+}
+
 impl IndexStatus {
     pub fn new(project_id: String) -> Self {
-        Self {
+        let mut status = Self {
             id: None,
             project_id,
             status: IndexState::Indexing,
@@ -145,7 +221,65 @@ impl IndexStatus {
             failed_files: Vec::new(),
             failed_embeddings: 0,
             embedding_version: 0,
+            structural_state: StructuralState::Pending,
+            semantic_state: SemanticState::Pending,
+            projection_state: ProjectionState::Stale,
+            structural_generation: 0,
+            semantic_generation: 0,
+        };
+        status.refresh_lifecycle_states();
+        status
+    }
+
+    pub fn refresh_lifecycle_states(&mut self) {
+        match self.status {
+            IndexState::Indexing => {
+                self.structural_state = StructuralState::Pending;
+                self.semantic_state = SemanticState::Pending;
+                self.projection_state = ProjectionState::Stale;
+            }
+            IndexState::EmbeddingPending => {
+                self.structural_state = StructuralState::Ready;
+                self.semantic_state = SemanticState::Pending;
+                self.projection_state = ProjectionState::Stale;
+            }
+            IndexState::Completed => {
+                self.structural_state = StructuralState::Ready;
+                self.semantic_state = SemanticState::Ready;
+                if self.projection_state != ProjectionState::Current {
+                    self.projection_state = ProjectionState::Stale;
+                }
+            }
+            IndexState::Failed => {
+                self.structural_state = StructuralState::Failed;
+                self.semantic_state = SemanticState::Failed;
+                self.projection_state = ProjectionState::Stale;
+            }
         }
+    }
+
+    pub fn mark_projection_stale(&mut self) {
+        self.projection_state = ProjectionState::Stale;
+    }
+
+    pub fn mark_projection_current(&mut self) {
+        self.projection_state = if self.status == IndexState::Completed {
+            ProjectionState::Current
+        } else {
+            ProjectionState::Stale
+        };
+    }
+
+    pub fn mark_structural_generation_advanced(&mut self) {
+        self.structural_generation = self.structural_generation.saturating_add(1);
+        if self.semantic_generation > self.structural_generation {
+            self.semantic_generation = self.structural_generation;
+        }
+        self.mark_projection_stale();
+    }
+
+    pub fn mark_semantic_generation_caught_up(&mut self) {
+        self.semantic_generation = self.structural_generation;
     }
 }
 
