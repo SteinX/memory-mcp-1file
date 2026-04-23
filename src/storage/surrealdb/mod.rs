@@ -830,8 +830,9 @@ impl StorageBackend for SurrealStorage {
 mod tests {
     use super::*;
     use crate::types::{
-        ChunkType, Datetime, Entity, Language, Memory, MemoryQuery, MemoryType, MemoryUpdate,
-        RecordId, Relation,
+        ChunkType, CodeRelationType, CodeSymbol, ConfidenceClass, Datetime, Entity, Language,
+        Memory, MemoryQuery, MemoryType, MemoryUpdate, RecordId, Relation, RelationClass,
+        RelationProvenance, StalenessState, SymbolRelation, SymbolType,
     };
     use tempfile::tempdir;
 
@@ -1013,6 +1014,11 @@ mod tests {
                 from_entity: RecordId::new("entities", e1_id.clone()),
                 to_entity: RecordId::new("entities", e2_id.clone()),
                 relation_type: "lives_in".to_string(),
+                relation_class: RelationClass::Observed,
+                provenance: RelationProvenance::ImportedManual,
+                confidence_class: ConfidenceClass::Extracted,
+                freshness_generation: 0,
+                staleness_state: StalenessState::Current,
                 weight: 1.0,
                 valid_from: Datetime::default(),
                 valid_until: None,
@@ -1029,9 +1035,72 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_entity_relation_round_trips_metadata() {
+        let (storage, _tmp) = setup_test_db().await;
+
+        let e1_id = storage
+            .create_entity(Entity {
+                id: None,
+                name: "Entity A".to_string(),
+                entity_type: "service".to_string(),
+                description: None,
+                embedding: None,
+                content_hash: None,
+                user_id: None,
+                created_at: Datetime::default(),
+            })
+            .await
+            .unwrap();
+
+        let e2_id = storage
+            .create_entity(Entity {
+                id: None,
+                name: "Entity B".to_string(),
+                entity_type: "database".to_string(),
+                description: None,
+                embedding: None,
+                content_hash: None,
+                user_id: None,
+                created_at: Datetime::default(),
+            })
+            .await
+            .unwrap();
+
+        storage
+            .create_relation(Relation {
+                id: None,
+                from_entity: RecordId::new("entities", e1_id.clone()),
+                to_entity: RecordId::new("entities", e2_id.clone()),
+                relation_type: "depends_on".to_string(),
+                relation_class: RelationClass::Inferred,
+                provenance: RelationProvenance::EmbeddingInferred,
+                confidence_class: ConfidenceClass::Ambiguous,
+                freshness_generation: 7,
+                staleness_state: StalenessState::Stale,
+                weight: 0.42,
+                valid_from: Datetime::default(),
+                valid_until: None,
+            })
+            .await
+            .unwrap();
+
+        let relations = storage.get_all_relations().await.unwrap();
+        let relation = relations
+            .iter()
+            .find(|r| r.relation_type == "depends_on")
+            .expect("depends_on relation should exist");
+
+        assert_eq!(relation.relation_class, RelationClass::Inferred);
+        assert_eq!(relation.provenance, RelationProvenance::EmbeddingInferred);
+        assert_eq!(relation.confidence_class, ConfidenceClass::Ambiguous);
+        assert_eq!(relation.freshness_generation, 7);
+        assert_eq!(relation.staleness_state, StalenessState::Stale);
+        assert_eq!(relation.weight, 0.42);
+    }
+
+    #[tokio::test]
     async fn test_symbol_call_hierarchy() {
         let (storage, _tmp) = setup_test_db().await;
-        use crate::types::{CodeRelationType, CodeSymbol, SymbolRelation, SymbolType};
 
         // 1. Create Symbols: Caller -> Callee
         let caller = CodeSymbol::new(
@@ -1066,6 +1135,11 @@ mod tests {
             crate::types::RecordId::new("code_symbols", caller_key.to_string()),
             crate::types::RecordId::new("code_symbols", callee_key.to_string()),
             CodeRelationType::Calls,
+            RelationClass::Observed,
+            RelationProvenance::ParserExtracted,
+            ConfidenceClass::Extracted,
+            0,
+            StalenessState::Current,
             "main.rs".to_string(),
             3,
             "test_project".to_string(),
@@ -1083,6 +1157,67 @@ mod tests {
         let callers = storage.get_symbol_callers(&callee_id).await.unwrap();
         assert_eq!(callers.len(), 1, "Should find 1 caller");
         assert_eq!(callers[0].name, "main");
+    }
+
+    #[tokio::test]
+    async fn test_symbol_relation_round_trips_metadata() {
+        let (storage, _tmp) = setup_test_db().await;
+
+        let caller = CodeSymbol::new(
+            "origin".to_string(),
+            SymbolType::Function,
+            "origin.rs".to_string(),
+            1,
+            5,
+            "metadata_project".to_string(),
+        );
+        let caller_id = storage.create_code_symbol(caller).await.unwrap();
+
+        let target = CodeSymbol::new(
+            "target".to_string(),
+            SymbolType::Function,
+            "target.rs".to_string(),
+            10,
+            15,
+            "metadata_project".to_string(),
+        );
+        let target_id = storage.create_code_symbol(target).await.unwrap();
+
+        let caller_key = caller_id.strip_prefix("code_symbols:").unwrap_or(&caller_id);
+        let target_key = target_id.strip_prefix("code_symbols:").unwrap_or(&target_id);
+
+        storage
+            .create_symbol_relation(SymbolRelation::new(
+                RecordId::new("code_symbols", caller_key.to_string()),
+                RecordId::new("code_symbols", target_key.to_string()),
+                CodeRelationType::Calls,
+                RelationClass::Inferred,
+                RelationProvenance::HeuristicResolver,
+                ConfidenceClass::Ambiguous,
+                11,
+                StalenessState::Stale,
+                "origin.rs".to_string(),
+                3,
+                "metadata_project".to_string(),
+            ))
+            .await
+            .unwrap();
+
+        let (_symbols, relations) = storage
+            .get_related_symbols(&caller_id, 1, Direction::Outgoing)
+            .await
+            .unwrap();
+
+        let relation = relations
+            .iter()
+            .find(|r| r.file_path == "origin.rs")
+            .expect("symbol relation should exist");
+
+        assert_eq!(relation.relation_class, RelationClass::Inferred);
+        assert_eq!(relation.provenance, RelationProvenance::HeuristicResolver);
+        assert_eq!(relation.confidence_class, ConfidenceClass::Ambiguous);
+        assert_eq!(relation.freshness_generation, 11);
+        assert_eq!(relation.staleness_state, StalenessState::Stale);
     }
 
     #[tokio::test]

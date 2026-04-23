@@ -1,4 +1,7 @@
-use crate::types::{CodeRelationType, Relation, SymbolRelation};
+use crate::types::{
+    CodeRelationType, ConfidenceClass, Relation, RelationClass, RelationProvenance,
+    StalenessState, SymbolRelation,
+};
 
 pub(super) fn generate_id() -> String {
     use std::sync::atomic::{AtomicU64, Ordering};
@@ -65,6 +68,38 @@ pub(super) fn value_to_relations(value: surrealdb_types::Value) -> Vec<Relation>
                 Some(Value::String(s)) => s.to_string(),
                 _ => continue,
             };
+            let relation_class = match obj.get("relation_class") {
+                Some(Value::String(s)) => {
+                    serde_json::from_value(serde_json::Value::String(s.to_string()))
+                        .unwrap_or(RelationClass::Observed)
+                }
+                _ => RelationClass::Observed,
+            };
+            let provenance = match obj.get("provenance") {
+                Some(Value::String(s)) => {
+                    serde_json::from_value(serde_json::Value::String(s.to_string()))
+                        .unwrap_or(RelationProvenance::ImportedManual)
+                }
+                _ => RelationProvenance::ImportedManual,
+            };
+            let confidence_class = match obj.get("confidence_class") {
+                Some(Value::String(s)) => {
+                    serde_json::from_value(serde_json::Value::String(s.to_string()))
+                        .unwrap_or(ConfidenceClass::Extracted)
+                }
+                _ => ConfidenceClass::Extracted,
+            };
+            let freshness_generation = match obj.get("freshness_generation") {
+                Some(Value::Number(n)) => n.to_f64().unwrap_or(0.0) as u64,
+                _ => 0,
+            };
+            let staleness_state = match obj.get("staleness_state") {
+                Some(Value::String(s)) => {
+                    serde_json::from_value(serde_json::Value::String(s.to_string()))
+                        .unwrap_or(StalenessState::Current)
+                }
+                _ => StalenessState::Current,
+            };
             // Extract weight
             let weight = match obj.get("weight") {
                 Some(Value::Number(n)) => n.to_f64().unwrap_or(1.0) as f32,
@@ -85,6 +120,11 @@ pub(super) fn value_to_relations(value: surrealdb_types::Value) -> Vec<Relation>
                 from_entity,
                 to_entity,
                 relation_type,
+                relation_class,
+                provenance,
+                confidence_class,
+                freshness_generation,
+                staleness_state,
                 weight,
                 valid_from,
                 valid_until,
@@ -129,6 +169,38 @@ pub(super) fn value_to_symbol_relations(value: surrealdb_types::Value) -> Vec<Sy
             let relation_type: CodeRelationType =
                 serde_json::from_value(serde_json::Value::String(relation_type_str.clone()))
                     .unwrap_or(CodeRelationType::Calls);
+            let relation_class = match obj.get("relation_class") {
+                Some(Value::String(s)) => {
+                    serde_json::from_value(serde_json::Value::String(s.to_string()))
+                        .unwrap_or(RelationClass::Observed)
+                }
+                _ => RelationClass::Observed,
+            };
+            let provenance = match obj.get("provenance") {
+                Some(Value::String(s)) => {
+                    serde_json::from_value(serde_json::Value::String(s.to_string()))
+                        .unwrap_or(RelationProvenance::ParserExtracted)
+                }
+                _ => RelationProvenance::ParserExtracted,
+            };
+            let confidence_class = match obj.get("confidence_class") {
+                Some(Value::String(s)) => {
+                    serde_json::from_value(serde_json::Value::String(s.to_string()))
+                        .unwrap_or(ConfidenceClass::Extracted)
+                }
+                _ => ConfidenceClass::Extracted,
+            };
+            let freshness_generation = match obj.get("freshness_generation") {
+                Some(Value::Number(n)) => n.to_f64().unwrap_or(0.0) as u64,
+                _ => 0,
+            };
+            let staleness_state = match obj.get("staleness_state") {
+                Some(Value::String(s)) => {
+                    serde_json::from_value(serde_json::Value::String(s.to_string()))
+                        .unwrap_or(StalenessState::Current)
+                }
+                _ => StalenessState::Current,
+            };
             let file_path = match obj.get("file_path") {
                 Some(Value::String(s)) => s.to_string(),
                 _ => String::new(),
@@ -151,6 +223,11 @@ pub(super) fn value_to_symbol_relations(value: surrealdb_types::Value) -> Vec<Sy
                 from_symbol,
                 to_symbol,
                 relation_type,
+                relation_class,
+                provenance,
+                confidence_class,
+                freshness_generation,
+                staleness_state,
                 file_path,
                 line_number,
                 project_id,

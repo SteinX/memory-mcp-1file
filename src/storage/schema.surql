@@ -64,6 +64,11 @@ DEFINE TABLE IF NOT EXISTS symbol_relation SCHEMAFULL TYPE RELATION;
 DEFINE FIELD in              ON symbol_relation TYPE record;
 DEFINE FIELD out             ON symbol_relation TYPE record;
 DEFINE FIELD relation_type   ON symbol_relation TYPE string;
+DEFINE FIELD relation_class  ON symbol_relation TYPE string DEFAULT 'observed';
+DEFINE FIELD provenance      ON symbol_relation TYPE string DEFAULT 'parser_extracted';
+DEFINE FIELD confidence_class ON symbol_relation TYPE string DEFAULT 'extracted';
+DEFINE FIELD freshness_generation ON symbol_relation TYPE int DEFAULT 0;
+DEFINE FIELD staleness_state ON symbol_relation TYPE string DEFAULT 'current';
 DEFINE FIELD project_id      ON symbol_relation TYPE string;
 DEFINE FIELD file_path       ON symbol_relation TYPE string;
 DEFINE FIELD line_number     ON symbol_relation TYPE int;
@@ -110,6 +115,11 @@ DEFINE FIELD error_message    ON index_status TYPE option<string>;
 DEFINE FIELD failed_files     ON index_status TYPE array<string> DEFAULT [];
 DEFINE FIELD failed_embeddings ON index_status TYPE int DEFAULT 0;
 DEFINE FIELD embedding_version ON index_status TYPE int DEFAULT 0;
+DEFINE FIELD structural_state ON index_status TYPE string DEFAULT 'pending';
+DEFINE FIELD semantic_state   ON index_status TYPE string DEFAULT 'pending';
+DEFINE FIELD projection_state ON index_status TYPE string DEFAULT 'stale';
+DEFINE FIELD structural_generation ON index_status TYPE int DEFAULT 0;
+DEFINE FIELD semantic_generation   ON index_status TYPE int DEFAULT 0;
 
 -- File hashes table (for incremental indexing)
 DEFINE TABLE IF NOT EXISTS file_hashes SCHEMAFULL;
