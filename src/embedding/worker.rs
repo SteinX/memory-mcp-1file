@@ -412,6 +412,7 @@ mod tests {
                 ),
                 shutdown_tx,
                 index_pending: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
+                projection_registry: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
             }),
         );
     }

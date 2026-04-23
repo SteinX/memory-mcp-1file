@@ -297,6 +297,13 @@ impl IndexWorker {
 
                     // Trigger BM25 rebuild if anything actually changed.
                     if result.updated_files > 0 || !result.new_chunks.is_empty() {
+                        if let Ok(Some(mut status)) = self.state.storage.get_index_status(project_id).await {
+                            status.mark_structural_generation_advanced();
+                            status.status = crate::types::IndexState::EmbeddingPending;
+                            if let Err(e) = self.state.storage.update_index_status(status).await {
+                                warn!(project_id = %project_id, error = %e, "IndexWorker: failed to update structural generation after upsert");
+                            }
+                        }
                         self.state
                             .code_search
                             .rebuild_from_storage(self.state.storage.as_ref(), project_id)
@@ -308,6 +315,13 @@ impl IndexWorker {
                 }
             }
         } else if deleted {
+            if let Ok(Some(mut status)) = self.state.storage.get_index_status(project_id).await {
+                status.mark_structural_generation_advanced();
+                status.status = crate::types::IndexState::EmbeddingPending;
+                if let Err(e) = self.state.storage.update_index_status(status).await {
+                    warn!(project_id = %project_id, error = %e, "IndexWorker: failed to update structural generation after delete");
+                }
+            }
             // Only deletes happened — rebuild BM25 to reflect removed chunks.
             self.state
                 .code_search

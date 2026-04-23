@@ -84,6 +84,7 @@ impl TestContext {
             indexing_projects: Arc::new(std::sync::Mutex::new(std::collections::HashSet::new())),
             shutdown_tx,
             index_pending: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
+            projection_registry: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
         });
 
         Self {

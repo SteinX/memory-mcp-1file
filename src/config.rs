@@ -153,6 +153,13 @@ pub struct AppState {
     /// corresponding `IndexJobSender` so both sides share the same counter
     /// without `AppState` needing to import the `codebase` crate.
     pub index_pending: Arc<RwLock<HashMap<String, Arc<AtomicUsize>>>>,
+    /// Ephemeral in-process projection registry.
+    ///
+    /// Key = opaque locator string. Value = latest on-demand export-only
+    /// projection document for same-process re-read. Entries are intentionally
+    /// non-persistent and may disappear on restart or be replaced after later
+    /// rebuilds.
+    pub projection_registry: Arc<RwLock<HashMap<String, crate::types::ExportedProjectProjection>>>,
 }
 
 impl AppState {

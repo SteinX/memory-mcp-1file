@@ -182,6 +182,7 @@ async fn check_and_complete_project(
 
         let mut updated_status = status.clone();
         updated_status.status = IndexState::Completed;
+        updated_status.mark_semantic_generation_caught_up();
         updated_status.total_chunks = total_chunks;
         updated_status.total_symbols = total_symbols;
         updated_status.failed_embeddings = failed;

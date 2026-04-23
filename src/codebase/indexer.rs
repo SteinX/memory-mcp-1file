@@ -487,6 +487,7 @@ async fn do_index_project(
         );
     }
 
+    status.mark_structural_generation_advanced();
     status.status = IndexState::EmbeddingPending;
     status.completed_at = Some(crate::types::Datetime::default());
 
