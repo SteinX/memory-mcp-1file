@@ -60,13 +60,18 @@ pub(super) async fn create_relation(db: &Surreal<Db>, relation: Relation) -> Res
     // CREATE on TYPE RELATION tables causes "not a relation" error.
     // Use inline RELATE with validated ThingId (SQL injection safe).
     let sql = format!(
-        "RELATE {}->relations->{} SET relation_type = $rel_type, weight = $weight",
+        "RELATE {}->relations->{} SET relation_type = $rel_type, relation_class = $rel_class, provenance = $prov, confidence_class = $conf, freshness_generation = $fgen, staleness_state = $sstate, weight = $weight",
         from_thing, to_thing
     );
 
     let _response = db
         .query(&sql)
         .bind(("rel_type", relation.relation_type))
+        .bind(("rel_class", relation.relation_class.to_string()))
+        .bind(("prov", relation.provenance.to_string()))
+        .bind(("conf", relation.confidence_class.to_string()))
+        .bind(("fgen", relation.freshness_generation as i64))
+        .bind(("sstate", relation.staleness_state.to_string()))
         .bind(("weight", relation.weight))
         .await?;
 

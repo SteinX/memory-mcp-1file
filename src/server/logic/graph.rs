@@ -10,9 +10,58 @@ use crate::server::params::{
     CreateEntityParams, CreateRelationParams, DetectCommunitiesParams, GetRelatedParams,
 };
 use crate::storage::StorageBackend;
-use crate::types::{Datetime, Direction, Entity, RecordId, Relation, ThingId};
+use crate::types::{
+    ConfidenceClass, Datetime, Direction, Entity, ExportIdentity, RecordId, Relation, RelationClass,
+    RelationProvenance, StalenessState, ThingId,
+};
 
 use super::{error_response, strip_entity_embeddings, success_json};
+use super::contracts::{
+    export_contract_meta, exported_graph_edges, exported_graph_nodes, summary_graph_response,
+    with_frontier_contract, with_surface_guidance, with_traversal_defaults,
+};
+
+fn graph_contract_json(entity_id: Option<&str>) -> serde_json::Value {
+    let contract = with_traversal_defaults(
+        with_surface_guidance(
+            export_contract_meta(
+                ExportIdentity {
+                    entity_id: entity_id.map(|id| id.to_string()),
+                    stable_node_ids: true,
+                    node_ids_are_project_scoped: false,
+                    stable_edge_ids: false,
+                    edge_ids_are_local_only: true,
+                    node_id_semantics: Some("stable_public_node_id".to_string()),
+                    edge_id_semantics: Some("local_only_edge_reference".to_string()),
+                    ..Default::default()
+                },
+                None,
+            ),
+            &["nodes", "edges", "contract"],
+            &["entities", "relations"],
+            &["relations[].id", "edges[].id"],
+        ),
+        "mixed",
+        &[
+            "relation_class",
+            "provenance",
+            "confidence_class",
+            "freshness_generation",
+            "staleness_state",
+        ],
+    );
+
+    let contract = with_frontier_contract(
+        contract,
+        "unexpanded_boundary_for_manual_follow_up",
+        "stable_public_node_id",
+        true,
+        false,
+    );
+
+    serde_json::to_value(contract)
+    .unwrap_or_else(|_| json!({}))
+}
 
 pub async fn create_entity(
     state: &Arc<AppState>,
@@ -66,6 +115,11 @@ pub async fn create_relation(
         from_entity: RecordId::new("entities", from_id.id().to_string()),
         to_entity: RecordId::new("entities", to_id.id().to_string()),
         relation_type: params.relation_type,
+        relation_class: RelationClass::Observed,
+        provenance: RelationProvenance::ImportedManual,
+        confidence_class: ConfidenceClass::Extracted,
+        freshness_generation: 0,
+        staleness_state: StalenessState::Current,
         weight: params.weight.unwrap_or(1.0).clamp(0.0, 1.0),
         valid_from: Datetime::default(),
         valid_until: None,
@@ -95,7 +149,13 @@ pub async fn get_related(
     {
         Ok((mut entities, relations)) => {
             strip_entity_embeddings(&mut entities);
+            let nodes = exported_graph_nodes(&entities);
+            let edges = exported_graph_edges(&relations);
             Ok(success_json(json!({
+                "contract": graph_contract_json(Some(&params.entity_id)),
+                "summary": summary_graph_response(nodes.len(), edges.len()),
+                "nodes": nodes,
+                "edges": edges,
                 "entities": entities,
                 "relations": relations,
                 "entity_count": entities.len(),
@@ -217,7 +277,25 @@ mod tests {
         let text_related = val_related["content"][0]["text"].as_str().unwrap();
         let json_related: serde_json::Value = serde_json::from_str(text_related).unwrap();
 
+        assert_eq!(json_related["contract"]["schema_version"], 1);
+        assert_eq!(json_related["contract"]["identity"]["entity_id"], id1);
+        assert_eq!(json_related["contract"]["identity"]["stable_node_ids"], true);
+        assert_eq!(json_related["contract"]["identity"]["node_ids_are_project_scoped"], false);
+        assert_eq!(json_related["contract"]["identity"]["edge_ids_are_local_only"], true);
+        assert_eq!(json_related["contract"]["identity"]["node_id_semantics"], "stable_public_node_id");
+        assert_eq!(json_related["contract"]["identity"]["edge_id_semantics"], "local_only_edge_reference");
+        assert_eq!(json_related["contract"]["projection_state"], "missing");
+        assert_eq!(json_related["contract"]["surface_guidance"]["preferred_response_fields"][0], "nodes");
+        assert_eq!(json_related["contract"]["surface_guidance"]["legacy_compatibility_fields"][0], "entities");
+        assert_eq!(json_related["contract"]["surface_guidance"]["forbidden_to_depend_fields"][0], "relations[].id");
+        assert_eq!(json_related["contract"]["traversal_defaults"]["frontier_semantics"], "unexpanded_boundary_for_manual_follow_up");
+        assert_eq!(json_related["contract"]["traversal_defaults"]["frontier_items_identity_basis"], "stable_public_node_id");
+        assert_eq!(json_related["contract"]["traversal_defaults"]["frontier_items_are_stable_node_ids"], true);
+        assert_eq!(json_related["contract"]["traversal_defaults"]["frontier_items_are_project_scoped"], false);
+        assert_eq!(json_related["contract"]["traversal_defaults"]["frontier_is_cursor"], false);
         assert_eq!(json_related["entity_count"].as_u64().unwrap(), 1);
+        assert_eq!(json_related["nodes"][0]["id"], id2);
+        assert_eq!(json_related["edges"][0]["relation_type"], "knows");
         assert_eq!(json_related["entities"][0]["name"], "Bob");
 
         // 4. Detect Communities
