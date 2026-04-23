@@ -1,3 +1,4 @@
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use super::code::{ChunkType, Language};
@@ -6,6 +7,10 @@ use super::Datetime;
 use super::SurrealValue;
 
 fn default_importance_score() -> f32 {
+    1.0
+}
+
+fn default_decay_factor() -> f32 {
     1.0
 }
 
@@ -85,6 +90,18 @@ pub struct SearchResult {
     pub score: f32,
     #[serde(default = "default_importance_score")]
     pub importance_score: f32,
+    /// Original event timestamp used as the primary temporal anchor for decay calculations.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub event_time: Option<DateTime<Utc>>,
+    /// Ingestion timestamp used as a fallback temporal anchor when event time is unavailable.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ingestion_time: Option<DateTime<Utc>>,
+    /// Number of retrieval or reinforcement events applied to this memory.
+    #[serde(default)]
+    pub access_count: u32,
+    /// Most recent access timestamp used to account for reinforcement recency in decay calculations.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_accessed_at: Option<DateTime<Utc>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub user_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -131,6 +148,9 @@ pub struct ScoredMemory {
     pub content: String,
     pub memory_type: MemoryType,
     pub score: f32,
+    /// Multiplicative temporal decay applied to the combined score.
+    #[serde(default = "default_decay_factor")]
+    pub decay_factor: f32,
     pub vector_score: f32,
     pub bm25_score: f32,
     pub ppr_score: f32,

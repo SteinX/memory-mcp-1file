@@ -63,6 +63,12 @@ pub struct Memory {
     #[serde(default = "default_importance")]
     pub importance_score: f32,
 
+    #[serde(default)]
+    pub access_count: u32,
+
+    #[serde(default)]
+    pub last_accessed_at: Option<Datetime>,
+
     #[serde(skip_serializing_if = "Option::is_none")]
     pub invalidation_reason: Option<String>,
 
@@ -152,6 +158,8 @@ impl Memory {
             valid_from: now,
             valid_until: None,
             importance_score: 1.0,
+            access_count: 0,
+            last_accessed_at: None,
             invalidation_reason: None,
             superseded_by: None,
             content_hash: None,
