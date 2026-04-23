@@ -16,7 +16,8 @@
                 "memory-mcp-1file-data:/data",
                 "-v",
                 "/home/unnamed/project/tools/memory-mcp-1file:/project:ro",
-                "ghcr.io/pomazanbohdan/memory-mcp-1file:latest"
+                "ghcr.io/pomazanbohdan/memory-mcp-1file:latest",
+                "--stdio"
             ],
             "enabled": true
         },
@@ -36,7 +37,8 @@
                 "/home/unnamed/project/mobile-odoo:/project:ro",
                 "-e",
                 "RECONNECT_TIMEOUT=60",
-                "ghcr.io/pomazanbohdan/memory-mcp-1file:latest"
+                "ghcr.io/pomazanbohdan/memory-mcp-1file:latest",
+                "--stdio"
             ],
             "enabled": false
         }

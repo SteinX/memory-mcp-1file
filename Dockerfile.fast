@@ -36,8 +36,10 @@ VOLUME ["/data", "/project"]
 # Expose HTTP SSE port (default: 8080)
 EXPOSE 8080
 
-# Default: HTTP SSE mode on port 8080
-CMD ["memory-mcp", "--data-dir", "/data", "--port", "8080"]
+# Default: HTTP SSE mode on port 8080, reachable from outside the container.
+# Pin the current default embedding model explicitly so image behavior stays
+# stable even if the binary default changes later.
+CMD ["memory-mcp", "--data-dir", "/data", "--model", "gemma", "--bind", "0.0.0.0", "--port", "8080"]
 
 # For stdio mode (backward compatibility):
 # CMD ["memory-mcp", "--data-dir", "/data", "--stdio"]
