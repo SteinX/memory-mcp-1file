@@ -6,8 +6,53 @@ use serde_json::json;
 use crate::config::AppState;
 use crate::server::params::{normalize_project_id, SearchSymbolsParams, SymbolGraphParams};
 use crate::storage::StorageBackend;
+use crate::types::ExportIdentity;
 
 use super::super::{error_response, strip_symbol_embeddings, success_json};
+use super::super::contracts::{
+    export_contract_meta, exported_symbol_edges, exported_symbol_nodes,
+    summary_collection_response, summary_symbol_graph_response, with_frontier_contract,
+    with_surface_guidance, with_traversal_defaults,
+};
+
+fn symbol_contract_json(symbol_id: &str) -> serde_json::Value {
+    let contract = with_traversal_defaults(
+        with_surface_guidance(
+            export_contract_meta(
+                ExportIdentity {
+                    stable_symbol_id: Some(symbol_id.to_string()),
+                    stable_node_ids: true,
+                    node_ids_are_project_scoped: true,
+                    stable_edge_ids: false,
+                    edge_ids_are_local_only: true,
+                    node_id_semantics: Some("stable_project_scoped_symbol_id".to_string()),
+                    edge_id_semantics: Some("local_only_edge_reference".to_string()),
+                    ..Default::default()
+                },
+                None,
+            ),
+            &["nodes", "edges", "contract"],
+            &["symbols", "relations", "results"],
+            &["relations[].id", "edges[].id"],
+        ),
+        "mixed",
+        &[
+            "relation_class",
+            "provenance",
+            "confidence_class",
+            "freshness_generation",
+            "staleness_state",
+        ],
+    );
+    let contract = with_frontier_contract(
+        contract,
+        "unexpanded_symbol_boundary_for_manual_follow_up",
+        "stable_project_scoped_symbol_id",
+        true,
+        true,
+    );
+    serde_json::to_value(contract).unwrap_or_else(|_| json!({}))
+}
 
 pub async fn search_symbols(
     state: &Arc<AppState>,
@@ -50,6 +95,8 @@ pub async fn search_symbols(
                 "offset": offset,
                 "limit": limit,
                 "has_more": has_more,
+                "summary": summary_collection_response("collection", count, Some(total as usize), false, None),
+                "contract": symbol_contract_json("search_symbols"),
                 "query": query,
                 "filters": {
                     "project_id": project_id,
@@ -79,6 +126,8 @@ pub async fn symbol_graph(
                 let mut response = json!({
                     "results": callers,
                     "count": callers.len(),
+                    "summary": summary_collection_response("collection", callers.len(), Some(callers.len()), false, None),
+                    "contract": symbol_contract_json(&params.symbol_id),
                     "symbol_id": params.symbol_id
                 });
                 if let Some(degradation) = super::get_degradation_info(state).await {
@@ -94,6 +143,8 @@ pub async fn symbol_graph(
                 let mut response = json!({
                     "results": callees,
                     "count": callees.len(),
+                    "summary": summary_collection_response("collection", callees.len(), Some(callees.len()), false, None),
+                    "contract": symbol_contract_json(&params.symbol_id),
                     "symbol_id": params.symbol_id
                 });
                 if let Some(degradation) = super::get_degradation_info(state).await {
@@ -129,9 +180,22 @@ pub async fn symbol_graph(
                 Ok(result) => {
                     let mut symbols = result.symbols;
                     strip_symbol_embeddings(&mut symbols);
+                    let nodes = exported_symbol_nodes(&symbols);
+                    let edges = exported_symbol_edges(&result.relations);
                     let mut response = json!({
+                        "summary": summary_symbol_graph_response(
+                            nodes.len(),
+                            edges.len(),
+                            result.depth_reached,
+                            result.truncated,
+                            result.deferred_count,
+                            &result.frontier,
+                        ),
+                        "nodes": nodes,
+                        "edges": edges,
                         "symbols": symbols,
                         "relations": result.relations,
+                        "contract": symbol_contract_json(&params.symbol_id),
                         "symbol_count": symbols.len(),
                         "relation_count": result.relations.len(),
                         "depth_reached": result.depth_reached,

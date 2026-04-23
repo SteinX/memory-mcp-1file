@@ -10,8 +10,69 @@ use crate::graph::{
 };
 use crate::server::params::{normalize_project_id, RecallCodeParams, SearchCodeParams};
 use crate::storage::StorageBackend;
+use crate::types::ExportIdentity;
 
 use super::super::{normalize_limit, success_json};
+use super::super::contracts::{
+    export_contract_meta, summary_collection_response, with_surface_guidance,
+};
+
+fn code_search_contract_json(
+    project_id: Option<&str>,
+    status: Option<&crate::types::IndexStatus>,
+) -> serde_json::Value {
+    let mut contract = with_surface_guidance(
+        export_contract_meta(
+            ExportIdentity {
+                project_id: project_id.map(|id| id.to_string()),
+                stable_node_ids: false,
+                node_ids_are_project_scoped: false,
+                stable_edge_ids: false,
+                edge_ids_are_local_only: true,
+                node_id_semantics: Some(
+                    "local_only_chunk_record_id; stable_local_locator_is_project_id_plus_file_path_plus_start_line_plus_end_line".to_string(),
+                ),
+                edge_id_semantics: Some("local_only_result_edge_reference".to_string()),
+                ..Default::default()
+            },
+            status,
+        ),
+        &[
+            "results[].file_path",
+            "results[].start_line",
+            "results[].end_line",
+            "results[].name",
+            "results[].context_path",
+            "results",
+            "contract",
+        ],
+        &[],
+        &["results[].id"],
+    );
+    contract.generation_basis.lifecycle = status.map(lifecycle_view_from_status);
+    serde_json::to_value(contract).unwrap_or_else(|_| json!({}))
+}
+
+fn lifecycle_view_from_status(status: &crate::types::IndexStatus) -> crate::types::LifecycleView {
+    crate::types::LifecycleView {
+        structural: crate::types::StructuralLifecycleView {
+            state: status.structural_state.to_string(),
+            is_ready: status.structural_state == crate::types::StructuralState::Ready,
+            generation: status.structural_generation,
+        },
+        semantic: crate::types::SemanticLifecycleView {
+            state: status.semantic_state.to_string(),
+            is_ready: status.semantic_state == crate::types::SemanticState::Ready,
+            generation: status.semantic_generation,
+            is_caught_up: status.semantic_state == crate::types::SemanticState::Ready
+                && status.semantic_generation == status.structural_generation,
+        },
+        projection: crate::types::ProjectionLifecycleView {
+            state: status.projection_state.to_string(),
+            is_current: status.projection_state == crate::types::ProjectionState::Current,
+        },
+    }
+}
 
 fn split_identifier_tokens(input: &str) -> Vec<String> {
     fn class(c: char) -> u8 {
@@ -254,6 +315,7 @@ pub async fn search_code(
     let mut is_partial = false;
     let mut indexing_message = None;
 
+    let mut project_status = None;
     if let Some(ref project_id) = project_id {
         if let Ok(Some(status)) = state.storage.get_index_status(project_id).await {
             if status.status == crate::types::IndexState::Indexing
@@ -265,6 +327,7 @@ pub async fn search_code(
                     status.indexed_files, status.total_files
                 ));
             }
+            project_status = Some(status);
         }
     }
 
@@ -351,7 +414,15 @@ pub async fn search_code(
     Ok(success_json(json!({
         "results": merged,
         "count": merged.len(),
+        "summary": summary_collection_response(
+            "collection",
+            merged.len(),
+            Some(merged.len()),
+            is_partial,
+            indexing_message.clone(),
+        ),
         "query": query,
+        "contract": code_search_contract_json(project_id, project_status.as_ref()),
         "vector_hits": vector_results.len(),
         "bm25_hits": bm25_results.len(),
         "is_partial": is_partial,
@@ -386,6 +457,7 @@ pub async fn recall_code(
     let mut is_partial = false;
     let mut indexing_message = None;
 
+    let mut project_status = None;
     if let Some(ref project_id) = project_id {
         if let Ok(Some(status)) = state.storage.get_index_status(project_id).await {
             if status.status == crate::types::IndexState::Indexing
@@ -397,6 +469,7 @@ pub async fn recall_code(
                     status.indexed_files, status.total_files
                 ));
             }
+            project_status = Some(status);
         }
     }
 
@@ -932,7 +1005,15 @@ pub async fn recall_code(
     let mut response = json!({
         "results": results,
         "count": results.len(),
+        "summary": summary_collection_response(
+            "collection",
+            results.len(),
+            Some(results.len()),
+            is_partial,
+            indexing_message.clone(),
+        ),
         "query": query,
+        "contract": code_search_contract_json(project_id, project_status.as_ref()),
         "weights": {
             "vector": vector_weight,
             "bm25": bm25_weight,
