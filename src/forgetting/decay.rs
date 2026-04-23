@@ -14,6 +14,8 @@ use super::config::{
 ///
 /// Formula:
 /// `effective_age = max(0, actual_age_days) / (1 + alpha * ln(1 + access_count))`
+///
+/// Negative ages are clamped so future-dated timestamps cannot make memories "negative old".
 #[must_use]
 pub fn effective_age_days(actual_age_days: f64, access_count: u32) -> f64 {
     let clamped_age_days = actual_age_days.max(0.0);
@@ -27,6 +29,8 @@ pub fn effective_age_days(actual_age_days: f64, access_count: u32) -> f64 {
 ///
 /// Formula:
 /// `decay_factor = max(min_decay, e^(-lambda * effective_age / half_life_days))`
+///
+/// The floor keeps very old memories retrievable instead of collapsing to zero.
 #[must_use]
 pub fn decay_factor(effective_age: f64, memory_type: &MemoryType) -> f32 {
     let half_life_days = f64::from(half_life_days_for(memory_type));
@@ -40,6 +44,8 @@ pub fn decay_factor(effective_age: f64, memory_type: &MemoryType) -> f32 {
 ///
 /// Formula:
 /// `reinforcement_bonus = min(alpha * ln(1 + access_count), reinforcement_cap)`
+///
+/// The cap prevents highly accessed memories from overwhelming decay entirely.
 #[must_use]
 pub fn reinforcement_bonus(access_count: u32) -> f32 {
     let bonus = f64::from(DEFAULT_REINFORCEMENT_ALPHA) * (1.0 + f64::from(access_count)).ln();
@@ -64,6 +70,9 @@ pub fn apply_decay_scoring(
 ///
 /// Uses `event_time` as the primary timestamp, then `ingestion_time`, then `now()`.
 /// Negative ages are clamped to zero before effective aging is computed.
+///
+/// This preserves deterministic behavior for records missing timestamps while
+/// still favoring the most specific available time source.
 #[must_use]
 pub fn compute_decay(result: &SearchResult, current_score: f32) -> (f32, f32, f32) {
     let now = Utc::now();

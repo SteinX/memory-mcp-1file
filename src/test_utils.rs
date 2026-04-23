@@ -2,6 +2,7 @@ use std::sync::Arc;
 use tempfile::TempDir;
 
 use crate::config::{AppConfig, AppState};
+use crate::forgetting::{create_access_channel, ForgettingConfig};
 use crate::embedding::{
     AdaptiveEmbeddingQueue, EmbeddingConfig, EmbeddingMetrics, EmbeddingService, EmbeddingStore,
     ModelType,
@@ -85,6 +86,11 @@ impl TestContext {
             shutdown_tx,
             index_pending: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
             projection_registry: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
+            forgetting_config: ForgettingConfig::default(),
+            access_tracker: {
+                let (tracker, _writer) = create_access_channel(ForgettingConfig::default());
+                tracker
+            },
         });
 
         Self {

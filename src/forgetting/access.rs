@@ -7,18 +7,21 @@ use crate::forgetting::config::ForgettingConfig;
 use crate::storage::MemoryStorage;
 use crate::Result;
 
+/// An access event queued for background persistence.
 #[derive(Debug, Clone)]
 pub struct AccessEvent {
     pub memory_id: String,
     pub accessed_at: DateTime<Utc>,
 }
 
+/// Lightweight sender used to record accesses without blocking callers.
 #[derive(Clone)]
 pub struct AccessTracker {
     sender: mpsc::Sender<AccessEvent>,
 }
 
 impl AccessTracker {
+    /// Create a tracker bound to the given channel sender.
     pub fn new(sender: mpsc::Sender<AccessEvent>) -> Self {
         Self { sender }
     }
@@ -34,19 +37,20 @@ impl AccessTracker {
     }
 }
 
+/// Background writer that persists access counts and timestamps.
 pub struct AccessWriter {
     receiver: mpsc::Receiver<AccessEvent>,
     config: ForgettingConfig,
 }
 
 impl AccessWriter {
+    /// Create a writer from a receiver and the active forgetting configuration.
     pub fn new(receiver: mpsc::Receiver<AccessEvent>, config: ForgettingConfig) -> Self {
         Self { receiver, config }
     }
 
     /// Run the background writer loop.
-    /// Reads events from channel, writes access_count++ and last_accessed_at to DB.
-    /// Stops when shutdown signal received.
+    /// Reads events from the channel, updates access metadata, and exits on shutdown.
     pub async fn run(
         mut self,
         db: Arc<dyn MemoryStorage + Send + Sync>,
@@ -78,6 +82,9 @@ impl AccessWriter {
     }
 }
 
+/// Create the access tracking channel pair used by the forgetting subsystem.
+///
+/// The channel is intentionally bounded so access tracking remains fire-and-forget.
 pub fn create_access_channel(config: ForgettingConfig) -> (AccessTracker, AccessWriter) {
     let (sender, receiver) = mpsc::channel(1024);
     let tracker = AccessTracker::new(sender);

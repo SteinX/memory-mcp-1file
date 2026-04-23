@@ -15,6 +15,7 @@ use crate::Result;
 pub const CAPACITY_CONTROLLER_INVALIDATION_REASON: &str = "capacity_controller_archive";
 const RECENT_ACCESS_WINDOW_MINUTES: i64 = 5;
 
+/// Background controller that archives low-value memories once capacity exceeds the soft limit.
 pub struct CapacityController {
     config: ForgettingConfig,
     db: Arc<dyn MemoryStorage + Send + Sync>,
@@ -38,6 +39,7 @@ struct ScoredCandidate {
 }
 
 impl CapacityController {
+    /// Create a controller with its own run lock.
     pub fn new(
         config: ForgettingConfig,
         db: Arc<dyn MemoryStorage + Send + Sync>,
@@ -60,6 +62,7 @@ impl CapacityController {
         }
     }
 
+    /// Run the periodic capacity controller until shutdown.
     pub async fn run(mut self) {
         if !capacity_controller_enabled() {
             tracing::info!("Capacity controller disabled by MEMORY_CAPACITY_CONTROLLER_ENABLED");
@@ -93,6 +96,7 @@ impl CapacityController {
         }
     }
 
+    /// Execute a single cleanup cycle and return the observed stats.
     async fn run_cycle(&self) -> Result<CapacityRunStats> {
         let _run_guard = match self.run_lock.try_lock() {
             Ok(guard) => guard,
@@ -161,6 +165,7 @@ impl CapacityController {
         })
     }
 
+    /// Convert raw candidates into scored entries for sorting.
     fn rank_candidates(&self, candidates: Vec<CapacityMemoryCandidate>) -> Vec<ScoredCandidate> {
         candidates
             .into_iter()
@@ -171,6 +176,7 @@ impl CapacityController {
             .collect()
     }
 
+    /// Compute the effective score used to decide which memories are archived first.
     fn compute_effective_score(&self, candidate: &CapacityMemoryCandidate) -> f32 {
         let search_result = SearchResult {
             id: candidate.id.clone(),
@@ -200,6 +206,7 @@ impl CapacityController {
         final_score
     }
 
+    /// Sort lower-scoring candidates first, then prefer older anchors and stable IDs.
     fn compare_candidates(left: &ScoredCandidate, right: &ScoredCandidate) -> Ordering {
         left.effective_score
             .partial_cmp(&right.effective_score)
@@ -208,6 +215,7 @@ impl CapacityController {
             .then_with(|| left.candidate.id.cmp(&right.candidate.id))
     }
 
+    /// Pick the timestamp used as the deterministic tie-breaker anchor.
     fn candidate_anchor(candidate: &ScoredCandidate) -> DateTime<Utc> {
         candidate
             .candidate
@@ -216,6 +224,7 @@ impl CapacityController {
             .unwrap_or_else(Utc::now)
     }
 
+    /// Check whether a candidate was accessed inside the recent-access grace window.
     async fn was_accessed_recently(&self, id: &str) -> Result<bool> {
         let cutoff = Utc::now() - ChronoDuration::minutes(RECENT_ACCESS_WINDOW_MINUTES);
         let last_accessed_at = self.db.get_memory_last_accessed_at(id.to_string()).await?;
@@ -283,11 +292,11 @@ mod tests {
             &self,
             _id: String,
             _accessed_at: DateTime<Utc>,
-        ) -> Pin<Box<dyn Future<Output = Result<()>> + '_>> {
+        ) -> Pin<Box<dyn Future<Output = Result<()>> + Send + '_>> {
             Box::pin(async { Ok(()) })
         }
 
-        fn count_valid_memories(&self) -> Pin<Box<dyn Future<Output = Result<usize>> + '_>> {
+        fn count_valid_memories(&self) -> Pin<Box<dyn Future<Output = Result<usize>> + Send + '_>> {
             Box::pin(async move {
                 if let Some(notify) = &self.block_count {
                     notify.notify_waiters();
@@ -301,14 +310,14 @@ mod tests {
 
         fn list_capacity_candidates(
             &self,
-        ) -> Pin<Box<dyn Future<Output = Result<Vec<CapacityMemoryCandidate>>> + '_>> {
+        ) -> Pin<Box<dyn Future<Output = Result<Vec<CapacityMemoryCandidate>>> + Send + '_>> {
             Box::pin(async move { Ok(self.state.lock().unwrap().candidates.clone()) })
         }
 
         fn get_memory_last_accessed_at(
             &self,
             id: String,
-        ) -> Pin<Box<dyn Future<Output = Result<Option<DateTime<Utc>>>> + '_>> {
+        ) -> Pin<Box<dyn Future<Output = Result<Option<DateTime<Utc>>>> + Send + '_>> {
             Box::pin(async move {
                 Ok(self
                     .state
@@ -325,7 +334,7 @@ mod tests {
             &self,
             id: String,
             reason: Option<String>,
-        ) -> Pin<Box<dyn Future<Output = Result<bool>> + '_>> {
+        ) -> Pin<Box<dyn Future<Output = Result<bool>> + Send + '_>> {
             Box::pin(async move {
                 self.state.lock().unwrap().invalidated.push((id, reason));
                 Ok(true)
