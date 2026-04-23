@@ -1,4 +1,5 @@
 pub mod code;
+pub mod contracts;
 pub mod graph;
 pub mod memory;
 pub mod search;

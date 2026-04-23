@@ -593,11 +593,20 @@ pub struct SearchCodeParams {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[schemars(title = "")]
 pub struct ProjectInfoParams {
-    /// list|status|stats
+    /// list|status|stats|projection|projection_by_locator
     pub action: String,
-    /// For: status, stats (required)
+    /// For: status, stats, projection (required)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub project_id: Option<String>,
+    /// For: projection_by_locator (required)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub locator: Option<String>,
+    /// For: projection (optional). all|calls|imports|type_links|none
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub relation_scope: Option<String>,
+    /// For: projection (optional). canonical
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sort_mode: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -655,6 +664,18 @@ pub struct GetProjectStatsParams {
     pub project_id: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GetProjectProjectionParams {
+    pub project_id: String,
+    pub relation_scope: Option<String>,
+    pub sort_mode: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GetProjectionByLocatorParams {
+    pub locator: String,
+}
+
 // --- Internal params (used by logic layer, not exposed as MCP tools) ---
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -701,7 +722,7 @@ pub struct HowToUseParams {
 
 #[cfg(test)]
 mod tests {
-    use super::normalize_project_id;
+    use super::{normalize_project_id, ProjectInfoParams};
 
     #[test]
     fn normalize_project_id_converts_empty_and_whitespace_to_none() {
@@ -716,5 +737,61 @@ mod tests {
             normalize_project_id(Some("  reddoc_dev  ".to_string())),
             Some("reddoc_dev".to_string())
         );
+    }
+
+    #[test]
+    fn project_info_params_deserialize_projection_without_options() {
+        let params: ProjectInfoParams = serde_json::from_str(
+            r#"{"action":"projection","project_id":"proj"}"#,
+        )
+        .unwrap();
+
+        assert_eq!(params.action, "projection");
+        assert_eq!(params.project_id, Some("proj".to_string()));
+        assert_eq!(params.locator, None);
+        assert_eq!(params.relation_scope, None);
+        assert_eq!(params.sort_mode, None);
+    }
+
+    #[test]
+    fn project_info_params_deserialize_projection_with_relation_scope() {
+        let params: ProjectInfoParams = serde_json::from_str(
+            r#"{"action":"projection","project_id":"proj","relation_scope":"imports","sort_mode":"canonical"}"#,
+        )
+        .unwrap();
+
+        assert_eq!(params.action, "projection");
+        assert_eq!(params.project_id, Some("proj".to_string()));
+        assert_eq!(params.locator, None);
+        assert_eq!(params.relation_scope, Some("imports".to_string()));
+        assert_eq!(params.sort_mode, Some("canonical".to_string()));
+    }
+
+    #[test]
+    fn project_info_params_deserialize_projection_with_type_links_scope() {
+        let params: ProjectInfoParams = serde_json::from_str(
+            r#"{"action":"projection","project_id":"proj","relation_scope":"type_links"}"#,
+        )
+        .unwrap();
+
+        assert_eq!(params.action, "projection");
+        assert_eq!(params.project_id, Some("proj".to_string()));
+        assert_eq!(params.locator, None);
+        assert_eq!(params.relation_scope, Some("type_links".to_string()));
+        assert_eq!(params.sort_mode, None);
+    }
+
+    #[test]
+    fn project_info_params_deserialize_projection_by_locator() {
+        let params: ProjectInfoParams = serde_json::from_str(
+            r#"{"action":"projection_by_locator","locator":"projection:demo:123"}"#,
+        )
+        .unwrap();
+
+        assert_eq!(params.action, "projection_by_locator");
+        assert_eq!(params.project_id, None);
+        assert_eq!(params.locator, Some("projection:demo:123".to_string()));
+        assert_eq!(params.relation_scope, None);
+        assert_eq!(params.sort_mode, None);
     }
 }
