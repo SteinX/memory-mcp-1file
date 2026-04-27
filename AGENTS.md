@@ -90,11 +90,15 @@ Summary of first 3 lines: {actual content extracted directly from the tool resul
 
 ---
 
-# 🧠 Memory Protocol (Memory MCP)
+## 🧠 Memory Protocol (Memory MCP)
 
 <critical>
 This protocol is MANDATORY. Violation = loss of context between sessions.
 Goal: any agent can continue another agent's work without losing context.
+
+**Protocol Extension (Diagnostic Readiness):**
+- Responses include additive `contract` and `summary` fields for lifecycle transparency.
+- Agents MUST inspect `summary.partial.reason_code` (e.g., `missing`, `stale`, `partial`, `degraded`, `invalid_locator`, `generation_mismatch`, `unsupported`) for machine-readable degradation signals before concluding an operation failed.
 </critical>
 
 ---
@@ -719,7 +723,7 @@ Search:  recall (hybrid vector+keyword+graph RRF)
 Code:    recall_code (mode: vector|hybrid, DEFAULT=hybrid)
          search_symbols, symbol_graph (symbol_id, action: callers|callees|related)
          index_project, delete_project, project_info (action: list|status|stats)
-System:  get_status, reset_all_memory, how_to_use
+System:  get_status, reset_all_memory
 ```
 
 > ⚠️ **`search_code` — це ВНУТРІШНЯ функція, НЕ MCP tool!**

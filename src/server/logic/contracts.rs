@@ -397,6 +397,8 @@ mod tests {
             projection.summary.partial.as_ref().unwrap().message.as_deref(),
             Some("Projection is an on-demand export of the current semantic snapshot; no separately materialized artifact is promised.")
         );
+        assert_eq!(projection.contract.compatibility.mode, "additive_first");
+        assert!(projection.contract.compatibility.clients_must_ignore_unknown_fields);
     }
 
     #[test]
@@ -435,6 +437,8 @@ mod tests {
             projection.summary.partial.as_ref().unwrap().message.as_deref(),
             Some("Projection is an on-demand export of the latest available semantic snapshot and may lag structural changes.")
         );
+        assert_eq!(projection.contract.compatibility.mode, "additive_first");
+        assert!(projection.contract.compatibility.clients_must_ignore_unknown_fields);
     }
 
     #[test]

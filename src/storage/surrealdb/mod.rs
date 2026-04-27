@@ -863,6 +863,70 @@ mod tests {
         MemoryQuery::default()
     }
 
+    fn scoped_memory(
+        content: &str,
+        user_id: Option<&str>,
+        agent_id: Option<&str>,
+        run_id: Option<&str>,
+        namespace: Option<&str>,
+    ) -> Memory {
+        Memory {
+            id: None,
+            content: content.to_string(),
+            embedding: Some(vec![0.0; 768]),
+            memory_type: MemoryType::Semantic,
+            user_id: user_id.map(str::to_string),
+            agent_id: agent_id.map(str::to_string),
+            run_id: run_id.map(str::to_string),
+            namespace: namespace.map(str::to_string),
+            metadata: None,
+            event_time: Datetime::default(),
+            ingestion_time: Datetime::default(),
+            valid_from: Datetime::default(),
+            valid_until: None,
+            importance_score: 1.0,
+            access_count: 0,
+            last_accessed_at: None,
+            invalidation_reason: None,
+            superseded_by: None,
+            content_hash: None,
+            embedding_state: Default::default(),
+        }
+    }
+
+    async fn assert_scope_isolation(
+        storage: &SurrealStorage,
+        filters: MemoryQuery,
+        expected_content: &str,
+        unexpected_content: &str,
+    ) {
+        let listed = storage.list_memories(&filters, 10, 0).await.unwrap();
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].content, expected_content);
+        assert_ne!(listed[0].content, unexpected_content);
+
+        let bm25 = storage
+            .bm25_search("scope regression", &filters, 10)
+            .await
+            .unwrap();
+        assert_eq!(bm25.len(), 1);
+        assert_eq!(bm25[0].content, expected_content);
+        assert_ne!(bm25[0].content, unexpected_content);
+
+        let unfiltered_list = storage.list_memories(&empty_memory_query(), 10, 0).await.unwrap();
+        assert_eq!(unfiltered_list.len(), 2);
+        assert!(unfiltered_list.iter().any(|m| m.content == expected_content));
+        assert!(unfiltered_list.iter().any(|m| m.content == unexpected_content));
+
+        let unfiltered_bm25 = storage
+            .bm25_search("scope regression", &empty_memory_query(), 10)
+            .await
+            .unwrap();
+        assert_eq!(unfiltered_bm25.len(), 2);
+        assert!(unfiltered_bm25.iter().any(|m| m.content == expected_content));
+        assert!(unfiltered_bm25.iter().any(|m| m.content == unexpected_content));
+    }
+
     async fn setup_test_db() -> (SurrealStorage, tempfile::TempDir) {
         let tmp = tempdir().unwrap();
         let storage = SurrealStorage::new(tmp.path(), 768).await.unwrap();
@@ -933,6 +997,142 @@ mod tests {
         let deleted = storage.delete_memory(&id).await.unwrap();
         assert!(deleted);
         assert!(storage.get_memory(&id).await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn test_scope_filters_isolate_user_agent_run_and_namespace() {
+        let cases = [
+            (
+                "user_id",
+                MemoryQuery {
+                    user_id: Some("user-a".to_string()),
+                    ..Default::default()
+                },
+                scoped_memory(
+                    "scope regression user-a",
+                    Some("user-a"),
+                    None,
+                    None,
+                    None,
+                ),
+                scoped_memory(
+                    "scope regression user-b",
+                    Some("user-b"),
+                    None,
+                    None,
+                    None,
+                ),
+            ),
+            (
+                "agent_id",
+                MemoryQuery {
+                    agent_id: Some("agent-a".to_string()),
+                    ..Default::default()
+                },
+                scoped_memory(
+                    "scope regression agent-a",
+                    None,
+                    Some("agent-a"),
+                    None,
+                    None,
+                ),
+                scoped_memory(
+                    "scope regression agent-b",
+                    None,
+                    Some("agent-b"),
+                    None,
+                    None,
+                ),
+            ),
+            (
+                "run_id",
+                MemoryQuery {
+                    run_id: Some("run-a".to_string()),
+                    ..Default::default()
+                },
+                scoped_memory(
+                    "scope regression run-a",
+                    None,
+                    None,
+                    Some("run-a"),
+                    None,
+                ),
+                scoped_memory(
+                    "scope regression run-b",
+                    None,
+                    None,
+                    Some("run-b"),
+                    None,
+                ),
+            ),
+            (
+                "namespace",
+                MemoryQuery {
+                    namespace: Some("namespace-a".to_string()),
+                    ..Default::default()
+                },
+                scoped_memory(
+                    "scope regression namespace-a",
+                    None,
+                    None,
+                    None,
+                    Some("namespace-a"),
+                ),
+                scoped_memory(
+                    "scope regression namespace-b",
+                    None,
+                    None,
+                    None,
+                    Some("namespace-b"),
+                ),
+            ),
+        ];
+
+        for (scope_name, filters, in_scope, out_of_scope) in cases {
+            let (storage, _tmp) = setup_test_db().await;
+
+            let expected_content = in_scope.content.clone();
+            let unexpected_content = out_of_scope.content.clone();
+
+            storage.create_memory(in_scope).await.unwrap();
+            storage.create_memory(out_of_scope).await.unwrap();
+
+            assert_scope_isolation(
+                &storage,
+                filters,
+                &expected_content,
+                &unexpected_content,
+            )
+            .await;
+
+            let filtered_count = storage.count_memories_filtered(&MemoryQuery {
+                user_id: if scope_name == "user_id" {
+                    Some("user-a".to_string())
+                } else {
+                    None
+                },
+                agent_id: if scope_name == "agent_id" {
+                    Some("agent-a".to_string())
+                } else {
+                    None
+                },
+                run_id: if scope_name == "run_id" {
+                    Some("run-a".to_string())
+                } else {
+                    None
+                },
+                namespace: if scope_name == "namespace" {
+                    Some("namespace-a".to_string())
+                } else {
+                    None
+                },
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+
+            assert_eq!(filtered_count, 1, "scope {scope_name} should stay isolated");
+        }
     }
 
     #[tokio::test]

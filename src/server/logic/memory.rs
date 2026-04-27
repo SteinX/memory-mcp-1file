@@ -780,11 +780,22 @@ pub async fn get_memory(
         Ok(Some(mut memory)) => {
             strip_embedding(&mut memory);
             let memory_json = memory_with_trace(state, &memory).await;
-            Ok(success_json(json!({
-                "memory": memory_json,
+            let mut response = json!({
+                "memory": memory_json.clone(),
                 "summary": summary_collection_response("memory", 1, Some(1), false, None),
                 "contract": memory_contract_json(Some(&params.id))
-            })))
+            });
+
+            if let (Some(response_map), Some(memory_map)) = (
+                response.as_object_mut(),
+                memory_json.as_object(),
+            ) {
+                for (key, value) in memory_map {
+                    response_map.insert(key.clone(), value.clone());
+                }
+            }
+
+            Ok(success_json(response))
         }
         Ok(None) => Ok(error_response(format!("Memory not found: {}", params.id))),
         Err(e) => Ok(error_response(e)),
@@ -1045,7 +1056,11 @@ mod tests {
         assert_eq!(memory_json["memory"]["consolidation_trace"]["status"], "active");
         assert_eq!(memory_json["memory"]["operator_summary"]["stage"], "read");
         assert_eq!(memory_json["memory"]["operator_summary"]["primary_signal"], "consolidation_trace");
+        assert_eq!(memory_json["contract"]["compatibility"]["mode"], "additive_first");
+        assert_eq!(memory_json["contract"]["compatibility"]["clients_must_ignore_unknown_fields"], true);
         assert_eq!(memory_json["summary"]["result_kind"], "memory");
+        assert!(memory_json["summary"]["partial"]["reason_code"].is_null());
+        assert!(memory_json["summary"]["partial"]["reason"].is_null());
         assert_eq!(memory_json["contract"]["identity"]["stable_memory_id"], id);
         assert_eq!(memory_json["contract"]["identity"]["node_id_semantics"], "stable_public_memory_id");
 
@@ -1095,7 +1110,10 @@ mod tests {
         assert_eq!(list_json["memories"].as_array().unwrap().len(), 0);
         assert_eq!(list_json["total"], 0);
         assert_eq!(list_json["filters"]["userId"], "user1");
+        assert_eq!(list_json["contract"]["compatibility"]["mode"], "additive_first");
         assert_eq!(list_json["summary"]["result_kind"], "collection");
+        assert!(list_json["summary"]["partial"]["reason_code"].is_null());
+        assert!(list_json["summary"]["partial"]["reason"].is_null());
         assert_eq!(list_json["contract"]["identity"]["node_id_semantics"], "stable_public_memory_id");
     }
 
@@ -1130,6 +1148,9 @@ mod tests {
         assert_eq!(get_json["contract"]["schema_version"], 1);
         assert_eq!(get_json["contract"]["identity"]["stable_memory_id"], id);
         assert_eq!(get_json["contract"]["identity"]["node_id_semantics"], "stable_public_memory_id");
+        assert_eq!(get_json["contract"]["compatibility"]["mode"], "additive_first");
+        assert!(get_json["summary"]["partial"]["reason_code"].is_null());
+        assert!(get_json["summary"]["partial"]["reason"].is_null());
         assert_eq!(get_json["summary"]["result_kind"], "memory");
 
         let list_result = list_memories(
@@ -1159,6 +1180,7 @@ mod tests {
         assert_eq!(list_json["contract"]["identity"]["stable_node_ids"], true);
         assert_eq!(list_json["contract"]["identity"]["node_ids_are_project_scoped"], false);
         assert_eq!(list_json["contract"]["identity"]["node_id_semantics"], "stable_public_memory_id");
+        assert_eq!(list_json["contract"]["compatibility"]["clients_must_ignore_unknown_fields"], true);
         assert_eq!(list_json["summary"]["result_kind"], "collection");
         assert_eq!(list_json["summary"]["counts"]["results"], 1);
 
@@ -1664,5 +1686,154 @@ mod tests {
 
         assert_eq!(legacy_after_json["superseded_by"], consolidate_json["id"]);
         assert_eq!(legacy_after_json["invalidation_reason"], "legacy-fallback");
+    }
+
+    #[tokio::test]
+    async fn test_store_memory_allows_exact_duplicates_with_same_hash() {
+        let ctx = TestContext::new().await;
+
+        let params = StoreMemoryParams {
+            content: "store duplicate behavior".to_string(),
+            memory_type: Some("semantic".to_string()),
+            user_id: Some("user-store-dup".to_string()),
+            agent_id: None,
+            run_id: None,
+            namespace: Some("project-store-dup".to_string()),
+            importance_score: Some(1.0),
+            metadata: None,
+        };
+
+        let first_result = store_memory(&ctx.state, params.clone()).await.unwrap();
+        let first_val = serde_json::to_value(&first_result).unwrap();
+        let first_text = first_val["content"][0]["text"].as_str().unwrap();
+        let first_json: serde_json::Value = serde_json::from_str(first_text).unwrap();
+        let first_id = first_json["id"].as_str().unwrap().to_string();
+
+        let second_result = store_memory(&ctx.state, params).await.unwrap();
+        let second_val = serde_json::to_value(&second_result).unwrap();
+        let second_text = second_val["content"][0]["text"].as_str().unwrap();
+        let second_json: serde_json::Value = serde_json::from_str(second_text).unwrap();
+        let second_id = second_json["id"].as_str().unwrap().to_string();
+
+        assert_ne!(first_id, second_id);
+
+        let first_get = get_memory(&ctx.state, GetMemoryParams { id: first_id.clone() })
+            .await
+            .unwrap();
+        let first_get_val = serde_json::to_value(&first_get).unwrap();
+        let first_get_text = first_get_val["content"][0]["text"].as_str().unwrap();
+        let first_memory_json: serde_json::Value = serde_json::from_str(first_get_text).unwrap();
+
+        let second_get = get_memory(&ctx.state, GetMemoryParams { id: second_id.clone() })
+            .await
+            .unwrap();
+        let second_get_val = serde_json::to_value(&second_get).unwrap();
+        let second_get_text = second_get_val["content"][0]["text"].as_str().unwrap();
+        let second_memory_json: serde_json::Value = serde_json::from_str(second_get_text).unwrap();
+
+        assert_eq!(first_memory_json["content"], "store duplicate behavior");
+        assert_eq!(second_memory_json["content"], "store duplicate behavior");
+        assert_eq!(first_memory_json["content_hash"], second_memory_json["content_hash"]);
+
+        let list_result = list_memories(
+            &ctx.state,
+            ListMemoriesParams {
+                limit: Some(10),
+                offset: None,
+                user_id: Some("user-store-dup".to_string()),
+                agent_id: None,
+                run_id: None,
+                namespace: Some("project-store-dup".to_string()),
+                memory_type: Some("semantic".to_string()),
+                metadata_filter: None,
+                valid_at: None,
+                event_after: None,
+                event_before: None,
+                ingestion_after: None,
+                ingestion_before: None,
+            },
+        )
+        .await
+        .unwrap();
+        let list_val = serde_json::to_value(&list_result).unwrap();
+        let list_text = list_val["content"][0]["text"].as_str().unwrap();
+        let list_json: serde_json::Value = serde_json::from_str(list_text).unwrap();
+
+        assert_eq!(list_json["total"], 2);
+        assert_eq!(list_json["memories"].as_array().unwrap().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_consolidate_memory_handles_short_noise_like_content() {
+        let ctx = TestContext::new().await;
+
+        let original_result = store_memory(
+            &ctx.state,
+            StoreMemoryParams {
+                content: ".".to_string(),
+                memory_type: Some("semantic".to_string()),
+                user_id: Some("user-noise".to_string()),
+                agent_id: None,
+                run_id: None,
+                namespace: Some("project-noise".to_string()),
+                importance_score: Some(1.0),
+                metadata: None,
+            },
+        )
+        .await
+        .unwrap();
+        let original_val = serde_json::to_value(&original_result).unwrap();
+        let original_text = original_val["content"][0]["text"].as_str().unwrap();
+        let original_json: serde_json::Value = serde_json::from_str(original_text).unwrap();
+        let original_id = original_json["id"].as_str().unwrap().to_string();
+
+        let preview_result = preview_consolidate_memory(
+            &ctx.state,
+            PreviewConsolidateMemoryParams {
+                content: ".".to_string(),
+                memory_type: Some("semantic".to_string()),
+                user_id: Some("user-noise".to_string()),
+                agent_id: None,
+                run_id: None,
+                namespace: Some("project-noise".to_string()),
+                importance_score: Some(2.0),
+                reason: Some("noise-dedup".to_string()),
+                metadata: None,
+            },
+        )
+        .await
+        .unwrap();
+        let preview_val = serde_json::to_value(&preview_result).unwrap();
+        let preview_text = preview_val["content"][0]["text"].as_str().unwrap();
+        let preview_json: serde_json::Value = serde_json::from_str(preview_text).unwrap();
+
+        assert_eq!(preview_json["matched_count"], 1);
+        assert_eq!(preview_json["matched_ids"][0], original_id);
+
+        let consolidate_result = consolidate_memory(
+            &ctx.state,
+            ConsolidateMemoryParams {
+                content: ".".to_string(),
+                memory_type: Some("semantic".to_string()),
+                user_id: Some("user-noise".to_string()),
+                agent_id: None,
+                run_id: None,
+                namespace: Some("project-noise".to_string()),
+                importance_score: Some(2.0),
+                reason: Some("noise-dedup".to_string()),
+                expected_plan_fingerprint: None,
+                metadata: None,
+            },
+        )
+        .await
+        .unwrap();
+        let consolidate_val = serde_json::to_value(&consolidate_result).unwrap();
+        let consolidate_text = consolidate_val["content"][0]["text"].as_str().unwrap();
+        let consolidate_json: serde_json::Value = serde_json::from_str(consolidate_text).unwrap();
+
+        assert_eq!(consolidate_json["superseded_count"], 1);
+        assert_eq!(consolidate_json["superseded_ids"][0], original_id);
+        assert_eq!(consolidate_json["lookup_diagnostics"]["used_hash_first"], true);
+        assert_eq!(consolidate_json["lookup_diagnostics"]["used_exact_content_fallback"], false);
     }
 }

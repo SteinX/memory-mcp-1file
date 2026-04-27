@@ -318,7 +318,7 @@ Or with Docker:
 
 ## 🛠️ Tools Available
 
-The server exposes **18 tools** to the AI model, organized into logical categories.
+The server exposes **21 tools** to the AI model, organized into logical categories.
 
 ### 🧠 Core Memory Management
 | Tool | Description |
@@ -326,32 +326,33 @@ The server exposes **18 tools** to the AI model, organized into logical categori
 | `store_memory` | Store a new memory with content, optional scope fields, metadata, and optional `importance_score`. Read/list surfaces now also expose additive `contract` + `summary` metadata. |
 | `update_memory` | Update memory fields, including scope and `importance_score`. |
 | `delete_memory` | Delete memory by ID. |
-| `preview_consolidate_memory` | Preview exact-duplicate consolidation without writing any changes. |
+| `consolidate_memory` | Store a new memory and explicitly supersede exact duplicates within the same optional scope/type boundary. |
+| `preview_consolidate_memory` | Preview exact-duplicate consolidation within the same optional scope/type boundary without writing any changes. |
 | `list_memories` | List memories (newest first) with optional scope/type/metadata/time filters; `total` is the filtered total. Also returns additive `contract` + normalized `summary` metadata. |
-| `get_memory` | Get full memory by ID. Memory IDs are the stable public identity on memory read/list surfaces. |
+| `get_memory` | Get full memory by ID. Memory IDs are stable public identities; response includes additive contract and summary metadata. |
 | `invalidate` | Soft-delete memory, optionally linking replacement via `superseded_by`. |
-| `get_valid` | Get valid memories with optional point-in-time, scope, metadata, and time-window filters. Also returns additive `contract` + normalized `summary` metadata. |
+| `get_valid` | Get valid memories. Supports optional timestamp (ISO 8601), scope filters, memory_type, metadata_filter, and event/ingestion ranges. Response includes additive contract and summary metadata. |
 
 ### 🔎 Search & Retrieval
 | Tool | Description |
 |------|-------------|
-| `recall` | **Hybrid memory retrieval** (Vector + lexical + Graph via RRF) with layered diagnostics and optional filters. Retrieval surfaces also expose additive `contract` + `summary` metadata. |
-| `search_memory` | Search memories. `mode`: `vector` (default) or `bm25`; BM25 mode uses the reusable in-memory memory lexical engine. Returned memory IDs remain the stable public memory identity. |
+| `recall` | Hybrid memory retrieval (vector+BM25+graph via RRF) with additive diagnostics and contract metadata. |
+| `search_memory` | Memory search (`query`, optional `mode`: `vector` or `bm25`) with optional filters and additive contract/summary metadata. |
 
 ### 🕸️ Knowledge Graph
 | Tool | Description |
 |------|-------------|
-| `knowledge_graph` | Unified KG operations. `action`: `create_entity` \| `create_relation` \| `get_related` \| `detect_communities`. `get_related` now returns exported `nodes` / `edges`, additive `contract` + `summary` metadata, and keeps legacy `entities` / `relations` only for compatibility. |
+| `knowledge_graph` | Knowledge graph ops. Actions: create_entity(name, entity_type?, description?) \| create_relation(from_entity, to_entity, relation_type, weight?) \| get_related(entity_id, depth?, direction?) \| detect_communities(). get_related returns preferred exported nodes/edges plus additive contract and summary metadata; raw entities/relations remain compatibility fields. |
 
 ### 💻 Codebase Intelligence
 | Tool | Description |
 |------|-------------|
 | `index_project` | Index codebase directory for code search. |
 | `delete_project` | Delete indexed project. |
-| `recall_code` | Code retrieval. `mode`: `vector` or `hybrid` (default). Hybrid uses vector+BM25+graph fusion. Results now expose additive `contract` + `summary` metadata. **Important:** `results[].id` is a local chunk-record reference, not a stable public ID; the stable re-find locator is `project_id + file_path + start_line + end_line`. |
-| `search_symbols` | Search code symbols by name. Search responses expose additive `contract` + `summary` metadata; symbol IDs are stable project-scoped symbol identities. |
-| `symbol_graph` | Navigate symbol graph. `action`: `callers` \| `callees` \| `related`. Related traversal exposes exported `nodes` / `edges`, additive `contract` + `summary`, and keeps legacy `symbols` / `relations` for compatibility. `frontier` is an unexpanded boundary hint, **not** a cursor. |
-| `project_info` | Project info. `action`: `list` \| `status` \| `stats` \| `projection` \| `projection_by_locator`. Status/list/stats surfaces expose additive `contract` + normalized `summary`, including lifecycle, generation, and projection/materialization contract metadata. `projection` returns an on-demand export plus an ephemeral locator record; `projection_by_locator` resolves that locator only within the same process and now returns typed locator lookup/lifecycle metadata on both success and miss. |
+| `recall_code` | Hybrid code retrieval (vector+BM25+graph) with additive `contract`/`summary` metadata. `results[].id` is a local chunk-record reference; stable refind locator is `project_id + file_path + start_line + end_line`. |
+| `search_symbols` | Symbol lookup by name with additive contract/summary metadata. |
+| `symbol_graph` | Symbol relationship traversal with additive contract/summary metadata; `frontier` is an unexpanded boundary hint, not a cursor. |
+| `project_info` | Project indexing information. Actions: list() \| status(project_id) \| stats(project_id) \| projection(project_id) \| projection_by_locator(). Responses include additive contract/summary metadata, including lifecycle, generation, and projection/materialization fields. |
 
 ### Contract compatibility notes for plugin / MCP integrators
 
@@ -370,6 +371,8 @@ The server exposes **18 tools** to the AI model, organized into logical categori
 |------|-------------|
 | `get_status` | Get system status and startup progress. |
 | `reset_all_memory` | **DANGER**: Reset all database data (requires `confirm=true`). |
+| `how_to_use` | Meta-help tool for concise MCP tool-surface guidance. |
+
 
 ---
 

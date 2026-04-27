@@ -902,7 +902,10 @@ mod tests {
         assert!(content.contains("Python"));
         assert!(json["diagnostics"]["bm25_retrieved_candidates"].as_u64().is_some());
         assert_eq!(json["contract"]["identity"]["node_id_semantics"], "stable_public_memory_id");
+        assert_eq!(json["contract"]["compatibility"]["mode"], "additive_first");
         assert_eq!(json["summary"]["result_kind"], "collection");
+        assert!(json["summary"]["partial"]["reason_code"].is_null());
+        assert!(json["summary"]["partial"]["reason"].is_null());
         assert_eq!(json["results"][0]["consolidation_trace"]["status"], "active");
         assert_eq!(json["results"][0]["replacement_lineage"]["depth"], 0);
         assert_eq!(json["results"][0]["attention_summary"]["requires_operator_attention"], false);
@@ -937,7 +940,10 @@ mod tests {
         assert!(json["diagnostics"]["vector_hits"].as_u64().is_some());
         assert!(json["diagnostics"]["fused_candidates"].as_u64().is_some());
         assert_eq!(json["contract"]["identity"]["node_id_semantics"], "stable_public_memory_id");
+        assert_eq!(json["contract"]["compatibility"]["mode"], "additive_first");
         assert_eq!(json["summary"]["result_kind"], "collection");
+        assert!(json["summary"]["partial"]["reason_code"].is_null());
+        assert!(json["summary"]["partial"]["reason"].is_null());
         assert_eq!(json["memories"][0]["consolidation_trace"]["status"], "active");
         assert_eq!(json["memories"][0]["replacement_lineage"]["depth"], 0);
         assert_eq!(json["memories"][0]["attention_summary"]["requires_operator_attention"], false);
@@ -1164,5 +1170,17 @@ mod tests {
         }
 
         assert_eq!(tracked_ids, vec![returned_id]);
+    }
+
+    #[test]
+    fn test_importance_multiplier_can_flip_hybrid_ranking_score() {
+        let lower_base_score = 0.61_f32;
+        let higher_base_score = 0.49_f32;
+
+        let low_importance_boosted = lower_base_score * importance_multiplier(0.25);
+        let high_importance_boosted = higher_base_score * importance_multiplier(4.0);
+
+        assert!(high_importance_boosted > low_importance_boosted);
+        assert!(importance_multiplier(4.0) > importance_multiplier(0.25));
     }
 }
