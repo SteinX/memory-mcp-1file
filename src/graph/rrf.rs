@@ -136,4 +136,28 @@ mod tests {
         assert_eq!(results[1].0, "3");
         assert_eq!(results[2].0, "2");
     }
+
+    #[test]
+    fn test_rrf_merge_vector_dominates_when_vector_weight_is_higher() {
+        let vector = vec![("a".to_string(), 0.99), ("b".to_string(), 0.98)];
+        let bm25 = vec![("b".to_string(), 0.99), ("a".to_string(), 0.98)];
+
+        let results = rrf_merge(&vector, &bm25, &[], 0.9, 0.1, 0.0, 10);
+
+        assert_eq!(results[0].0, "a");
+        assert!(results[0].1.vector_score > results[0].1.bm25_score);
+        assert!(results[0].1.combined_score > results[1].1.combined_score);
+    }
+
+    #[test]
+    fn test_rrf_merge_bm25_dominates_when_bm25_weight_is_higher() {
+        let vector = vec![("a".to_string(), 0.99), ("b".to_string(), 0.98)];
+        let bm25 = vec![("b".to_string(), 0.99), ("a".to_string(), 0.98)];
+
+        let results = rrf_merge(&vector, &bm25, &[], 0.1, 0.9, 0.0, 10);
+
+        assert_eq!(results[0].0, "b");
+        assert!(results[0].1.bm25_score > results[0].1.vector_score);
+        assert!(results[0].1.combined_score > results[1].1.combined_score);
+    }
 }
