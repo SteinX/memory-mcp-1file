@@ -108,6 +108,40 @@ fn ac3_type_differentiation_preserves_procedural_then_semantic_then_episodic() {
 }
 
 #[test]
+fn ac4_regression_keeps_exponential_half_life_instead_of_weibull_curves() {
+    // Current design intentionally uses simple exponential half-life decay.
+    // We do not model upstream Weibull curves or Peripheral/Working/Core promotion tiers here.
+    let fresh_score = decayed_score(MemoryType::Episodic, 0.0, 0);
+    let half_life_score = decayed_score(MemoryType::Episodic, 30.0, 0);
+    let full_life_score = decayed_score(MemoryType::Episodic, 60.0, 0);
+
+    approx_eq(fresh_score, 1.0, 1e-6);
+    approx_eq(half_life_score, 0.5, 1e-5);
+    approx_eq(full_life_score, 0.25, 1e-5);
+}
+
+#[test]
+fn ac5_regression_access_reinforcement_slows_decay_without_tier_promotion_state() {
+    // Access reinforcement is the accepted lifecycle signal; there is no tier promotion state machine.
+    let baseline = decayed_score(MemoryType::Semantic, 90.0, 0);
+    let reinforced = decayed_score(MemoryType::Semantic, 90.0, 12);
+
+    assert!(reinforced > baseline);
+    assert!(reinforced > 0.0);
+}
+
+#[test]
+fn ac6_regression_capacity_scoring_uses_importance_score_as_current_score() {
+    // Capacity ranking feeds candidate.importance_score into the decay math directly.
+    // That is the current design instead of a separate tiered lifecycle promotion system.
+    let low_importance = decayed_score(MemoryType::Episodic, 60.0, 0);
+    let high_importance = apply_decay_scoring(2.5, decay_factor(60.0, &MemoryType::Episodic), 0.0);
+
+    assert!(high_importance > low_importance);
+    approx_eq(high_importance, low_importance * 2.5, 1e-5);
+}
+
+#[test]
 fn ac4_and_ac7_zero_access_decay_is_finite_and_scored_memory_exposes_decay_factor() {
     let mut result = search_result(MemoryType::Semantic);
     result.event_time = Some(Utc::now() - chrono::Duration::days(30));
