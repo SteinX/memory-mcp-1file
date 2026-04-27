@@ -1,0 +1,144 @@
+{
+  "queries": [
+    {
+      "expected_ids": [
+        "mem_task_auth_timeout",
+        "mem_decision_cache_ttl"
+      ],
+      "filters": {},
+      "id": "q_recall_fusion_auth_timeout",
+      "mode": "hybrid",
+      "query": "auth timeout retry window",
+      "query_type": "recall_fusion",
+      "rationale": "Hybrid retrieval should surface the auth timeout task and the matching cache decision together.",
+      "tool": "recall"
+    },
+    {
+      "expected_ids": [
+        "mem_project_benchmark_scope",
+        "mem_decision_query_ids"
+      ],
+      "filters": {},
+      "id": "q_recall_fusion_benchmark_scope",
+      "mode": "hybrid",
+      "query": "synthetic benchmark scope and stable memory ids",
+      "query_type": "recall_fusion",
+      "rationale": "The benchmark scope note and the stable-id decision are the best hybrid pair for this prompt.",
+      "tool": "recall"
+    },
+    {
+      "expected_ids": [
+        "mem_user_pref_concise_answers",
+        "mem_user_pref_terse_notes"
+      ],
+      "filters": {},
+      "id": "q_recall_fusion_terse_notes",
+      "mode": "hybrid",
+      "query": "keep notes concise and terse",
+      "query_type": "recall_fusion",
+      "rationale": "Two user preference memories intentionally reinforce the same style preference.",
+      "tool": "recall"
+    },
+    {
+      "expected_ids": [
+        "mem_decision_cache_ttl"
+      ],
+      "filters": {},
+      "id": "q_search_bm25_cache_prefix",
+      "mode": "bm25",
+      "query": "DECISION cache ttl auth",
+      "query_type": "search_bm25",
+      "rationale": "Exact prefix and lexical tokens should hit the cache ttl decision by BM25.",
+      "tool": "search_memory"
+    },
+    {
+      "expected_ids": [
+        "mem_research_temporal_windows",
+        "mem_decision_temporal_utc"
+      ],
+      "filters": {},
+      "id": "q_search_bm25_temporal_windows",
+      "mode": "bm25",
+      "query": "temporal validity windows UTC",
+      "query_type": "search_bm25",
+      "rationale": "BM25 should match the explicit temporal validity and UTC wording.",
+      "tool": "search_memory"
+    },
+    {
+      "expected_ids": [
+        "mem_task_billing_retry_window"
+      ],
+      "filters": {},
+      "id": "q_search_vector_billing_retry",
+      "mode": "vector",
+      "query": "billing retry window",
+      "query_type": "search_vector",
+      "rationale": "Vector search should find the semantically aligned billing retry task.",
+      "tool": "search_memory"
+    },
+    {
+      "expected_ids": [
+        "mem_context_namespace_evals",
+        "mem_context_no_private_data",
+        "mem_context_stdio_harness",
+        "mem_decision_cache_ttl",
+        "mem_decision_query_ids",
+        "mem_decision_temporal_utc",
+        "mem_project_benchmark_scope",
+        "mem_research_rrf_fusion",
+        "mem_task_auth_timeout",
+        "mem_task_billing_retry_window",
+        "mem_user_pref_concise_answers",
+        "mem_user_pref_terse_notes"
+      ],
+      "filters": {
+        "valid_at": "2026-02-20T00:00:00Z"
+      },
+      "id": "q_get_valid_temporal_checkpoint",
+      "mode": null,
+      "query": "memories valid at the February checkpoint",
+      "query_type": "get_valid_temporal",
+      "rationale": "The checkpoint should include only memories whose valid_from is on or before 2026-02-20 and whose valid_until is absent or after that timestamp.",
+      "tool": "get_valid"
+    },
+    {
+      "expected_ids": [
+        "mem_task_auth_timeout",
+        "mem_decision_cache_ttl"
+      ],
+      "filters": {
+        "metadata_filter": {
+          "project": "auth"
+        },
+        "valid_at": "2026-02-20T00:00:00Z"
+      },
+      "id": "q_get_valid_filtered_auth_namespace",
+      "mode": null,
+      "query": "valid auth memories in the evals/auth namespace",
+      "query_type": "get_valid_filtered",
+      "rationale": "The auth project filter should narrow the valid set to the two auth memories at the February checkpoint.",
+      "tool": "get_valid"
+    },
+    {
+      "expected_ids": [],
+      "filters": {},
+      "id": "q_negative_no_match_nonsense",
+      "mode": "hybrid",
+      "query": "zebra quokka lantern",
+      "query_type": "negative_no_match",
+      "rationale": "Nonsense text should not match any synthetic memory.",
+      "tool": "recall"
+    },
+    {
+      "expected_ids": [],
+      "filters": {},
+      "id": "q_negative_no_match_missing_prefix",
+      "mode": "bm25",
+      "query": "DECISION nonexistent token",
+      "query_type": "negative_no_match",
+      "rationale": "The lexical search should not find a made-up decision token.",
+      "tool": "search_memory"
+    }
+  ],
+  "version": 1
+}

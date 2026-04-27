@@ -1,0 +1,360 @@
+{
+  "memories": [
+    {
+      "agent_id": "atlas",
+      "content": "TASK: Retry auth requests for 15 minutes when the token refresh path stalls.",
+      "id": "mem_task_auth_timeout",
+      "memory_type": "episodic",
+      "metadata": {
+        "benchmark": {
+          "suite": "memory-retrieval-benchmark",
+          "tier": "gold"
+        },
+        "project": "auth",
+        "tags": [
+          "retry",
+          "timeout",
+          "auth"
+        ],
+        "topic": "timeouts"
+      },
+      "namespace": "evals/auth",
+      "run_id": "run-auth-001",
+      "user_id": "eval-user",
+      "valid_from": "2026-01-01T00:00:00Z",
+      "valid_until": null
+    },
+    {
+      "agent_id": "atlas",
+      "content": "DECISION: Use a 15 minute cache ttl for auth token refresh state.",
+      "id": "mem_decision_cache_ttl",
+      "memory_type": "semantic",
+      "metadata": {
+        "benchmark": {
+          "suite": "memory-retrieval-benchmark",
+          "tier": "gold"
+        },
+        "project": "auth",
+        "tags": [
+          "cache",
+          "ttl",
+          "prefix-match"
+        ],
+        "topic": "cache"
+      },
+      "namespace": "evals/auth",
+      "run_id": "run-auth-001",
+      "user_id": "eval-user",
+      "valid_from": "2026-01-02T00:00:00Z",
+      "valid_until": null
+    },
+    {
+      "agent_id": "atlas",
+      "content": "RESEARCH: RRF fusion should combine vector, BM25, and graph signals for recall.",
+      "id": "mem_research_rrf_fusion",
+      "memory_type": "semantic",
+      "metadata": {
+        "benchmark": {
+          "suite": "memory-retrieval-benchmark",
+          "tier": "gold"
+        },
+        "project": "search",
+        "tags": [
+          "recall",
+          "fusion",
+          "rrf"
+        ],
+        "topic": "rrf"
+      },
+      "namespace": "evals/search",
+      "run_id": "run-search-001",
+      "user_id": "eval-user",
+      "valid_from": "2026-01-03T00:00:00Z",
+      "valid_until": null
+    },
+    {
+      "agent_id": "atlas",
+      "content": "CONTEXT: The stdio harness should prefer local binaries before cargo run.",
+      "id": "mem_context_stdio_harness",
+      "memory_type": "semantic",
+      "metadata": {
+        "benchmark": {
+          "suite": "memory-retrieval-benchmark",
+          "tier": "gold"
+        },
+        "project": "core",
+        "tags": [
+          "stdio",
+          "binary",
+          "local"
+        ],
+        "topic": "stdio"
+      },
+      "namespace": "evals/core",
+      "run_id": "run-core-001",
+      "user_id": "eval-user",
+      "valid_from": "2026-01-04T00:00:00Z",
+      "valid_until": null
+    },
+    {
+      "agent_id": "atlas",
+      "content": "PROJECT: This benchmark uses only synthetic fixtures and no private memory content.",
+      "id": "mem_project_benchmark_scope",
+      "memory_type": "semantic",
+      "metadata": {
+        "benchmark": {
+          "suite": "memory-retrieval-benchmark",
+          "tier": "gold"
+        },
+        "project": "benchmark",
+        "tags": [
+          "synthetic",
+          "scope",
+          "public"
+        ],
+        "topic": "scope"
+      },
+      "namespace": "evals/benchmark",
+      "run_id": "run-benchmark-001",
+      "user_id": "eval-user",
+      "valid_from": "2026-01-05T00:00:00Z",
+      "valid_until": null
+    },
+    {
+      "agent_id": "atlas",
+      "content": "USER: Keep benchmark notes concise and factual.",
+      "id": "mem_user_pref_concise_answers",
+      "memory_type": "semantic",
+      "metadata": {
+        "benchmark": {
+          "suite": "memory-retrieval-benchmark",
+          "tier": "gold"
+        },
+        "project": "notes",
+        "tags": [
+          "concise",
+          "factual"
+        ],
+        "topic": "style"
+      },
+      "namespace": "evals/notes",
+      "run_id": "run-notes-001",
+      "user_id": "eval-user",
+      "valid_from": "2026-01-06T00:00:00Z",
+      "valid_until": null
+    },
+    {
+      "agent_id": "atlas",
+      "content": "TASK: Billing retries stay open for a 15 minute retry window.",
+      "id": "mem_task_billing_retry_window",
+      "memory_type": "episodic",
+      "metadata": {
+        "benchmark": {
+          "suite": "memory-retrieval-benchmark",
+          "tier": "gold"
+        },
+        "project": "billing",
+        "tags": [
+          "retry",
+          "billing",
+          "window"
+        ],
+        "topic": "retries"
+      },
+      "namespace": "evals/billing",
+      "run_id": "run-billing-001",
+      "user_id": "eval-user",
+      "valid_from": "2026-01-07T00:00:00Z",
+      "valid_until": null
+    },
+    {
+      "agent_id": "atlas",
+      "content": "DECISION: Golden queries must cite stable memory ids exactly as written.",
+      "id": "mem_decision_query_ids",
+      "memory_type": "semantic",
+      "metadata": {
+        "benchmark": {
+          "suite": "memory-retrieval-benchmark",
+          "tier": "gold"
+        },
+        "project": "benchmark",
+        "tags": [
+          "stable-id",
+          "golden"
+        ],
+        "topic": "ids"
+      },
+      "namespace": "evals/benchmark",
+      "run_id": "run-benchmark-002",
+      "user_id": "eval-user",
+      "valid_from": "2026-01-08T00:00:00Z",
+      "valid_until": null
+    },
+    {
+      "agent_id": "atlas",
+      "content": "RESEARCH: Temporal validity should be checked with explicit valid_from and valid_until windows.",
+      "id": "mem_research_temporal_windows",
+      "memory_type": "semantic",
+      "metadata": {
+        "benchmark": {
+          "suite": "memory-retrieval-benchmark",
+          "tier": "gold"
+        },
+        "project": "validity",
+        "tags": [
+          "validity",
+          "temporal",
+          "window"
+        ],
+        "topic": "temporal"
+      },
+      "namespace": "evals/validity",
+      "run_id": "run-validity-001",
+      "user_id": "eval-user",
+      "valid_from": "2026-01-09T00:00:00Z",
+      "valid_until": "2026-02-10T00:00:00Z"
+    },
+    {
+      "agent_id": "atlas",
+      "content": "CONTEXT: Never use production, private, or local personal memory content in fixtures.",
+      "id": "mem_context_no_private_data",
+      "memory_type": "semantic",
+      "metadata": {
+        "benchmark": {
+          "suite": "memory-retrieval-benchmark",
+          "tier": "gold"
+        },
+        "project": "safety",
+        "tags": [
+          "privacy",
+          "synthetic"
+        ],
+        "topic": "privacy"
+      },
+      "namespace": "evals/safety",
+      "run_id": "run-safety-001",
+      "user_id": "eval-user",
+      "valid_from": "2026-01-10T00:00:00Z",
+      "valid_until": null
+    },
+    {
+      "agent_id": "atlas",
+      "content": "TASK: This temporary memory expires before the February validity checkpoint.",
+      "id": "mem_task_temporal_cutoff",
+      "memory_type": "episodic",
+      "metadata": {
+        "benchmark": {
+          "suite": "memory-retrieval-benchmark",
+          "tier": "gold"
+        },
+        "project": "validity",
+        "tags": [
+          "temporal",
+          "expiry"
+        ],
+        "topic": "cutoff"
+      },
+      "namespace": "evals/validity",
+      "run_id": "run-validity-002",
+      "user_id": "eval-user",
+      "valid_from": "2026-02-01T00:00:00Z",
+      "valid_until": "2026-02-18T00:00:00Z"
+    },
+    {
+      "agent_id": "atlas",
+      "content": "DECISION: Represent temporal windows in ISO 8601 UTC for deterministic parsing.",
+      "id": "mem_decision_temporal_utc",
+      "memory_type": "semantic",
+      "metadata": {
+        "benchmark": {
+          "suite": "memory-retrieval-benchmark",
+          "tier": "gold"
+        },
+        "project": "validity",
+        "tags": [
+          "utc",
+          "iso8601",
+          "temporal"
+        ],
+        "topic": "utc"
+      },
+      "namespace": "evals/validity",
+      "run_id": "run-validity-003",
+      "user_id": "eval-user",
+      "valid_from": "2026-02-15T00:00:00Z",
+      "valid_until": null
+    },
+    {
+      "agent_id": "atlas",
+      "content": "PROJECT: Recall fusion blends lexical evidence and graph evidence for benchmark queries.",
+      "id": "mem_project_recall_fusion_plan",
+      "memory_type": "semantic",
+      "metadata": {
+        "benchmark": {
+          "suite": "memory-retrieval-benchmark",
+          "tier": "gold"
+        },
+        "project": "search",
+        "tags": [
+          "recall",
+          "fusion",
+          "graph"
+        ],
+        "topic": "fusion"
+      },
+      "namespace": "evals/search",
+      "run_id": "run-search-002",
+      "user_id": "eval-user",
+      "valid_from": "2026-03-01T00:00:00Z",
+      "valid_until": null
+    },
+    {
+      "agent_id": "atlas",
+      "content": "USER: Prefer terse benchmark notes and short rationale lines.",
+      "id": "mem_user_pref_terse_notes",
+      "memory_type": "semantic",
+      "metadata": {
+        "benchmark": {
+          "suite": "memory-retrieval-benchmark",
+          "tier": "gold"
+        },
+        "project": "notes",
+        "tags": [
+          "terse",
+          "short"
+        ],
+        "topic": "terse"
+      },
+      "namespace": "evals/notes",
+      "run_id": "run-notes-002",
+      "user_id": "eval-user",
+      "valid_from": "2026-01-12T00:00:00Z",
+      "valid_until": null
+    },
+    {
+      "agent_id": "atlas",
+      "content": "CONTEXT: Use namespace evals/memory-retrieval for benchmark runs and fixtures.",
+      "id": "mem_context_namespace_evals",
+      "memory_type": "semantic",
+      "metadata": {
+        "benchmark": {
+          "suite": "memory-retrieval-benchmark",
+          "tier": "gold"
+        },
+        "project": "core",
+        "tags": [
+          "namespace",
+          "evals",
+          "benchmark"
+        ],
+        "topic": "namespace"
+      },
+      "namespace": "evals/core",
+      "run_id": "run-core-002",
+      "user_id": "eval-user",
+      "valid_from": "2026-01-13T00:00:00Z",
+      "valid_until": null
+    }
+  ],
+  "version": 1
+}

@@ -1,0 +1,85 @@
+{
+  "entities": [
+    {
+      "description": "Synthetic benchmark suite for memory retrieval.",
+      "entity_type": "project",
+      "id": "ent_benchmark_suite",
+      "name": "memory-retrieval-benchmark"
+    },
+    {
+      "description": "Auth fixture domain.",
+      "entity_type": "service",
+      "id": "ent_auth_service",
+      "name": "auth service"
+    },
+    {
+      "description": "Billing fixture domain.",
+      "entity_type": "service",
+      "id": "ent_billing_service",
+      "name": "billing service"
+    },
+    {
+      "description": "Hybrid retrieval path for the benchmark.",
+      "entity_type": "component",
+      "id": "ent_recall_engine",
+      "name": "recall engine"
+    },
+    {
+      "description": "Synthetic memory corpus used by the benchmark.",
+      "entity_type": "dataset",
+      "id": "ent_fixture_corpus",
+      "name": "fixture corpus"
+    }
+  ],
+  "relations": [
+    {
+      "from_entity": "ent_benchmark_suite",
+      "relation_type": "uses",
+      "to_entity": "ent_fixture_corpus",
+      "weight": 1.0
+    },
+    {
+      "from_entity": "ent_benchmark_suite",
+      "relation_type": "exercises",
+      "to_entity": "ent_recall_engine",
+      "weight": 0.9
+    },
+    {
+      "from_entity": "ent_auth_service",
+      "relation_type": "feeds",
+      "to_entity": "ent_recall_engine",
+      "weight": 0.8
+    },
+    {
+      "from_entity": "ent_billing_service",
+      "relation_type": "feeds",
+      "to_entity": "ent_recall_engine",
+      "weight": 0.8
+    },
+    {
+      "from_entity": "ent_recall_engine",
+      "relation_type": "queries",
+      "to_entity": "ent_fixture_corpus",
+      "weight": 1.0
+    },
+    {
+      "from_entity": "ent_fixture_corpus",
+      "relation_type": "covers",
+      "to_entity": "ent_auth_service",
+      "weight": 0.7
+    },
+    {
+      "from_entity": "ent_fixture_corpus",
+      "relation_type": "covers",
+      "to_entity": "ent_billing_service",
+      "weight": 0.7
+    },
+    {
+      "from_entity": "ent_auth_service",
+      "relation_type": "shares_namespace",
+      "to_entity": "ent_billing_service",
+      "weight": 0.5
+    }
+  ],
+  "version": 1
+}
