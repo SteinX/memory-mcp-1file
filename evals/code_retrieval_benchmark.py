@@ -15,7 +15,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from evals.lib.mcp_client import McpClient, build_env, resolve_mcp_command
-from evals.lib.metrics import aggregate_metrics, compute_query_metrics, write_json_report, write_markdown_report
+from evals.lib.metrics import aggregate_metrics, classify_reason_code, classify_reason_codes, compute_query_metrics, write_json_report, write_markdown_report
 
 
 ROOT = PROJECT_ROOT
@@ -118,13 +118,16 @@ def _blocker(
     stderr_tail: Sequence[str],
     reason_code: str | None,
 ) -> dict[str, Any]:
-    return {
+    blocker = {
         "phase": phase,
         "command_or_tool": command_or_tool,
         "message": message,
         "stderr_tail": [str(line) for line in stderr_tail if str(line).strip()],
         "summary_partial_reason_code": reason_code,
     }
+    if reason_code:
+        blocker["reason_code_classification"] = classify_reason_code(reason_code, evidence={"retrieval_blocked": True})
+    return blocker
 
 
 def _wait_embedding_ready(
@@ -468,6 +471,13 @@ def run_benchmark(args: argparse.Namespace) -> int:
                             "expected_symbols": [str(v) for v in query.get("expected_symbols", [])],
                             "result_paths_top_10": top_paths,
                             "summary_partial_reason_code": rc,
+                            "reason_code_classification": classify_reason_code(
+                                rc,
+                                evidence={
+                                    "retrieval_blocked": query_error is not None,
+                                    "failure_type": "call_error" if query_error else "none",
+                                },
+                            ) if rc else None,
                             "query_error": query_error,
                             "symbol_probe": symbol_probe,
                             **metrics_row,
@@ -482,6 +492,13 @@ def run_benchmark(args: argparse.Namespace) -> int:
     aggregate["baseline_query_count"] = len(query_set)
     aggregate["readiness_timeout"] = bool(any(b.get("phase") in {"embedding_readiness", "index_readiness"} for b in blockers))
     aggregate["observed_summary_partial_reason_codes"] = sorted(observed_reason_codes)
+    aggregate["reason_code_classification"] = classify_reason_codes(
+        aggregate["observed_summary_partial_reason_codes"],
+        evidence={
+            "blocker_count": len(blockers),
+            "readiness_timeout": aggregate["readiness_timeout"],
+        },
+    )
 
     environment = {
         "root": str(ROOT),
