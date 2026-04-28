@@ -8,6 +8,101 @@ from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
 
 
+REASON_CODE_EXPLANATIONS: dict[str, str] = {
+    "missing": "Requested contract data was absent; inspect surrounding result/blocker evidence before treating it as a failure.",
+    "stale": "Contract data is present but not current; usually degraded unless the query has fresh successful retrieval evidence.",
+    "partial": "The response is intentionally partial; informational when retrieval/readiness succeeded, degraded or blocking only with supporting evidence.",
+    "degraded": "The server explicitly reported degraded behavior.",
+    "invalid_locator": "The caller supplied a locator that cannot be resolved.",
+    "generation_mismatch": "The response was produced from a different generation than the caller expected.",
+    "unsupported": "The requested contract feature or lookup mode is unsupported by this surface.",
+}
+
+
+def classify_reason_code(reason_code: Any, *, evidence: Mapping[str, Any] | None = None) -> dict[str, str]:
+    code = str(reason_code) if reason_code is not None else "unknown"
+    evidence = evidence or {}
+    blocker_count = int(evidence.get("blocker_count") or 0)
+    readiness_timeout = bool(evidence.get("readiness_timeout"))
+    failure_type = str(evidence.get("failure_type") or "")
+    retrieval_blocked = bool(evidence.get("retrieval_blocked")) or failure_type in {"call_error", "parse_error", "embedding_not_ready"}
+
+    if code == "partial":
+        if blocker_count > 0 or readiness_timeout or retrieval_blocked:
+            classification = "blocking" if retrieval_blocked or readiness_timeout else "degraded"
+            explanation = "Partial contract metadata coincides with readiness/query blocker evidence."
+        elif bool(evidence.get("readiness_degraded")):
+            classification = "degraded"
+            explanation = "Partial contract metadata coincides with degraded readiness evidence."
+        else:
+            classification = "informational"
+            explanation = REASON_CODE_EXPLANATIONS["partial"]
+    elif code in {"degraded", "stale", "generation_mismatch"}:
+        classification = "degraded"
+        explanation = REASON_CODE_EXPLANATIONS.get(code, "Contract metadata indicates degraded semantics.")
+    elif code in {"invalid_locator", "unsupported"}:
+        classification = "blocking"
+        explanation = REASON_CODE_EXPLANATIONS.get(code, "Contract metadata indicates the request cannot be satisfied as issued.")
+    elif code == "missing":
+        classification = "blocking" if blocker_count > 0 or retrieval_blocked else "informational"
+        explanation = REASON_CODE_EXPLANATIONS["missing"]
+    else:
+        classification = "informational"
+        explanation = "Unknown reason code; preserved as informational unless surrounding blocker evidence says otherwise."
+
+    return {
+        "reason_code": code,
+        "classification": classification,
+        "impact": classification,
+        "explanation": explanation,
+    }
+
+
+def classify_reason_codes(reason_codes: Sequence[Any] | Iterable[Any], *, evidence: Mapping[str, Any] | None = None) -> dict[str, dict[str, str]]:
+    codes = sorted({str(code) for code in reason_codes if isinstance(code, str) and code})
+    return {code: classify_reason_code(code, evidence=evidence) for code in codes}
+
+
+def classify_readiness_fallback(settle: Mapping[str, Any] | None) -> dict[str, Any]:
+    if not isinstance(settle, Mapping):
+        return {
+            "status": "unavailable",
+            "impact": "informational",
+            "elapsed_s": None,
+            "explanation": "No settle_readiness result was recorded for this run.",
+        }
+
+    status = str(settle.get("status") or "unknown")
+    reason = str(settle.get("reason") or "")
+    elapsed_s = settle.get("elapsed_s")
+    fallback_used = status.startswith("fallback") or status == "timeout"
+    if status == "ready":
+        impact = "informational"
+        explanation = "Readiness was confirmed by an explicit server signal."
+    elif status == "timeout":
+        impact = "blocking"
+        explanation = "Readiness polling timed out; retrieval evidence may be incomplete."
+    elif fallback_used:
+        impact = "degraded"
+        explanation = "Readiness used fallback settling because no direct ready signal was available; results can still be valid but should be reviewed with elapsed time."
+    else:
+        impact = "informational"
+        explanation = "Readiness settling completed without a blocking fallback classification."
+
+    return {
+        "status": status,
+        "reason": reason,
+        "impact": impact,
+        "classification": impact,
+        "elapsed_s": elapsed_s,
+        "fallback_used": fallback_used,
+        "fallback_sleep_s": settle.get("fallback_sleep_s"),
+        "poll_attempts": settle.get("poll_attempts"),
+        "readiness_signal": settle.get("readiness_signal"),
+        "explanation": explanation,
+    }
+
+
 def _as_id_list(values: Sequence[Any] | Iterable[Any]) -> list[str]:
     return [str(value) for value in values]
 
@@ -39,6 +134,64 @@ def precision_at_k(
     results = _as_id_list(result_ids)[:k]
     hits = sum(1 for result_id in results if result_id in expected)
     return hits / float(k)
+
+
+def recall_at_k(
+    result_ids: Sequence[Any] | Iterable[Any],
+    expected_ids: Sequence[Any] | Iterable[Any],
+    k: int,
+) -> float:
+    if k <= 0:
+        return 0.0
+    expected = _expected_id_set(expected_ids)
+    if not expected:
+        return 0.0
+    results = _as_id_list(result_ids)[:k]
+    hits = len({result_id for result_id in results if result_id in expected})
+    return hits / float(len(expected))
+
+
+def _dcg_at_k(result_ids: Sequence[Any] | Iterable[Any], expected_ids: Sequence[Any] | Iterable[Any], k: int) -> float:
+    if k <= 0:
+        return 0.0
+    expected = _expected_id_set(expected_ids)
+    if not expected:
+        return 0.0
+
+    score = 0.0
+    seen_relevant: set[str] = set()
+    for index, result_id in enumerate(_as_id_list(result_ids)[:k], start=1):
+        if result_id in expected and result_id not in seen_relevant:
+            seen_relevant.add(result_id)
+            score += 1.0 / math.log2(index + 1)
+    return score
+
+
+def _ideal_dcg_at_k(relevant_count: int, k: int) -> float:
+    if k <= 0 or relevant_count <= 0:
+        return 0.0
+    score = 0.0
+    for index in range(1, min(k, relevant_count) + 1):
+        score += 1.0 / math.log2(index + 1)
+    return score
+
+
+def ndcg_at_k(
+    result_ids: Sequence[Any] | Iterable[Any],
+    expected_ids: Sequence[Any] | Iterable[Any],
+    k: int,
+) -> float:
+    if k <= 0:
+        return 0.0
+    expected = _expected_id_set(expected_ids)
+    if not expected:
+        return 0.0
+
+    dcg = _dcg_at_k(result_ids, expected, k)
+    ideal = _ideal_dcg_at_k(len(expected), k)
+    if ideal <= 0.0:
+        return 0.0
+    return dcg / ideal
 
 
 def mrr(result_ids: Sequence[Any] | Iterable[Any], expected_ids: Sequence[Any] | Iterable[Any]) -> float:
@@ -90,6 +243,8 @@ def compute_query_metrics(
     }
     for k in ks:
         row[f"precision_at_{int(k)}"] = precision_at_k(results, expected, int(k))
+        row[f"recall_at_{int(k)}"] = recall_at_k(results, expected, int(k))
+        row[f"ndcg_at_{int(k)}"] = ndcg_at_k(results, expected, int(k))
     row["hit_count"] = 0 if row["expected_rank"] is None else 1
     return row
 
@@ -99,6 +254,10 @@ def aggregate_metrics(per_query: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
     latencies = [row.get("latency_ms") for row in rows if row.get("latency_ms") is not None]
     precision_5 = [float(row.get("precision_at_5", 0.0)) for row in rows]
     precision_10 = [float(row.get("precision_at_10", 0.0)) for row in rows]
+    recall_5 = [float(row.get("recall_at_5", 0.0)) for row in rows]
+    recall_10 = [float(row.get("recall_at_10", 0.0)) for row in rows]
+    ndcg_5 = [float(row.get("ndcg_at_5", 0.0)) for row in rows]
+    ndcg_10 = [float(row.get("ndcg_at_10", 0.0)) for row in rows]
     reciprocal_ranks = [float(row.get("mrr", 0.0)) for row in rows]
     ranks = [int(row["expected_rank"]) for row in rows if row.get("expected_rank") is not None]
     hits = sum(1 for row in rows if row.get("expected_rank") is not None)
@@ -108,6 +267,10 @@ def aggregate_metrics(per_query: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
         "hit_rate": (hits / len(rows)) if rows else 0.0,
         "precision_at_5": (sum(precision_5) / len(precision_5)) if precision_5 else 0.0,
         "precision_at_10": (sum(precision_10) / len(precision_10)) if precision_10 else 0.0,
+        "recall_at_5": (sum(recall_5) / len(recall_5)) if recall_5 else 0.0,
+        "recall_at_10": (sum(recall_10) / len(recall_10)) if recall_10 else 0.0,
+        "ndcg_at_5": (sum(ndcg_5) / len(ndcg_5)) if ndcg_5 else 0.0,
+        "ndcg_at_10": (sum(ndcg_10) / len(ndcg_10)) if ndcg_10 else 0.0,
         "mrr": (sum(reciprocal_ranks) / len(reciprocal_ranks)) if reciprocal_ranks else 0.0,
         "mean_expected_rank": (sum(ranks) / len(ranks)) if ranks else None,
         "latency_summary": summary,
@@ -203,21 +366,69 @@ def write_markdown_report(
         for warning in warnings:
             lines.append(f"- {_format_value(warning)}")
 
+    reason_code_classification = aggregate_metrics_value.get("reason_code_classification")
+    if isinstance(reason_code_classification, dict) and reason_code_classification:
+        lines.extend(["", "## Reason code classification", "", "| Reason code | Impact | Explanation |", "|---|---|---|"])
+        for code in sorted(reason_code_classification):
+            row = reason_code_classification.get(code)
+            if not isinstance(row, Mapping):
+                continue
+            lines.append(
+                "| "
+                + f"{_format_value(code)} | "
+                + f"{_format_value(row.get('impact') or row.get('classification'))} | "
+                + f"{_format_value(row.get('explanation'))} |"
+            )
+
+    readiness_fallback = aggregate_metrics_value.get("readiness_fallback")
+    if isinstance(readiness_fallback, Mapping) and readiness_fallback:
+        lines.extend(["", "## Readiness fallback", ""])
+        lines.append(f"- Status: `{_format_value(readiness_fallback.get('status'))}`")
+        lines.append(f"- Impact: `{_format_value(readiness_fallback.get('impact') or readiness_fallback.get('classification'))}`")
+        lines.append(f"- Elapsed (s): `{_format_value(readiness_fallback.get('elapsed_s'))}`")
+        lines.append(f"- Fallback used: `{_format_value(readiness_fallback.get('fallback_used'))}`")
+        if readiness_fallback.get("explanation") is not None:
+            lines.append(f"- Explanation: {_format_value(readiness_fallback.get('explanation'))}")
+
     if blockers:
         lines.extend(["", "## Blockers", ""])
         for blocker in blockers:
             lines.append(f"- {_format_value(blocker)}")
 
-    lines.extend(["", "## Per-query metrics", "", "| Query | Rank | MRR | P@5 | P@10 | Latency ms |", "|---|---:|---:|---:|---:|---:|"])
+    lines.extend(
+        [
+            "",
+            "## Per-query metrics",
+            "",
+            "| Query | Rank | MRR | R@5 | R@10 | NDCG@5 | NDCG@10 | P@5 | P@10 | Latency ms | Failure | Top-1 |",
+            "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|---|",
+        ]
+    )
     for index, row in enumerate(per_query, start=1):
+        top_1 = "—"
+        raw_top_k = row.get("raw_top_k")
+        if isinstance(raw_top_k, list) and raw_top_k:
+            first = raw_top_k[0]
+            if isinstance(first, dict):
+                first_id = first.get("result_id")
+                first_fixture = first.get("fixture_id")
+                top_1 = _format_value(first_id)
+                if first_fixture:
+                    top_1 = f"{top_1} ({_format_value(first_fixture)})"
         lines.append(
             "| "
             + f"{_format_value(row.get('query_id', index))} | "
             + f"{_format_value(row.get('expected_rank'))} | "
             + f"{_format_value(row.get('mrr'))} | "
+            + f"{_format_value(row.get('recall_at_5'))} | "
+            + f"{_format_value(row.get('recall_at_10'))} | "
+            + f"{_format_value(row.get('ndcg_at_5'))} | "
+            + f"{_format_value(row.get('ndcg_at_10'))} | "
             + f"{_format_value(row.get('precision_at_5'))} | "
             + f"{_format_value(row.get('precision_at_10'))} | "
-            + f"{_format_value(row.get('latency_ms'))} |"
+            + f"{_format_value(row.get('latency_ms'))} | "
+            + f"{_format_value(row.get('failure_type'))} | "
+            + f"{top_1} |"
         )
 
     output_path = Path(path)
@@ -225,11 +436,293 @@ def write_markdown_report(
     output_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
+REPO_ROOT = Path(__file__).resolve().parents[2]
+EVAL_EVIDENCE_DIR = REPO_ROOT / ".sisyphus" / "evidence" / "evals"
+LEGACY_CODE_BASELINE_JSON = REPO_ROOT / ".sisyphus" / "evidence" / "task-2-recall-code-baseline.json"
+
+
+def _load_json_report(path: str | Path | None) -> dict[str, Any] | None:
+    if path is None:
+        return None
+    p = Path(path)
+    if not p.exists():
+        return None
+    return json.loads(p.read_text(encoding="utf-8"))
+
+
+def _aggregate_value(payload: Mapping[str, Any] | None, key: str) -> Any:
+    if not isinstance(payload, Mapping):
+        return None
+    aggregate = payload.get("aggregate_metrics")
+    if not isinstance(aggregate, Mapping):
+        aggregate = {}
+    value = aggregate.get(key)
+    if value is None and key == "blocker_count":
+        blockers = payload.get("blockers")
+        if isinstance(blockers, list):
+            return len(blockers)
+    return value
+
+
+def _numeric_delta(before: Any, after: Any) -> float | None:
+    if isinstance(before, (int, float)) and isinstance(after, (int, float)):
+        return float(after) - float(before)
+    return None
+
+
+def _metric_delta(payload_before: Mapping[str, Any] | None, payload_after: Mapping[str, Any] | None, key: str) -> dict[str, Any]:
+    before = _aggregate_value(payload_before, key)
+    after = _aggregate_value(payload_after, key)
+    return {
+        "before": before,
+        "after": after,
+        "delta": _numeric_delta(before, after),
+    }
+
+
+def _reason_codes(payload: Mapping[str, Any] | None) -> list[str] | None:
+    if not isinstance(payload, Mapping):
+        return None
+    value = _aggregate_value(payload, "observed_summary_partial_reason_codes")
+    if not isinstance(value, list):
+        return []
+    return sorted({str(code) for code in value if isinstance(code, str) and code})
+
+
+def _reason_code_delta(before_codes: list[str] | None, after_codes: list[str] | None) -> dict[str, Any] | None:
+    if before_codes is None or after_codes is None:
+        return None
+    before_set = set(before_codes)
+    after_set = set(after_codes)
+    return {
+        "added": sorted(after_set - before_set),
+        "removed": sorted(before_set - after_set),
+        "count_delta": len(after_set) - len(before_set),
+    }
+
+
+def _blocker_signatures(payload: Mapping[str, Any] | None) -> list[str] | None:
+    if not isinstance(payload, Mapping):
+        return None
+    blockers = payload.get("blockers")
+    if not isinstance(blockers, list):
+        return []
+    signatures: list[str] = []
+    for blocker in blockers:
+        if isinstance(blocker, Mapping):
+            phase = blocker.get("phase")
+            message = blocker.get("message") or blocker.get("error")
+            if phase or message:
+                signatures.append(f"{_format_value(phase)}: {_format_value(message)}")
+                continue
+        signatures.append(_format_value(blocker))
+    return signatures
+
+
+def _blocker_delta(before_blockers: list[str] | None, after_blockers: list[str] | None) -> dict[str, Any] | None:
+    if before_blockers is None or after_blockers is None:
+        return None
+    before_set = set(before_blockers)
+    after_set = set(after_blockers)
+    return {
+        "added": sorted(after_set - before_set),
+        "removed": sorted(before_set - after_set),
+        "count_delta": len(after_set) - len(before_set),
+    }
+
+
+def _build_baseline_diff(
+    *,
+    benchmark_name: str,
+    before_path: str | Path | None,
+    after_path: str | Path | None,
+) -> dict[str, Any]:
+    before_payload = _load_json_report(before_path)
+    after_payload = _load_json_report(after_path)
+    before_available = before_payload is not None
+    after_available = after_payload is not None
+
+    reason_codes_before = _reason_codes(before_payload)
+    reason_codes_after = _reason_codes(after_payload)
+    blocker_signatures_before = _blocker_signatures(before_payload)
+    blocker_signatures_after = _blocker_signatures(after_payload)
+
+    metrics = {
+        "hit_rate": _metric_delta(before_payload, after_payload, "hit_rate"),
+        "mrr": _metric_delta(before_payload, after_payload, "mrr"),
+        "precision_at_5": _metric_delta(before_payload, after_payload, "precision_at_5"),
+        "precision_at_10": _metric_delta(before_payload, after_payload, "precision_at_10"),
+        "mean_latency_ms": _metric_delta(before_payload, after_payload, "mean_latency_ms"),
+        "max_latency_ms": _metric_delta(before_payload, after_payload, "max_latency_ms"),
+        "p95_latency_ms": _metric_delta(before_payload, after_payload, "p95_latency_ms"),
+        "blocker_count": _metric_delta(before_payload, after_payload, "blocker_count"),
+        "reason_codes": {
+            "before": reason_codes_before,
+            "after": reason_codes_after,
+            "delta": _reason_code_delta(reason_codes_before, reason_codes_after),
+        },
+        "blockers": {
+            "before": blocker_signatures_before,
+            "after": blocker_signatures_after,
+            "delta": _blocker_delta(blocker_signatures_before, blocker_signatures_after),
+        },
+    }
+
+    return {
+        "generated_at_utc": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "benchmark_name": benchmark_name,
+        "baseline_pair": {
+            "before": str(before_path) if before_path is not None else None,
+            "after": str(after_path) if after_path is not None else None,
+            "before_available": before_available,
+            "after_available": after_available,
+        },
+        "metrics": metrics,
+        "notes": [
+            "Diff artifacts are evidence/reporting only.",
+            "These deltas are informational and are not used as CI regression gates.",
+        ],
+    }
+
+
+def write_baseline_diff_json(path: str | Path, diff_payload: Mapping[str, Any]) -> None:
+    output_path = Path(path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(json.dumps(dict(diff_payload), indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def write_baseline_diff_markdown(path: str | Path, title: str, diff_payload: Mapping[str, Any]) -> None:
+    baseline_pair = diff_payload.get("baseline_pair") if isinstance(diff_payload, Mapping) else {}
+    metrics = diff_payload.get("metrics") if isinstance(diff_payload, Mapping) else {}
+    lines: list[str] = [f"# {title}"]
+
+    lines.extend(
+        [
+            "",
+            "## Baseline pair",
+            "",
+            f"- Before: `{_format_value((baseline_pair or {}).get('before'))}`",
+            f"- After: `{_format_value((baseline_pair or {}).get('after'))}`",
+            f"- Before available: `{_format_value((baseline_pair or {}).get('before_available'))}`",
+            f"- After available: `{_format_value((baseline_pair or {}).get('after_available'))}`",
+            "",
+            "## Metric deltas",
+            "",
+            "| Metric | Before | After | Delta |",
+            "|---|---:|---:|---:|",
+        ]
+    )
+
+    for key in (
+        "hit_rate",
+        "mrr",
+        "precision_at_5",
+        "precision_at_10",
+        "recall_at_5",
+        "recall_at_10",
+        "ndcg_at_5",
+        "ndcg_at_10",
+        "mean_latency_ms",
+        "max_latency_ms",
+        "p95_latency_ms",
+        "blocker_count",
+    ):
+        triplet = metrics.get(key) if isinstance(metrics, Mapping) else {}
+        lines.append(
+            "| "
+            + f"{key} | "
+            + f"{_format_value((triplet or {}).get('before'))} | "
+            + f"{_format_value((triplet or {}).get('after'))} | "
+            + f"{_format_value((triplet or {}).get('delta'))} |"
+        )
+
+    reason_codes = metrics.get("reason_codes") if isinstance(metrics, Mapping) else {}
+    blockers = metrics.get("blockers") if isinstance(metrics, Mapping) else {}
+
+    lines.extend(["", "## Reason codes", ""])
+    lines.append(f"- before: `{_format_value((reason_codes or {}).get('before'))}`")
+    lines.append(f"- after: `{_format_value((reason_codes or {}).get('after'))}`")
+    lines.append(f"- delta: `{_format_value((reason_codes or {}).get('delta'))}`")
+
+    lines.extend(["", "## Blockers", ""])
+    lines.append(f"- before: `{_format_value((blockers or {}).get('before'))}`")
+    lines.append(f"- after: `{_format_value((blockers or {}).get('after'))}`")
+    lines.append(f"- delta: `{_format_value((blockers or {}).get('delta'))}`")
+
+    lines.extend(
+        [
+            "",
+            "## Policy",
+            "",
+            "- Baseline diff is reporting/evidence only.",
+            "- No CI gate or automated regression blocker is enforced by this diff output.",
+        ]
+    )
+
+    output_path = Path(path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def _latest_memory_pre_remap_baseline() -> Path | None:
+    candidates = sorted(EVAL_EVIDENCE_DIR.glob("memory-retrieval-baseline-pre-remap-*.json"))
+    return candidates[-1] if candidates else None
+
+
+def generate_baseline_diff_artifacts(
+    *,
+    memory_before: str | Path | None,
+    memory_after: str | Path | None,
+    memory_diff_json: str | Path,
+    memory_diff_md: str | Path,
+    code_before: str | Path | None,
+    code_after: str | Path | None,
+    code_diff_json: str | Path,
+    code_diff_md: str | Path,
+) -> dict[str, Any]:
+    memory_diff = _build_baseline_diff(
+        benchmark_name="memory_retrieval_baseline",
+        before_path=memory_before,
+        after_path=memory_after,
+    )
+    code_diff = _build_baseline_diff(
+        benchmark_name="code_retrieval_baseline",
+        before_path=code_before,
+        after_path=code_after,
+    )
+
+    write_baseline_diff_json(memory_diff_json, memory_diff)
+    write_baseline_diff_markdown(memory_diff_md, "Memory Retrieval Baseline Diff", memory_diff)
+    write_baseline_diff_json(code_diff_json, code_diff)
+    write_baseline_diff_markdown(code_diff_md, "Code Retrieval Baseline Diff", code_diff)
+
+    return {
+        "memory": {
+            "json": str(memory_diff_json),
+            "markdown": str(memory_diff_md),
+            "baseline_pair": memory_diff.get("baseline_pair"),
+        },
+        "code": {
+            "json": str(code_diff_json),
+            "markdown": str(code_diff_md),
+            "baseline_pair": code_diff.get("baseline_pair"),
+        },
+    }
+
+
 def _self_test() -> None:
     assert expected_rank(["a", "b", "c"], ["x", "c"]) == 3
     assert expected_rank(["a", "b", "c"], ["z"]) is None
     assert precision_at_k(["a", "b", "c"], ["b"], 5) == 0.2
     assert precision_at_k(["a", "b", "c"], ["z"], 5) == 0.0
+    assert recall_at_k(["a", "b", "c"], ["b", "c"], 1) == 0.0
+    assert recall_at_k(["a", "b", "c"], ["b", "c"], 2) == 0.5
+    assert recall_at_k(["a", "b", "c"], ["b", "c"], 3) == 1.0
+    assert recall_at_k(["a", "b", "c"], [], 5) == 0.0
+    assert round(ndcg_at_k(["a", "b", "c"], ["b", "c"], 2), 10) == round((1.0 / math.log2(3)) / (1.0 + (1.0 / math.log2(3))), 10)
+    assert round(ndcg_at_k(["b", "c", "a"], ["b", "c"], 2), 10) == 1.0
+    assert round(ndcg_at_k(["c", "b", "a"], ["b", "c"], 2), 10) == 1.0
+    assert ndcg_at_k(["a", "b", "c"], [], 5) == 0.0
     assert mrr(["a", "b", "c"], ["b"]) == 0.5
     assert mrr(["a", "b", "c"], ["z"]) == 0.0
 
@@ -237,6 +730,8 @@ def _self_test() -> None:
     assert negative_row["expected_rank"] is None
     assert negative_row["mrr"] == 0.0
     assert negative_row["precision_at_5"] == 0.0
+    assert negative_row["recall_at_5"] == 0.0
+    assert negative_row["ndcg_at_5"] == 0.0
     assert negative_row["negative"] is True
 
     per_query = [
@@ -246,6 +741,8 @@ def _self_test() -> None:
     aggregate = aggregate_metrics(per_query)
     assert aggregate["query_count"] == 2
     assert aggregate["precision_at_5"] == 0.1
+    assert aggregate["recall_at_5"] == 0.5
+    assert round(aggregate["ndcg_at_5"], 12) == round((0.6309297535714575 + 0.0) / 2.0, 12)
     assert aggregate["mrr"] == 0.25
     assert aggregate["mean_latency_ms"] == 15.0
     assert aggregate["max_latency_ms"] == 20.0
@@ -290,14 +787,54 @@ def _self_test() -> None:
     assert "## Run context" in markdown
     assert "Command used:" in markdown
 
+    diff_payload = _build_baseline_diff(
+        benchmark_name="self_test",
+        before_path=None,
+        after_path=payload_path,
+    )
+    assert diff_payload["baseline_pair"]["before_available"] is False
+    assert diff_payload["baseline_pair"]["after_available"] is True
+    assert "hit_rate" in diff_payload["metrics"]
+
+    diff_json = payload_path.with_name("metrics-self-test-diff.json")
+    diff_md = payload_path.with_name("metrics-self-test-diff.md")
+    write_baseline_diff_json(diff_json, diff_payload)
+    write_baseline_diff_markdown(diff_md, "Metrics Self-Test Diff", diff_payload)
+    loaded_diff = json.loads(diff_json.read_text(encoding="utf-8"))
+    assert loaded_diff["benchmark_name"] == "self_test"
+    assert "Metric deltas" in diff_md.read_text(encoding="utf-8")
+
 
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Pure-Python metrics helpers for memory retrieval benchmarks.")
     parser.add_argument("--self-test", action="store_true", help="Run built-in correctness checks.")
+    parser.add_argument("--baseline-diff", action="store_true", help="Generate baseline diff JSON/Markdown artifacts for memory and code benchmarks.")
+    parser.add_argument("--memory-before", type=Path, default=None, help="Path to memory benchmark baseline BEFORE JSON.")
+    parser.add_argument("--memory-after", type=Path, default=EVAL_EVIDENCE_DIR / "memory-retrieval-baseline.json", help="Path to memory benchmark baseline AFTER JSON.")
+    parser.add_argument("--memory-diff-json", type=Path, default=EVAL_EVIDENCE_DIR / "memory-retrieval-baseline-diff.json", help="Output path for memory baseline diff JSON.")
+    parser.add_argument("--memory-diff-md", type=Path, default=EVAL_EVIDENCE_DIR / "memory-retrieval-baseline-diff.md", help="Output path for memory baseline diff Markdown.")
+    parser.add_argument("--code-before", type=Path, default=LEGACY_CODE_BASELINE_JSON, help="Path to code benchmark baseline BEFORE JSON.")
+    parser.add_argument("--code-after", type=Path, default=EVAL_EVIDENCE_DIR / "code-retrieval-baseline.json", help="Path to code benchmark baseline AFTER JSON.")
+    parser.add_argument("--code-diff-json", type=Path, default=EVAL_EVIDENCE_DIR / "code-retrieval-baseline-diff.json", help="Output path for code baseline diff JSON.")
+    parser.add_argument("--code-diff-md", type=Path, default=EVAL_EVIDENCE_DIR / "code-retrieval-baseline-diff.md", help="Output path for code baseline diff Markdown.")
     args = parser.parse_args(list(argv) if argv is not None else None)
     if args.self_test:
         _self_test()
         print("self-test passed")
+        return 0
+    if args.baseline_diff:
+        memory_before = args.memory_before if args.memory_before is not None else _latest_memory_pre_remap_baseline()
+        outputs = generate_baseline_diff_artifacts(
+            memory_before=memory_before,
+            memory_after=args.memory_after,
+            memory_diff_json=args.memory_diff_json,
+            memory_diff_md=args.memory_diff_md,
+            code_before=args.code_before,
+            code_after=args.code_after,
+            code_diff_json=args.code_diff_json,
+            code_diff_md=args.code_diff_md,
+        )
+        print(json.dumps(outputs, indent=2, sort_keys=True))
         return 0
     parser.print_help()
     return 0
