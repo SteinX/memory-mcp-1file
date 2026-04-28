@@ -1,0 +1,52 @@
+{
+  "required_fields": [
+    "schema_version",
+    "fixture_tier",
+    "baseline_version",
+    "threshold_policy",
+    "threshold_status",
+    "readiness_summary",
+    "failure_buckets",
+    "baseline_diff_summary",
+    "metric_summary"
+  ],
+  "reports": {
+    "memory-small.json": {
+      "missing_fields": [],
+      "schema_version": "2.0",
+      "fixture_tier": "small",
+      "threshold_status": "pass",
+      "blocker_count": null,
+      "has_metric_summary": true,
+      "has_failure_buckets": true
+    },
+    "code-small.json": {
+      "missing_fields": [],
+      "schema_version": "2.0",
+      "fixture_tier": "small",
+      "threshold_status": "deferred",
+      "blocker_count": null,
+      "has_metric_summary": true,
+      "has_failure_buckets": true
+    },
+    "memory-medium.json": {
+      "missing_fields": [],
+      "schema_version": "2.0",
+      "fixture_tier": "medium",
+      "threshold_status": "pass",
+      "blocker_count": null,
+      "has_metric_summary": true,
+      "has_failure_buckets": true
+    },
+    "code-medium.json": {
+      "missing_fields": [],
+      "schema_version": "2.0",
+      "fixture_tier": "medium",
+      "threshold_status": "deferred",
+      "blocker_count": null,
+      "has_metric_summary": true,
+      "has_failure_buckets": true
+    }
+  },
+  "errors": []
+}

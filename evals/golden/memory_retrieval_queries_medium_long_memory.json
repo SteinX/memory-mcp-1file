@@ -1,0 +1,172 @@
+{
+  "queries": [
+    {
+      "expected_ids": [
+        "medium_mem_task_aurora_retention_snapshots",
+        "medium_mem_decision_aurora_archive_partitions",
+        "medium_mem_research_aurora_week_six_churn"
+      ],
+      "filters": {},
+      "id": "medium_q_long_memory_aurora_retention_context",
+      "mode": "hybrid",
+      "query": "Keiko Aurora retention snapshots archive continuity week-six churn",
+      "query_type": "recall_fusion",
+      "rationale": "Hybrid retrieval should stitch together long-horizon Aurora retention task, archival decision, and historical churn research.",
+      "tool": "recall",
+      "label_rationale": {
+        "scenario_category": "long_memory_recall",
+        "tier": "medium",
+        "why_label_is_correct": "All expected memories share person/project/topic alignment for Aurora long-memory retention signals across different months.",
+        "expected_behavior": "Should retrieve the three Aurora long-memory records near top ranks because the query spans their shared retention terms.",
+        "expected_ids": [
+          "medium_mem_task_aurora_retention_snapshots",
+          "medium_mem_decision_aurora_archive_partitions",
+          "medium_mem_research_aurora_week_six_churn"
+        ],
+        "no_match_expected": false
+      }
+    },
+    {
+      "expected_ids": [
+        "medium_mem_task_vega_timeout_regressions",
+        "medium_mem_decision_vega_rollback_namespace"
+      ],
+      "filters": {
+        "namespace": "evals/mempalace-medium/vega"
+      },
+      "id": "medium_q_namespace_boundary_vega_only",
+      "mode": "hybrid",
+      "query": "checkout timeout rollback reliability namespace",
+      "query_type": "recall_fusion",
+      "rationale": "Namespace-bound recall should isolate Vega reliability memories and avoid similarly themed records from other namespaces.",
+      "tool": "recall",
+      "label_rationale": {
+        "scenario_category": "namespace_boundary",
+        "tier": "medium",
+        "why_label_is_correct": "Both expected IDs are the only records in the Vega namespace and intentionally separate from Aurora/Platform/Hermes namespaces.",
+        "expected_behavior": "Should retrieve only Vega namespace records when namespace filter is applied.",
+        "expected_ids": [
+          "medium_mem_task_vega_timeout_regressions",
+          "medium_mem_decision_vega_rollback_namespace"
+        ],
+        "no_match_expected": false
+      }
+    },
+    {
+      "expected_ids": [
+        "medium_mem_decision_lumen_parser_fallback_removed"
+      ],
+      "filters": {
+        "namespace": "evals/mempalace-medium/platform",
+        "valid_at": "2026-01-22T00:00:00Z"
+      },
+      "id": "medium_q_temporal_boundary_post_cutover",
+      "mode": null,
+      "query": "platform parser fallback status after cutover",
+      "query_type": "get_valid_temporal",
+      "rationale": "Temporal checkpoint after cutover should return only the post-cutover decision, excluding the expired temporary fallback task.",
+      "tool": "get_valid",
+      "label_rationale": {
+        "scenario_category": "temporal_boundary",
+        "tier": "medium",
+        "why_label_is_correct": "Temporary fallback expires on 2026-01-20 while removal decision starts 2026-01-21, making the temporal boundary deterministic.",
+        "expected_behavior": "Should include only the removal decision at valid_at 2026-01-22.",
+        "expected_ids": [
+          "medium_mem_decision_lumen_parser_fallback_removed"
+        ],
+        "no_match_expected": false
+      }
+    },
+    {
+      "expected_ids": [],
+      "filters": {},
+      "id": "medium_q_negative_no_match_synthetic_nonsense",
+      "mode": "hybrid",
+      "query": "violet astrolabe moonlit parquet tensor",
+      "query_type": "negative_no_match",
+      "rationale": "Nonsense query text should not map to any synthetic medium fixture memory.",
+      "tool": "recall",
+      "label_rationale": {
+        "scenario_category": "negative_no_match",
+        "tier": "medium",
+        "why_label_is_correct": "The query intentionally contains unrelated tokens absent from all medium fixture records.",
+        "expected_behavior": "Should produce no expected matches.",
+        "expected_ids": [],
+        "no_match_expected": true
+      }
+    },
+    {
+      "expected_ids": [
+        "medium_mem_decision_hermes_partial_readiness",
+        "medium_mem_research_hermes_reason_codes"
+      ],
+      "filters": {},
+      "id": "medium_q_partial_readiness_contract_reason_codes",
+      "mode": "bm25",
+      "query": "partial readiness reason_code missing stale degraded generation_mismatch",
+      "query_type": "search_bm25",
+      "rationale": "Lexical reason-code terms should align with Hermes partial-readiness decision and reason-code research memory.",
+      "tool": "search_memory",
+      "label_rationale": {
+        "scenario_category": "partial_readiness",
+        "tier": "medium",
+        "why_label_is_correct": "Expected IDs are the only medium records explicitly about partial readiness and reason code taxonomy.",
+        "expected_behavior": "Should retrieve Hermes partial-readiness records for lexical reason-code queries.",
+        "expected_ids": [
+          "medium_mem_decision_hermes_partial_readiness",
+          "medium_mem_research_hermes_reason_codes"
+        ],
+        "no_match_expected": false
+      }
+    },
+    {
+      "expected_ids": [
+        "medium_mem_task_id_alias_mapping",
+        "medium_mem_decision_fixture_id_canonical"
+      ],
+      "filters": {},
+      "id": "medium_q_id_alias_mapping_fixture_vs_server",
+      "mode": "hybrid",
+      "query": "fixture id alias mapping canonical server generated remap",
+      "query_type": "recall_fusion",
+      "rationale": "Alias/remapping terminology should retrieve ID-mapping task and canonical fixture-ID decision together.",
+      "tool": "recall",
+      "label_rationale": {
+        "scenario_category": "id_mismatch_alias",
+        "tier": "medium",
+        "why_label_is_correct": "These records specifically encode fixture-to-server ID remapping behavior and canonical label policy.",
+        "expected_behavior": "Should retrieve alias/remap records for ID mismatch and mapping prompts.",
+        "expected_ids": [
+          "medium_mem_task_id_alias_mapping",
+          "medium_mem_decision_fixture_id_canonical"
+        ],
+        "no_match_expected": false
+      }
+    },
+    {
+      "expected_ids": [
+        "medium_mem_context_record_shaped_ids",
+        "medium_mem_research_record_id_normalization"
+      ],
+      "filters": {},
+      "id": "medium_q_record_shaped_id_normalization",
+      "mode": "vector",
+      "query": "nested String wrapper record-shaped IDs normalization diagnostics",
+      "query_type": "search_vector",
+      "rationale": "Vector search should connect semantically similar record-shaped ID wrapper and normalization memories.",
+      "tool": "search_memory",
+      "label_rationale": {
+        "scenario_category": "record_shaped_ids",
+        "tier": "medium",
+        "why_label_is_correct": "Both expected records discuss object-wrapped/String-form identifiers and normalization for ranking diagnostics.",
+        "expected_behavior": "Should retrieve record-shaped ID normalization context for semantic wrapper-ID queries.",
+        "expected_ids": [
+          "medium_mem_context_record_shaped_ids",
+          "medium_mem_research_record_id_normalization"
+        ],
+        "no_match_expected": false
+      }
+    }
+  ],
+  "version": 1
+}

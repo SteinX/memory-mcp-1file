@@ -1,0 +1,3 @@
+self-test: loaded baseline query count=15 from evals/golden/code_retrieval_queries_v2.json (canonical=evals/golden/code_retrieval_queries_v2.json)
+self-test: validated tier query counts={"medium": 14, "small": 15, "stress": 6}
+self-test passed

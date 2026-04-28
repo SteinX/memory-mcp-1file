@@ -1,0 +1,2152 @@
+{
+  "aggregate_metrics": {
+    "baseline_query_count": 7,
+    "blocker_count": 0,
+    "hit_rate": 0.8571428571428571,
+    "latency_summary": {
+      "count": 7,
+      "max_latency_ms": 27.682750000003864,
+      "mean_latency_ms": 14.804547428571116,
+      "p95_latency_ms": 27.682750000003864
+    },
+    "max_latency_ms": 27.682750000003864,
+    "mean_expected_rank": 1.0,
+    "mean_latency_ms": 14.804547428571116,
+    "mrr": 0.8571428571428571,
+    "ndcg_at_10": 0.8571428571428571,
+    "ndcg_at_5": 0.8571428571428571,
+    "observed_summary_partial_reason_codes": [],
+    "p95_latency_ms": 27.682750000003864,
+    "positive_hit_rate": 1.0,
+    "positive_mean_mrr": 1.0,
+    "positive_mean_ndcg_at_5": 1.0,
+    "positive_mean_precision_at_10": 0.19999999999999998,
+    "positive_mean_precision_at_5": 0.39999999999999997,
+    "positive_mean_recall_at_5": 1.0,
+    "positive_query_count": 6,
+    "precision_at_10": 0.17142857142857143,
+    "precision_at_5": 0.34285714285714286,
+    "query_count": 7,
+    "readiness_fallback": {
+      "classification": "degraded",
+      "elapsed_s": 7.01,
+      "explanation": "Readiness used fallback settling because no direct ready signal was available; results can still be valid but should be reviewed with elapsed time.",
+      "fallback_sleep_s": 3.0,
+      "fallback_used": true,
+      "impact": "degraded",
+      "poll_attempts": 3,
+      "readiness_signal": "none",
+      "reason": "no_direct_readiness_signal",
+      "status": "fallback_after_no_signal"
+    },
+    "reason_code_classification": {},
+    "recall_at_10": 0.8571428571428571,
+    "recall_at_5": 0.8571428571428571,
+    "runtime_minutes": 1.049038,
+    "seed_completed": true,
+    "threshold_evaluation": {
+      "enforcement": "local-only",
+      "evaluated_metrics": 8,
+      "failure_counts": {
+        "blocker": 0,
+        "warn": 0
+      },
+      "failures": [],
+      "fixture_tier": "medium",
+      "policy_name": "local-v2-threshold-policy",
+      "reason": "all required threshold checks passed",
+      "status": "pass"
+    }
+  },
+  "baseline_diff_summary": {
+    "reason": "baseline diff summary is produced by explicit baseline-diff workflow",
+    "status": "deferred"
+  },
+  "baseline_version": "v2-initial",
+  "benchmark_name": "memory_retrieval_baseline",
+  "blockers": [],
+  "deterministic_local_metadata": {
+    "determinism_policy": {
+      "name": "stable_fixture_order+stable_tie_break+stable_report_order+tolerance_1e-9_1e-6"
+    },
+    "runtime_target": {
+      "optional_policy": "explicit medium-tier run",
+      "required_by_default": false,
+      "target_minutes": "15-30"
+    },
+    "threshold_policy_enforcement": "local-only"
+  },
+  "environment": {
+    "data_dir": "/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-8-memory-retrieval-data-0r4rbvzy",
+    "data_dir_strategy": "temporary isolated DATA_DIR",
+    "duration_seconds": 62.96,
+    "embedding_model": "e5_small",
+    "mode": "benchmark",
+    "raw": {
+      "embedding_readiness": {
+        "elapsed_s": 54.121,
+        "poll_attempts": 28,
+        "poll_snapshots": [
+          {
+            "embedding_phase": "Fetching config...",
+            "embedding_progress_percent": null,
+            "embedding_status": "loading",
+            "parse_errors": [],
+            "reason_code": null,
+            "status": "loading"
+          },
+          {
+            "embedding_phase": "Fetching tokenizer...",
+            "embedding_progress_percent": null,
+            "embedding_status": "loading",
+            "parse_errors": [],
+            "reason_code": null,
+            "status": "loading"
+          },
+          {
+            "embedding_phase": "Fetching tokenizer...",
+            "embedding_progress_percent": null,
+            "embedding_status": "loading",
+            "parse_errors": [],
+            "reason_code": null,
+            "status": "loading"
+          },
+          {
+            "embedding_phase": "Fetching tokenizer...",
+            "embedding_progress_percent": null,
+            "embedding_status": "loading",
+            "parse_errors": [],
+            "reason_code": null,
+            "status": "loading"
+          },
+          {
+            "embedding_phase": "Downloading model weights...",
+            "embedding_progress_percent": 0.5365607142448425,
+            "embedding_status": "loading",
+            "parse_errors": [],
+            "reason_code": null,
+            "status": "loading"
+          },
+          {
+            "embedding_phase": "Downloading model weights...",
+            "embedding_progress_percent": 4.010803699493408,
+            "embedding_status": "loading",
+            "parse_errors": [],
+            "reason_code": null,
+            "status": "loading"
+          },
+          {
+            "embedding_phase": "Downloading model weights...",
+            "embedding_progress_percent": 7.917366981506348,
+            "embedding_status": "loading",
+            "parse_errors": [],
+            "reason_code": null,
+            "status": "loading"
+          },
+          {
+            "embedding_phase": "Downloading model weights...",
+            "embedding_progress_percent": 12.313485145568848,
+            "embedding_status": "loading",
+            "parse_errors": [],
+            "reason_code": null,
+            "status": "loading"
+          },
+          {
+            "embedding_phase": "Downloading model weights...",
+            "embedding_progress_percent": 17.22889518737793,
+            "embedding_status": "loading",
+            "parse_errors": [],
+            "reason_code": null,
+            "status": "loading"
+          },
+          {
+            "embedding_phase": "Downloading model weights...",
+            "embedding_progress_percent": 22.125553131103516,
+            "embedding_status": "loading",
+            "parse_errors": [],
+            "reason_code": null,
+            "status": "loading"
+          },
+          {
+            "embedding_phase": "Downloading model weights...",
+            "embedding_progress_percent": 27.269176483154297,
+            "embedding_status": "loading",
+            "parse_errors": [],
+            "reason_code": null,
+            "status": "loading"
+          },
+          {
+            "embedding_phase": "Downloading model weights...",
+            "embedding_progress_percent": 32.275909423828125,
+            "embedding_status": "loading",
+            "parse_errors": [],
+            "reason_code": null,
+            "status": "loading"
+          },
+          {
+            "embedding_phase": "Downloading model weights...",
+            "embedding_progress_percent": 36.974300384521484,
+            "embedding_status": "loading",
+            "parse_errors": [],
+            "reason_code": null,
+            "status": "loading"
+          },
+          {
+            "embedding_phase": "Downloading model weights...",
+            "embedding_progress_percent": 42.30241012573242,
+            "embedding_status": "loading",
+            "parse_errors": [],
+            "reason_code": null,
+            "status": "loading"
+          },
+          {
+            "embedding_phase": "Downloading model weights...",
+            "embedding_progress_percent": 46.27869415283203,
+            "embedding_status": "loading",
+            "parse_errors": [],
+            "reason_code": null,
+            "status": "loading"
+          },
+          {
+            "embedding_phase": "Downloading model weights...",
+            "embedding_progress_percent": 51.040470123291016,
+            "embedding_status": "loading",
+            "parse_errors": [],
+            "reason_code": null,
+            "status": "loading"
+          },
+          {
+            "embedding_phase": "Downloading model weights...",
+            "embedding_progress_percent": 55.349552154541016,
+            "embedding_status": "loading",
+            "parse_errors": [],
+            "reason_code": null,
+            "status": "loading"
+          },
+          {
+            "embedding_phase": "Downloading model weights...",
+            "embedding_progress_percent": 59.53201675415039,
+            "embedding_status": "loading",
+            "parse_errors": [],
+            "reason_code": null,
+            "status": "loading"
+          },
+          {
+            "embedding_phase": "Downloading model weights...",
+            "embedding_progress_percent": 63.750328063964844,
+            "embedding_status": "loading",
+            "parse_errors": [],
+            "reason_code": null,
+            "status": "loading"
+          },
+          {
+            "embedding_phase": "Downloading model weights...",
+            "embedding_progress_percent": 68.46099853515625,
+            "embedding_status": "loading",
+            "parse_errors": [],
+            "reason_code": null,
+            "status": "loading"
+          },
+          {
+            "embedding_phase": "Downloading model weights...",
+            "embedding_progress_percent": 73.79781341552734,
+            "embedding_status": "loading",
+            "parse_errors": [],
+            "reason_code": null,
+            "status": "loading"
+          },
+          {
+            "embedding_phase": "Downloading model weights...",
+            "embedding_progress_percent": 77.9478759765625,
+            "embedding_status": "loading",
+            "parse_errors": [],
+            "reason_code": null,
+            "status": "loading"
+          },
+          {
+            "embedding_phase": "Downloading model weights...",
+            "embedding_progress_percent": 81.3169174194336,
+            "embedding_status": "loading",
+            "parse_errors": [],
+            "reason_code": null,
+            "status": "loading"
+          },
+          {
+            "embedding_phase": "Downloading model weights...",
+            "embedding_progress_percent": 86.15848541259766,
+            "embedding_status": "loading",
+            "parse_errors": [],
+            "reason_code": null,
+            "status": "loading"
+          },
+          {
+            "embedding_phase": "Downloading model weights...",
+            "embedding_progress_percent": 90.7078628540039,
+            "embedding_status": "loading",
+            "parse_errors": [],
+            "reason_code": null,
+            "status": "loading"
+          },
+          {
+            "embedding_phase": "Downloading model weights...",
+            "embedding_progress_percent": 95.83807373046875,
+            "embedding_status": "loading",
+            "parse_errors": [],
+            "reason_code": null,
+            "status": "loading"
+          },
+          {
+            "embedding_phase": "Loading model into memory...",
+            "embedding_progress_percent": null,
+            "embedding_status": "loading",
+            "parse_errors": [],
+            "reason_code": null,
+            "status": "loading"
+          },
+          {
+            "embedding_phase": null,
+            "embedding_progress_percent": null,
+            "embedding_status": "ready",
+            "parse_errors": [],
+            "reason_code": null,
+            "status": "healthy"
+          }
+        ],
+        "reason": "embedding_ready",
+        "reason_codes": [],
+        "status": "ready",
+        "status_errors": []
+      },
+      "fixture_validation": {
+        "caps": {
+          "memory_count_max": 120,
+          "query_count_max": 80
+        },
+        "coverage": {
+          "id_mismatch_alias": true,
+          "long_memory_recall": true,
+          "namespace_boundary": true,
+          "negative_no_match": true,
+          "partial_readiness": true,
+          "record_shaped_ids": true,
+          "temporal_boundary": true
+        },
+        "explicit_alias_count": 0,
+        "fixture_paths": {
+          "golden_queries": "evals/golden/memory_retrieval_queries_medium_long_memory.json",
+          "memory_corpus": "evals/fixtures/memory_corpus_medium_long_memory.json"
+        },
+        "memory_count": 13,
+        "memory_unique_ids": 13,
+        "query_count": 7
+      },
+      "query_diagnostics": {
+        "call_error_count": 0,
+        "degraded_or_partial_count": 0,
+        "parse_issue_count": 0
+      },
+      "query_validation": {
+        "fixture_tier": "medium",
+        "observed_query_types": [
+          "get_valid_temporal",
+          "negative_no_match",
+          "recall_fusion",
+          "search_bm25",
+          "search_vector"
+        ],
+        "query_count": 7
+      },
+      "seed_progress": {
+        "blockers": [],
+        "finished_at": "2026-04-28T12:59:24Z",
+        "fixture_paths": {
+          "golden_queries": "/Users/xiayiming1/Documents/Workspace/memory-mcp-1file/evals/golden/memory_retrieval_queries_medium_long_memory.json",
+          "memory_corpus": "/Users/xiayiming1/Documents/Workspace/memory-mcp-1file/evals/fixtures/memory_corpus_medium_long_memory.json",
+          "memory_graph": "/Users/xiayiming1/Documents/Workspace/memory-mcp-1file/evals/fixtures/memory_graph.json"
+        },
+        "graph": {
+          "calls": [
+            {
+              "entity_id": "98d15ed3b8dee3abc971",
+              "kind": "entity",
+              "name": "memory-retrieval-benchmark",
+              "parse_errors": []
+            },
+            {
+              "entity_id": "88967b792f494bb0f6eb",
+              "kind": "entity",
+              "name": "auth service",
+              "parse_errors": []
+            },
+            {
+              "entity_id": "f85f296efa7f90ea9de0",
+              "kind": "entity",
+              "name": "billing service",
+              "parse_errors": []
+            },
+            {
+              "entity_id": "1dcfb1fa79fd759c6880",
+              "kind": "entity",
+              "name": "recall engine",
+              "parse_errors": []
+            },
+            {
+              "entity_id": "e97ab0c3d8835a6bc8c6",
+              "kind": "entity",
+              "name": "fixture corpus",
+              "parse_errors": []
+            },
+            {
+              "from_entity": "ent_benchmark_suite",
+              "kind": "relation",
+              "parse_errors": [],
+              "relation_id": "9b5d28c18743d36587c6",
+              "relation_type": "uses",
+              "to_entity": "ent_fixture_corpus"
+            },
+            {
+              "from_entity": "ent_benchmark_suite",
+              "kind": "relation",
+              "parse_errors": [],
+              "relation_id": "ae021c0949535659cd1b",
+              "relation_type": "exercises",
+              "to_entity": "ent_recall_engine"
+            },
+            {
+              "from_entity": "ent_auth_service",
+              "kind": "relation",
+              "parse_errors": [],
+              "relation_id": "9a3b442a1d712a4f1951",
+              "relation_type": "feeds",
+              "to_entity": "ent_recall_engine"
+            },
+            {
+              "from_entity": "ent_billing_service",
+              "kind": "relation",
+              "parse_errors": [],
+              "relation_id": "4ed93a6100de7084f31a",
+              "relation_type": "feeds",
+              "to_entity": "ent_recall_engine"
+            },
+            {
+              "from_entity": "ent_recall_engine",
+              "kind": "relation",
+              "parse_errors": [],
+              "relation_id": "b58e7ee4d3db6625393e",
+              "relation_type": "queries",
+              "to_entity": "ent_fixture_corpus"
+            },
+            {
+              "from_entity": "ent_fixture_corpus",
+              "kind": "relation",
+              "parse_errors": [],
+              "relation_id": "70742a7f3500a255b572",
+              "relation_type": "covers",
+              "to_entity": "ent_auth_service"
+            },
+            {
+              "from_entity": "ent_fixture_corpus",
+              "kind": "relation",
+              "parse_errors": [],
+              "relation_id": "6f05a82ec8c4384aa080",
+              "relation_type": "covers",
+              "to_entity": "ent_billing_service"
+            },
+            {
+              "from_entity": "ent_auth_service",
+              "kind": "relation",
+              "parse_errors": [],
+              "relation_id": "8d4671fc2016c4266c1e",
+              "relation_type": "shares_namespace",
+              "to_entity": "ent_billing_service"
+            }
+          ],
+          "entity_count": 5,
+          "entity_ids": [
+            "98d15ed3b8dee3abc971",
+            "88967b792f494bb0f6eb",
+            "f85f296efa7f90ea9de0",
+            "1dcfb1fa79fd759c6880",
+            "e97ab0c3d8835a6bc8c6"
+          ],
+          "relation_count": 8,
+          "relation_ids": [
+            "9b5d28c18743d36587c6",
+            "ae021c0949535659cd1b",
+            "9a3b442a1d712a4f1951",
+            "4ed93a6100de7084f31a",
+            "b58e7ee4d3db6625393e",
+            "70742a7f3500a255b572",
+            "6f05a82ec8c4384aa080",
+            "8d4671fc2016c4266c1e"
+          ]
+        },
+        "memory": {
+          "calls": [
+            {
+              "agent_id": "atlas",
+              "fixture_id": "medium_mem_task_aurora_retention_snapshots",
+              "memory_id": "bd35a5c5496cf1427575",
+              "memory_type": "episodic",
+              "namespace": "evals/mempalace-medium/aurora",
+              "parse_errors": [],
+              "run_id": "medium-run-001",
+              "user_id": "eval-user"
+            },
+            {
+              "agent_id": "atlas",
+              "fixture_id": "medium_mem_decision_aurora_archive_partitions",
+              "memory_id": "26e5c0091c41ad11eb77",
+              "memory_type": "semantic",
+              "namespace": "evals/mempalace-medium/aurora",
+              "parse_errors": [],
+              "run_id": "medium-run-001",
+              "user_id": "eval-user"
+            },
+            {
+              "agent_id": "atlas",
+              "fixture_id": "medium_mem_research_aurora_week_six_churn",
+              "memory_id": "557412cb237be044e3ea",
+              "memory_type": "semantic",
+              "namespace": "evals/mempalace-medium/aurora",
+              "parse_errors": [],
+              "run_id": "medium-run-001",
+              "user_id": "eval-user"
+            },
+            {
+              "agent_id": "atlas",
+              "fixture_id": "medium_mem_task_vega_timeout_regressions",
+              "memory_id": "64a7b4f4b9db6290e68c",
+              "memory_type": "episodic",
+              "namespace": "evals/mempalace-medium/vega",
+              "parse_errors": [],
+              "run_id": "medium-run-002",
+              "user_id": "eval-user"
+            },
+            {
+              "agent_id": "atlas",
+              "fixture_id": "medium_mem_decision_vega_rollback_namespace",
+              "memory_id": "757e40b76e7e7686a7ad",
+              "memory_type": "semantic",
+              "namespace": "evals/mempalace-medium/vega",
+              "parse_errors": [],
+              "run_id": "medium-run-002",
+              "user_id": "eval-user"
+            },
+            {
+              "agent_id": "atlas",
+              "fixture_id": "medium_mem_task_lumen_parser_fallback_temp",
+              "memory_id": "7af156dfc495b228bfff",
+              "memory_type": "episodic",
+              "namespace": "evals/mempalace-medium/platform",
+              "parse_errors": [],
+              "run_id": "medium-run-003",
+              "user_id": "eval-user"
+            },
+            {
+              "agent_id": "atlas",
+              "fixture_id": "medium_mem_decision_lumen_parser_fallback_removed",
+              "memory_id": "f2a8939317396ec099a7",
+              "memory_type": "semantic",
+              "namespace": "evals/mempalace-medium/platform",
+              "parse_errors": [],
+              "run_id": "medium-run-003",
+              "user_id": "eval-user"
+            },
+            {
+              "agent_id": "atlas",
+              "fixture_id": "medium_mem_decision_hermes_partial_readiness",
+              "memory_id": "40cb6624ac3b505cf3f5",
+              "memory_type": "semantic",
+              "namespace": "evals/mempalace-medium/hermes",
+              "parse_errors": [],
+              "run_id": "medium-run-004",
+              "user_id": "eval-user"
+            },
+            {
+              "agent_id": "atlas",
+              "fixture_id": "medium_mem_research_hermes_reason_codes",
+              "memory_id": "6d5508448e943cd1435b",
+              "memory_type": "semantic",
+              "namespace": "evals/mempalace-medium/hermes",
+              "parse_errors": [],
+              "run_id": "medium-run-004",
+              "user_id": "eval-user"
+            },
+            {
+              "agent_id": "atlas",
+              "fixture_id": "medium_mem_task_id_alias_mapping",
+              "memory_id": "4a72bab1826163ffa42a",
+              "memory_type": "episodic",
+              "namespace": "evals/mempalace-medium/evalid",
+              "parse_errors": [],
+              "run_id": "medium-run-005",
+              "user_id": "eval-user"
+            },
+            {
+              "agent_id": "atlas",
+              "fixture_id": "medium_mem_decision_fixture_id_canonical",
+              "memory_id": "fa1f2b8aef6b4fa9df03",
+              "memory_type": "semantic",
+              "namespace": "evals/mempalace-medium/evalid",
+              "parse_errors": [],
+              "run_id": "medium-run-005",
+              "user_id": "eval-user"
+            },
+            {
+              "agent_id": "atlas",
+              "fixture_id": "medium_mem_context_record_shaped_ids",
+              "memory_id": "3fd0d830c5c0a58a7e63",
+              "memory_type": "semantic",
+              "namespace": "evals/mempalace-medium/evalid",
+              "parse_errors": [],
+              "run_id": "medium-run-005",
+              "user_id": "eval-user"
+            },
+            {
+              "agent_id": "atlas",
+              "fixture_id": "medium_mem_research_record_id_normalization",
+              "memory_id": "f98bc5a535a1187360b9",
+              "memory_type": "semantic",
+              "namespace": "evals/mempalace-medium/evalid",
+              "parse_errors": [],
+              "run_id": "medium-run-005",
+              "user_id": "eval-user"
+            }
+          ],
+          "fixture_to_server_id_map": {
+            "medium_mem_context_record_shaped_ids": "3fd0d830c5c0a58a7e63",
+            "medium_mem_decision_aurora_archive_partitions": "26e5c0091c41ad11eb77",
+            "medium_mem_decision_fixture_id_canonical": "fa1f2b8aef6b4fa9df03",
+            "medium_mem_decision_hermes_partial_readiness": "40cb6624ac3b505cf3f5",
+            "medium_mem_decision_lumen_parser_fallback_removed": "f2a8939317396ec099a7",
+            "medium_mem_decision_vega_rollback_namespace": "757e40b76e7e7686a7ad",
+            "medium_mem_research_aurora_week_six_churn": "557412cb237be044e3ea",
+            "medium_mem_research_hermes_reason_codes": "6d5508448e943cd1435b",
+            "medium_mem_research_record_id_normalization": "f98bc5a535a1187360b9",
+            "medium_mem_task_aurora_retention_snapshots": "bd35a5c5496cf1427575",
+            "medium_mem_task_id_alias_mapping": "4a72bab1826163ffa42a",
+            "medium_mem_task_lumen_parser_fallback_temp": "7af156dfc495b228bfff",
+            "medium_mem_task_vega_timeout_regressions": "64a7b4f4b9db6290e68c"
+          },
+          "memory_count": 13,
+          "memory_ids": [
+            "bd35a5c5496cf1427575",
+            "26e5c0091c41ad11eb77",
+            "557412cb237be044e3ea",
+            "64a7b4f4b9db6290e68c",
+            "757e40b76e7e7686a7ad",
+            "7af156dfc495b228bfff",
+            "f2a8939317396ec099a7",
+            "40cb6624ac3b505cf3f5",
+            "6d5508448e943cd1435b",
+            "4a72bab1826163ffa42a",
+            "fa1f2b8aef6b4fa9df03",
+            "3fd0d830c5c0a58a7e63",
+            "f98bc5a535a1187360b9"
+          ]
+        },
+        "phases": [
+          {
+            "finished_at": "2026-04-28T12:59:16Z",
+            "phase": "load_and_validate_fixtures",
+            "started_at": "2026-04-28T12:59:16Z",
+            "status": "completed",
+            "validation": {
+              "caps": {
+                "memory_count_max": 120,
+                "query_count_max": 80
+              },
+              "coverage": {
+                "id_mismatch_alias": true,
+                "long_memory_recall": true,
+                "namespace_boundary": true,
+                "negative_no_match": true,
+                "partial_readiness": true,
+                "record_shaped_ids": true,
+                "temporal_boundary": true
+              },
+              "explicit_alias_count": 0,
+              "fixture_paths": {
+                "golden_queries": "evals/golden/memory_retrieval_queries_medium_long_memory.json",
+                "memory_corpus": "evals/fixtures/memory_corpus_medium_long_memory.json"
+              },
+              "memory_count": 13,
+              "memory_unique_ids": 13,
+              "query_count": 7
+            }
+          },
+          {
+            "entity_count": 5,
+            "finished_at": "2026-04-28T12:59:16Z",
+            "phase": "seed_graph",
+            "relation_count": 8,
+            "started_at": "2026-04-28T12:59:16Z",
+            "status": "completed"
+          },
+          {
+            "finished_at": "2026-04-28T12:59:17Z",
+            "memory_count": 13,
+            "phase": "seed_memories",
+            "started_at": "2026-04-28T12:59:16Z",
+            "status": "completed"
+          },
+          {
+            "elapsed_s": 7.01,
+            "finished_at": "2026-04-28T12:59:24Z",
+            "phase": "settle_readiness",
+            "settle_status": "fallback_after_no_signal",
+            "started_at": "2026-04-28T12:59:17Z",
+            "status": "completed"
+          }
+        ],
+        "query_count": 7,
+        "seed_order": [
+          "knowledge_graph",
+          "store_memory"
+        ],
+        "settle": {
+          "elapsed_s": 7.01,
+          "fallback_sleep_s": 3.0,
+          "poll_attempts": 3,
+          "poll_snapshots": [
+            {
+              "attempt": 1,
+              "parse_errors": [],
+              "ready": null,
+              "signal_source": "none",
+              "status": "healthy"
+            },
+            {
+              "attempt": 2,
+              "parse_errors": [],
+              "ready": null,
+              "signal_source": "none",
+              "status": "healthy"
+            },
+            {
+              "attempt": 3,
+              "parse_errors": [],
+              "ready": null,
+              "signal_source": "none",
+              "status": "healthy"
+            }
+          ],
+          "readiness_signal": "none",
+          "reason": "no_direct_readiness_signal",
+          "status": "fallback_after_no_signal",
+          "status_errors": []
+        },
+        "started_at": "2026-04-28T12:59:16Z",
+        "status": "completed"
+      },
+      "startup_status": {
+        "embedding": {
+          "cached": false,
+          "dimensions": 384,
+          "elapsed_seconds": 0,
+          "eta_seconds": null,
+          "model": "e5_small_384",
+          "phase": "Fetching config...",
+          "status": "loading"
+        },
+        "memories_count": 0,
+        "status": "loading",
+        "version": "0.8.2"
+      }
+    },
+    "root": "/Users/xiayiming1/Documents/Workspace/memory-mcp-1file",
+    "server_command": [
+      "/Users/xiayiming1/Documents/Workspace/memory-mcp-1file/target/fast/memory-mcp",
+      "--stdio"
+    ],
+    "started_at_utc": "2026-04-28T12:58:21.738151+00:00",
+    "stderr_tail": [
+      "[memory-mcp] Auto-configured block cache: 16 MB (available RAM: 81 MB)",
+      "\u001b[2m2026-04-28T12:58:21.750978Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2mmemory_mcp\u001b[0m\u001b[2m:\u001b[0m memory-mcp starting \u001b[3mversion\u001b[0m\u001b[2m=\u001b[0m\"0.8.2\" \u001b[3mpid\u001b[0m\u001b[2m=\u001b[0m61690 \u001b[3mppid\u001b[0m\u001b[2m=\u001b[0m61688 \u001b[3mmode\u001b[0m\u001b[2m=\u001b[0m\"stdio\" \u001b[3mmodel\u001b[0m\u001b[2m=\u001b[0me5_small \u001b[3mdata_dir\u001b[0m\u001b[2m=\u001b[0m/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-8-memory-retrieval-data-0r4rbvzy",
+      "\u001b[2m2026-04-28T12:58:21.751315Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2msurrealdb::core::kvs::ds\u001b[0m\u001b[2m:\u001b[0m Starting kvs store at absolute path surrealkv:/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-8-memory-retrieval-data-0r4rbvzy/db",
+      "\u001b[2m2026-04-28T12:58:21.751480Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2msurrealdb::core::kvs::surrealkv\u001b[0m\u001b[2m:\u001b[0m Enabling value log separation: true",
+      "\u001b[2m2026-04-28T12:58:21.761051Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2msurrealdb::core::kvs::surrealkv\u001b[0m\u001b[2m:\u001b[0m Setting value log max file size: 268435456",
+      "\u001b[2m2026-04-28T12:58:21.761064Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2msurrealdb::core::kvs::surrealkv\u001b[0m\u001b[2m:\u001b[0m Setting value log threshold: 4096",
+      "\u001b[2m2026-04-28T12:58:21.761071Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2msurrealdb::core::kvs::surrealkv\u001b[0m\u001b[2m:\u001b[0m Versioning enabled: false with retention period: 0ns",
+      "\u001b[2m2026-04-28T12:58:21.761072Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2msurrealdb::core::kvs::surrealkv\u001b[0m\u001b[2m:\u001b[0m Versioning with versioned_index: false",
+      "\u001b[2m2026-04-28T12:58:21.761075Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2msurrealdb::core::kvs::surrealkv\u001b[0m\u001b[2m:\u001b[0m Setting block cache capacity: 16777216",
+      "\u001b[2m2026-04-28T12:58:21.761083Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2msurrealdb::core::kvs::surrealkv\u001b[0m\u001b[2m:\u001b[0m Setting block size: 65536",
+      "\u001b[2m2026-04-28T12:58:21.762534Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2msurrealkv::lsm\u001b[0m\u001b[2m:\u001b[0m === Starting LSM tree initialization ===",
+      "\u001b[2m2026-04-28T12:58:21.762541Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2msurrealkv::lsm\u001b[0m\u001b[2m:\u001b[0m Database path: \"/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-8-memory-retrieval-data-0r4rbvzy/db\"",
+      "\u001b[2m2026-04-28T12:58:21.795183Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2msurrealkv::lsm\u001b[0m\u001b[2m:\u001b[0m Manifest state: log_number=0, last_sequence=0",
+      "\u001b[2m2026-04-28T12:58:21.795194Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2msurrealkv::wal::recovery\u001b[0m\u001b[2m:\u001b[0m Starting WAL recovery from directory: \"/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-8-memory-retrieval-data-0r4rbvzy/db/wal\"",
+      "\u001b[2m2026-04-28T12:58:21.795341Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2msurrealkv::wal::recovery\u001b[0m\u001b[2m:\u001b[0m Replaying WAL segments #00000000000000000000 to #00000000000000000000",
+      "\u001b[2m2026-04-28T12:58:21.817509Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2msurrealkv::wal::recovery\u001b[0m\u001b[2m:\u001b[0m WAL recovery complete: 0 batches across 0 segments, 0 memtables created, max_seq_num=None",
+      "\u001b[2m2026-04-28T12:58:21.818089Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2msurrealkv::lsm\u001b[0m\u001b[2m:\u001b[0m === LSM tree initialization complete ===",
+      "\u001b[2m2026-04-28T12:58:21.825994Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2msurrealdb::core::kvs::surrealkv\u001b[0m\u001b[2m:\u001b[0m Sync mode: every transaction commit",
+      "\u001b[2m2026-04-28T12:58:21.826013Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2msurrealdb::core::kvs::surrealkv\u001b[0m\u001b[2m:\u001b[0m Grouped commit: enabled (timeout=5000000ns, wait_threshold=12, max_batch_size=4096)",
+      "\u001b[2m2026-04-28T12:58:21.826037Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2msurrealdb::core::kvs::ds\u001b[0m\u001b[2m:\u001b[0m Started surrealkv kvs store",
+      "\u001b[2m2026-04-28T12:58:22.460294Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2mmemory_mcp::storage::surrealdb\u001b[0m\u001b[2m:\u001b[0m Dimension check passed \u001b[3mmodel\u001b[0m\u001b[2m=\u001b[0m384 \u001b[3mdb\u001b[0m\u001b[2m=\u001b[0m384",
+      "\u001b[2m2026-04-28T12:58:22.460320Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2mmemory_mcp\u001b[0m\u001b[2m:\u001b[0m Embedding engine configured \u001b[3moutput_dim\u001b[0m\u001b[2m=\u001b[0m384 \u001b[3mmodel\u001b[0m\u001b[2m=\u001b[0me5_small",
+      "\u001b[2m2026-04-28T12:58:22.489705Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2mmemory_mcp::embedding::service\u001b[0m\u001b[2m:\u001b[0m Loading embedding model: E5Small",
+      "\u001b[2m2026-04-28T12:58:22.489703Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2mmemory_mcp::embedding::worker\u001b[0m\u001b[2m:\u001b[0m Embedding worker started, waiting for requests",
+      "\u001b[2m2026-04-28T12:58:22.489703Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2mmemory_mcp::forgetting::capacity\u001b[0m\u001b[2m:\u001b[0m Capacity controller started \u001b[3mcheck_interval_secs\u001b[0m\u001b[2m=\u001b[0m3600 \u001b[3msoft_limit\u001b[0m\u001b[2m=\u001b[0m10000 \u001b[3mcleanup_target_ratio\u001b[0m\u001b[2m=\u001b[0m0.800000011920929",
+      "\u001b[2m2026-04-28T12:58:22.490384Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2mrmcp::handler::server\u001b[0m\u001b[2m:\u001b[0m client initialized",
+      "\u001b[2m2026-04-28T12:58:22.490400Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[1mserve_inner\u001b[0m\u001b[2m:\u001b[0m \u001b[2mrmcp::service\u001b[0m\u001b[2m:\u001b[0m Service initialized as server \u001b[3mpeer_info\u001b[0m\u001b[2m=\u001b[0mSome(InitializeRequestParams { meta: None, protocol_version: ProtocolVersion(\"2024-11-05\"), capabilities: ClientCapabilities { experimental: None, extensions: None, roots: None, sampling: None, elicitation: None, tasks: None }, client_info: Implementation { name: \"memory-retrieval-benchmark\", title: None, version: \"0.1.0\", description: None, icons: None, website_url: None } })",
+      "\u001b[2m2026-04-28T12:58:22.490413Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2mmemory_mcp\u001b[0m\u001b[2m:\u001b[0m Server started in stdio mode, waiting for client disconnect or signals...",
+      "\u001b[2m2026-04-28T12:58:22.491154Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2mmemory_mcp::forgetting::capacity\u001b[0m\u001b[2m:\u001b[0m Capacity OK: 0 memories \u001b[3mcount\u001b[0m\u001b[2m=\u001b[0m0",
+      "\u001b[2m2026-04-28T12:58:29.010747Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2mmemory_mcp::embedding::service\u001b[0m\u001b[2m:\u001b[0m Downloading model weights from HuggingFace Hub...",
+      "\u001b[2m2026-04-28T12:59:15.447805Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2mmemory_mcp::embedding::service\u001b[0m\u001b[2m:\u001b[0m Embedding model ready \u001b[3melapsed_sec\u001b[0m\u001b[2m=\u001b[0m\"53.0\""
+    ]
+  },
+  "failure_buckets": {
+    "none": 6,
+    "wrong_rank": 1
+  },
+  "fixture_tier": "medium",
+  "generated_at_utc": "2026-04-28T12:59:24.699428Z",
+  "manifest": {
+    "baseline_refresh": {
+      "baseline_version": "v2-initial",
+      "canonical_target_requested": false,
+      "canonical_target_written": false,
+      "command": "python3 evals/memory_retrieval_benchmark.py --tier medium --output-json .sisyphus/evidence/benchmark-v2/final-wave/f3/memory-medium.json --output-md .sisyphus/evidence/benchmark-v2/final-wave/f3/memory-medium.md",
+      "fixture_tier": "medium",
+      "git_commit": "99ac9f7f3d83e89ef434df3c14bf70488dea95aa",
+      "model": "e5_small",
+      "output_json": ".sisyphus/evidence/benchmark-v2/final-wave/f3/memory-medium.json",
+      "output_md": ".sisyphus/evidence/benchmark-v2/final-wave/f3/memory-medium.md",
+      "refresh_mode": false,
+      "refresh_reason": null,
+      "refresh_requested": false,
+      "refresh_timestamp_utc": null,
+      "schema_version": "2.0"
+    },
+    "baseline_version": "v2-initial",
+    "command_selected": [
+      "/Users/xiayiming1/Documents/Workspace/memory-mcp-1file/target/fast/memory-mcp",
+      "--stdio"
+    ],
+    "data_dir_strategy": "temporary isolated DATA_DIR",
+    "determinism_policy": {
+      "name": "stable_fixture_order+stable_tie_break+stable_report_order+tolerance_1e-9_1e-6"
+    },
+    "fixture_counts": {
+      "golden_queries": 7,
+      "graph_entities": 5,
+      "graph_relations": 8,
+      "memories": 13
+    },
+    "fixture_paths": {
+      "golden_queries": "evals/golden/memory_retrieval_queries_medium_long_memory.json",
+      "memory_corpus": "evals/fixtures/memory_corpus_medium_long_memory.json",
+      "memory_graph": "evals/fixtures/memory_graph.json"
+    },
+    "fixture_tier": "medium",
+    "query_types": [
+      "get_valid_temporal",
+      "negative_no_match",
+      "recall_fusion",
+      "search_bm25",
+      "search_vector"
+    ],
+    "required_query_types": [
+      "get_valid_filtered",
+      "get_valid_temporal",
+      "negative_no_match",
+      "recall_fusion",
+      "search_bm25",
+      "search_vector"
+    ],
+    "runtime_target": {
+      "optional_policy": "explicit medium-tier run",
+      "required_by_default": false,
+      "target_minutes": "15-30"
+    },
+    "schema_version": "2.0",
+    "seed_order": [
+      "knowledge_graph",
+      "store_memory"
+    ],
+    "threshold_policy": {
+      "enforcement": "local-only",
+      "name": "local-v2-threshold-policy"
+    },
+    "tool_set": [
+      "knowledge_graph",
+      "store_memory",
+      "recall",
+      "search_memory",
+      "get_valid"
+    ]
+  },
+  "metric_summary": {
+    "blocker_count": 0,
+    "hit_rate": 0.8571428571428571,
+    "max_latency_ms": 27.682750000003864,
+    "mean_latency_ms": 14.804547428571116,
+    "mrr": 0.8571428571428571,
+    "ndcg_at_10": 0.8571428571428571,
+    "ndcg_at_5": 0.8571428571428571,
+    "p95_latency_ms": 27.682750000003864,
+    "positive_hit_rate": 1.0,
+    "positive_mean_mrr": 1.0,
+    "positive_mean_ndcg_at_5": 1.0,
+    "positive_mean_precision_at_5": 0.39999999999999997,
+    "positive_mean_recall_at_5": 1.0,
+    "positive_query_count": 6,
+    "precision_at_10": 0.17142857142857143,
+    "precision_at_5": 0.34285714285714286,
+    "query_count": 7,
+    "recall_at_10": 0.8571428571428571,
+    "recall_at_5": 0.8571428571428571,
+    "runtime_minutes": 1.049038
+  },
+  "per_query": [
+    {
+      "contract": {
+        "compatibility": {
+          "clients_must_ignore_unknown_enum_values": true,
+          "clients_must_ignore_unknown_fields": true,
+          "db_shape_is_not_public_contract": true,
+          "mode": "additive_first"
+        },
+        "generated_at": "2026-04-28T12:59:24.321655Z",
+        "generation_basis": {
+          "semantic_generation": 0,
+          "structural_generation": 0
+        },
+        "identity": {
+          "edge_id_semantics": "no_public_edge_ids",
+          "edge_ids_are_local_only": true,
+          "node_id_semantics": "stable_public_memory_id",
+          "node_ids_are_project_scoped": false,
+          "stable_edge_ids": false,
+          "stable_node_ids": true
+        },
+        "projection": {
+          "basis": "semantic_generation",
+          "generation": 0,
+          "materialization": {
+            "addressability_semantics": "no_stable_external_read_target_is_promised_until_materialization_strategy_changes",
+            "consistent_with_projection_state": true,
+            "current_generation": 0,
+            "identity_basis": "project_id + semantic_generation",
+            "is_addressable": false,
+            "locator_can_be_persisted_by_clients": false,
+            "locator_is_opaque": true,
+            "locator_scope": "none_when_not_materialized",
+            "locator_semantics": "absent_when_not_materialized; when present it identifies the externally consumable projection instance",
+            "locator_stability": "not_stable_until_materialization_strategy_changes",
+            "locator_survives_generation_change": false,
+            "persistence": "ephemeral_contract_only",
+            "persistence_semantics": "contract is exposed on status surfaces only; no persisted projection artifact is promised yet",
+            "refresh_basis": "semantic_generation",
+            "shape_version": 1,
+            "shape_version_semantics": "materialized_projection_payload_shape_version",
+            "strategy": "not_materialized"
+          },
+          "state": "missing"
+        },
+        "projection_state": "missing",
+        "schema_version": 1,
+        "surface_guidance": {
+          "forbidden_to_depend_fields": [],
+          "legacy_compatibility_fields": [
+            "count",
+            "filters",
+            "diagnostics",
+            "weights",
+            "query"
+          ],
+          "preferred_response_fields": [
+            "results",
+            "memories",
+            "contract",
+            "summary"
+          ]
+        }
+      },
+      "expected_count": 3,
+      "expected_fixture_ids": [
+        "medium_mem_task_aurora_retention_snapshots",
+        "medium_mem_decision_aurora_archive_partitions",
+        "medium_mem_research_aurora_week_six_churn"
+      ],
+      "expected_ids": [
+        "medium_mem_task_aurora_retention_snapshots",
+        "medium_mem_decision_aurora_archive_partitions",
+        "medium_mem_research_aurora_week_six_churn"
+      ],
+      "expected_rank": 1,
+      "expected_server_ids": [
+        "bd35a5c5496cf1427575",
+        "26e5c0091c41ad11eb77",
+        "557412cb237be044e3ea"
+      ],
+      "failure_type": "none",
+      "found_expected_fixture_ids": [
+        "medium_mem_task_aurora_retention_snapshots",
+        "medium_mem_decision_aurora_archive_partitions",
+        "medium_mem_research_aurora_week_six_churn"
+      ],
+      "found_expected_ids": [
+        "bd35a5c5496cf1427575",
+        "26e5c0091c41ad11eb77",
+        "557412cb237be044e3ea"
+      ],
+      "found_expected_server_ids": [
+        "bd35a5c5496cf1427575",
+        "26e5c0091c41ad11eb77",
+        "557412cb237be044e3ea"
+      ],
+      "hit_count": 1,
+      "latency_ms": 27.682750000003864,
+      "missing_expected_fixture_ids": [],
+      "mrr": 1.0,
+      "ndcg_at_10": 1.0,
+      "ndcg_at_5": 1.0,
+      "negative": false,
+      "parse_errors": [],
+      "precision_at_10": 0.3,
+      "precision_at_5": 0.6,
+      "query": "Keiko Aurora retention snapshots archive continuity week-six churn",
+      "query_id": "medium_q_long_memory_aurora_retention_context",
+      "query_type": "recall_fusion",
+      "raw_top_k": [
+        {
+          "fixture_id": "medium_mem_task_aurora_retention_snapshots",
+          "preview": "TASK: During FY26 planning, Keiko requested monthly retention anomaly snapshots for the Aurora growth cohort.",
+          "rank": 1,
+          "result_id": "bd35a5c5496cf1427575",
+          "score": 0.008976712822914124
+        },
+        {
+          "fixture_id": "medium_mem_decision_aurora_archive_partitions",
+          "preview": "DECISION: Aurora retention snapshots are archived in monthly partitions to preserve two-year trend continuity.",
+          "rank": 2,
+          "result_id": "26e5c0091c41ad11eb77",
+          "score": 0.00883256271481514
+        },
+        {
+          "fixture_id": "medium_mem_research_aurora_week_six_churn",
+          "preview": "RESEARCH: Legacy Aurora cohort notes mention churn around week-six onboarding for enterprise tenants.",
+          "rank": 3,
+          "result_id": "557412cb237be044e3ea",
+          "score": 0.00880821980535984
+        },
+        {
+          "fixture_id": "medium_mem_task_vega_timeout_regressions",
+          "preview": "TASK: Vega reliability squad tracks checkout timeout regressions separately from Aurora growth analysis.",
+          "rank": 4,
+          "result_id": "64a7b4f4b9db6290e68c",
+          "score": 0.008557675406336784
+        },
+        {
+          "fixture_id": "medium_mem_decision_vega_rollback_namespace",
+          "preview": "DECISION: Vega rollback drills run every Tuesday and use a dedicated reliability namespace.",
+          "rank": 5,
+          "result_id": "757e40b76e7e7686a7ad",
+          "score": 0.006153843831270933
+        },
+        {
+          "fixture_id": "medium_mem_decision_lumen_parser_fallback_removed",
+          "preview": "DECISION: Lumen parser fallback was removed after migration cutover completion.",
+          "rank": 6,
+          "result_id": "f2a8939317396ec099a7",
+          "score": 0.0060606044717133045
+        },
+        {
+          "fixture_id": "medium_mem_decision_fixture_id_canonical",
+          "preview": "DECISION: Fixture IDs remain canonical labels even when server-generated IDs differ at runtime.",
+          "rank": 7,
+          "result_id": "fa1f2b8aef6b4fa9df03",
+          "score": 0.00597014743834734
+        },
+        {
+          "fixture_id": "medium_mem_decision_hermes_partial_readiness",
+          "preview": "DECISION: Hermes read-side status responses may be partial while embedding readiness converges.",
+          "rank": 8,
+          "result_id": "40cb6624ac3b505cf3f5",
+          "score": 0.005882351193577051
+        },
+        {
+          "fixture_id": "medium_mem_context_record_shaped_ids",
+          "preview": "CONTEXT: Surreal-style record-shaped IDs may appear as object wrappers with nested String fields.",
+          "rank": 9,
+          "result_id": "3fd0d830c5c0a58a7e63",
+          "score": 0.0057970997877418995
+        },
+        {
+          "fixture_id": "medium_mem_research_record_id_normalization",
+          "preview": "RESEARCH: Record-shaped ID normalization must extract stable String IDs from nested wrappers before ranking diagnostics.",
+          "rank": 10,
+          "result_id": "f98bc5a535a1187360b9",
+          "score": 0.005714283790439367
+        }
+      ],
+      "reason_code_classification": null,
+      "recall_at_10": 1.0,
+      "recall_at_5": 1.0,
+      "result_count": 13,
+      "result_ids": [
+        "bd35a5c5496cf1427575",
+        "26e5c0091c41ad11eb77",
+        "557412cb237be044e3ea",
+        "64a7b4f4b9db6290e68c",
+        "757e40b76e7e7686a7ad",
+        "f2a8939317396ec099a7",
+        "fa1f2b8aef6b4fa9df03",
+        "40cb6624ac3b505cf3f5",
+        "3fd0d830c5c0a58a7e63",
+        "f98bc5a535a1187360b9",
+        "6d5508448e943cd1435b",
+        "4a72bab1826163ffa42a",
+        "7af156dfc495b228bfff"
+      ],
+      "summary_partial_reason_code": null,
+      "tool": "recall",
+      "tool_arguments": {
+        "query": "Keiko Aurora retention snapshots archive continuity week-six churn"
+      },
+      "warnings": []
+    },
+    {
+      "contract": {
+        "compatibility": {
+          "clients_must_ignore_unknown_enum_values": true,
+          "clients_must_ignore_unknown_fields": true,
+          "db_shape_is_not_public_contract": true,
+          "mode": "additive_first"
+        },
+        "generated_at": "2026-04-28T12:59:24.337985Z",
+        "generation_basis": {
+          "semantic_generation": 0,
+          "structural_generation": 0
+        },
+        "identity": {
+          "edge_id_semantics": "no_public_edge_ids",
+          "edge_ids_are_local_only": true,
+          "node_id_semantics": "stable_public_memory_id",
+          "node_ids_are_project_scoped": false,
+          "stable_edge_ids": false,
+          "stable_node_ids": true
+        },
+        "projection": {
+          "basis": "semantic_generation",
+          "generation": 0,
+          "materialization": {
+            "addressability_semantics": "no_stable_external_read_target_is_promised_until_materialization_strategy_changes",
+            "consistent_with_projection_state": true,
+            "current_generation": 0,
+            "identity_basis": "project_id + semantic_generation",
+            "is_addressable": false,
+            "locator_can_be_persisted_by_clients": false,
+            "locator_is_opaque": true,
+            "locator_scope": "none_when_not_materialized",
+            "locator_semantics": "absent_when_not_materialized; when present it identifies the externally consumable projection instance",
+            "locator_stability": "not_stable_until_materialization_strategy_changes",
+            "locator_survives_generation_change": false,
+            "persistence": "ephemeral_contract_only",
+            "persistence_semantics": "contract is exposed on status surfaces only; no persisted projection artifact is promised yet",
+            "refresh_basis": "semantic_generation",
+            "shape_version": 1,
+            "shape_version_semantics": "materialized_projection_payload_shape_version",
+            "strategy": "not_materialized"
+          },
+          "state": "missing"
+        },
+        "projection_state": "missing",
+        "schema_version": 1,
+        "surface_guidance": {
+          "forbidden_to_depend_fields": [],
+          "legacy_compatibility_fields": [
+            "count",
+            "filters",
+            "diagnostics",
+            "weights",
+            "query"
+          ],
+          "preferred_response_fields": [
+            "results",
+            "memories",
+            "contract",
+            "summary"
+          ]
+        }
+      },
+      "expected_count": 2,
+      "expected_fixture_ids": [
+        "medium_mem_task_vega_timeout_regressions",
+        "medium_mem_decision_vega_rollback_namespace"
+      ],
+      "expected_ids": [
+        "medium_mem_task_vega_timeout_regressions",
+        "medium_mem_decision_vega_rollback_namespace"
+      ],
+      "expected_rank": 1,
+      "expected_server_ids": [
+        "64a7b4f4b9db6290e68c",
+        "757e40b76e7e7686a7ad"
+      ],
+      "failure_type": "none",
+      "found_expected_fixture_ids": [
+        "medium_mem_task_vega_timeout_regressions",
+        "medium_mem_decision_vega_rollback_namespace"
+      ],
+      "found_expected_ids": [
+        "64a7b4f4b9db6290e68c",
+        "757e40b76e7e7686a7ad"
+      ],
+      "found_expected_server_ids": [
+        "64a7b4f4b9db6290e68c",
+        "757e40b76e7e7686a7ad"
+      ],
+      "hit_count": 1,
+      "latency_ms": 15.781207999999936,
+      "missing_expected_fixture_ids": [],
+      "mrr": 1.0,
+      "ndcg_at_10": 1.0,
+      "ndcg_at_5": 1.0,
+      "negative": false,
+      "parse_errors": [],
+      "precision_at_10": 0.2,
+      "precision_at_5": 0.4,
+      "query": "checkout timeout rollback reliability namespace",
+      "query_id": "medium_q_namespace_boundary_vega_only",
+      "query_type": "recall_fusion",
+      "raw_top_k": [
+        {
+          "fixture_id": "medium_mem_task_vega_timeout_regressions",
+          "preview": "TASK: Vega reliability squad tracks checkout timeout regressions separately from Aurora growth analysis.",
+          "rank": 1,
+          "result_id": "64a7b4f4b9db6290e68c",
+          "score": 0.009016375988721848
+        },
+        {
+          "fixture_id": "medium_mem_decision_vega_rollback_namespace",
+          "preview": "DECISION: Vega rollback drills run every Tuesday and use a dedicated reliability namespace.",
+          "rank": 2,
+          "result_id": "757e40b76e7e7686a7ad",
+          "score": 0.008870964869856834
+        }
+      ],
+      "reason_code_classification": null,
+      "recall_at_10": 1.0,
+      "recall_at_5": 1.0,
+      "result_count": 2,
+      "result_ids": [
+        "64a7b4f4b9db6290e68c",
+        "757e40b76e7e7686a7ad"
+      ],
+      "summary_partial_reason_code": null,
+      "tool": "recall",
+      "tool_arguments": {
+        "namespace": "evals/mempalace-medium/vega",
+        "query": "checkout timeout rollback reliability namespace"
+      },
+      "warnings": []
+    },
+    {
+      "contract": {
+        "compatibility": {
+          "clients_must_ignore_unknown_enum_values": true,
+          "clients_must_ignore_unknown_fields": true,
+          "db_shape_is_not_public_contract": true,
+          "mode": "additive_first"
+        },
+        "generated_at": "2026-04-28T12:59:24.338817Z",
+        "generation_basis": {
+          "semantic_generation": 0,
+          "structural_generation": 0
+        },
+        "identity": {
+          "edge_id_semantics": "no_public_edge_ids",
+          "edge_ids_are_local_only": true,
+          "node_id_semantics": "stable_public_memory_id",
+          "node_ids_are_project_scoped": false,
+          "stable_edge_ids": false,
+          "stable_node_ids": true
+        },
+        "projection": {
+          "basis": "semantic_generation",
+          "generation": 0,
+          "materialization": {
+            "addressability_semantics": "no_stable_external_read_target_is_promised_until_materialization_strategy_changes",
+            "consistent_with_projection_state": true,
+            "current_generation": 0,
+            "identity_basis": "project_id + semantic_generation",
+            "is_addressable": false,
+            "locator_can_be_persisted_by_clients": false,
+            "locator_is_opaque": true,
+            "locator_scope": "none_when_not_materialized",
+            "locator_semantics": "absent_when_not_materialized; when present it identifies the externally consumable projection instance",
+            "locator_stability": "not_stable_until_materialization_strategy_changes",
+            "locator_survives_generation_change": false,
+            "persistence": "ephemeral_contract_only",
+            "persistence_semantics": "contract is exposed on status surfaces only; no persisted projection artifact is promised yet",
+            "refresh_basis": "semantic_generation",
+            "shape_version": 1,
+            "shape_version_semantics": "materialized_projection_payload_shape_version",
+            "strategy": "not_materialized"
+          },
+          "state": "missing"
+        },
+        "projection_state": "missing",
+        "schema_version": 1,
+        "surface_guidance": {
+          "forbidden_to_depend_fields": [],
+          "legacy_compatibility_fields": [
+            "count",
+            "total",
+            "filters",
+            "metadata_filter_diagnostics"
+          ],
+          "preferred_response_fields": [
+            "memory",
+            "memories",
+            "contract",
+            "summary"
+          ]
+        }
+      },
+      "expected_count": 1,
+      "expected_fixture_ids": [
+        "medium_mem_decision_lumen_parser_fallback_removed"
+      ],
+      "expected_ids": [
+        "medium_mem_decision_lumen_parser_fallback_removed"
+      ],
+      "expected_rank": 1,
+      "expected_server_ids": [
+        "f2a8939317396ec099a7"
+      ],
+      "failure_type": "none",
+      "found_expected_fixture_ids": [
+        "medium_mem_decision_lumen_parser_fallback_removed"
+      ],
+      "found_expected_ids": [
+        "f2a8939317396ec099a7"
+      ],
+      "found_expected_server_ids": [
+        "f2a8939317396ec099a7"
+      ],
+      "hit_count": 1,
+      "latency_ms": 0.7550000000051682,
+      "missing_expected_fixture_ids": [],
+      "mrr": 1.0,
+      "ndcg_at_10": 1.0,
+      "ndcg_at_5": 1.0,
+      "negative": false,
+      "parse_errors": [],
+      "precision_at_10": 0.1,
+      "precision_at_5": 0.2,
+      "query": "platform parser fallback status after cutover",
+      "query_id": "medium_q_temporal_boundary_post_cutover",
+      "query_type": "get_valid_temporal",
+      "raw_top_k": [
+        {
+          "fixture_id": "medium_mem_decision_lumen_parser_fallback_removed",
+          "preview": "DECISION: Lumen parser fallback was removed after migration cutover completion.",
+          "rank": 1,
+          "result_id": "f2a8939317396ec099a7"
+        },
+        {
+          "fixture_id": "medium_mem_task_lumen_parser_fallback_temp",
+          "preview": "TASK: Temporary parser fallback for Lumen migration was enabled only during cutover week.",
+          "rank": 2,
+          "result_id": "7af156dfc495b228bfff"
+        }
+      ],
+      "reason_code_classification": null,
+      "recall_at_10": 1.0,
+      "recall_at_5": 1.0,
+      "result_count": 2,
+      "result_ids": [
+        "f2a8939317396ec099a7",
+        "7af156dfc495b228bfff"
+      ],
+      "summary_partial_reason_code": null,
+      "tool": "get_valid",
+      "tool_arguments": {
+        "namespace": "evals/mempalace-medium/platform",
+        "valid_at": "2026-01-22T00:00:00Z"
+      },
+      "warnings": []
+    },
+    {
+      "contract": {
+        "compatibility": {
+          "clients_must_ignore_unknown_enum_values": true,
+          "clients_must_ignore_unknown_fields": true,
+          "db_shape_is_not_public_contract": true,
+          "mode": "additive_first"
+        },
+        "generated_at": "2026-04-28T12:59:24.356404Z",
+        "generation_basis": {
+          "semantic_generation": 0,
+          "structural_generation": 0
+        },
+        "identity": {
+          "edge_id_semantics": "no_public_edge_ids",
+          "edge_ids_are_local_only": true,
+          "node_id_semantics": "stable_public_memory_id",
+          "node_ids_are_project_scoped": false,
+          "stable_edge_ids": false,
+          "stable_node_ids": true
+        },
+        "projection": {
+          "basis": "semantic_generation",
+          "generation": 0,
+          "materialization": {
+            "addressability_semantics": "no_stable_external_read_target_is_promised_until_materialization_strategy_changes",
+            "consistent_with_projection_state": true,
+            "current_generation": 0,
+            "identity_basis": "project_id + semantic_generation",
+            "is_addressable": false,
+            "locator_can_be_persisted_by_clients": false,
+            "locator_is_opaque": true,
+            "locator_scope": "none_when_not_materialized",
+            "locator_semantics": "absent_when_not_materialized; when present it identifies the externally consumable projection instance",
+            "locator_stability": "not_stable_until_materialization_strategy_changes",
+            "locator_survives_generation_change": false,
+            "persistence": "ephemeral_contract_only",
+            "persistence_semantics": "contract is exposed on status surfaces only; no persisted projection artifact is promised yet",
+            "refresh_basis": "semantic_generation",
+            "shape_version": 1,
+            "shape_version_semantics": "materialized_projection_payload_shape_version",
+            "strategy": "not_materialized"
+          },
+          "state": "missing"
+        },
+        "projection_state": "missing",
+        "schema_version": 1,
+        "surface_guidance": {
+          "forbidden_to_depend_fields": [],
+          "legacy_compatibility_fields": [
+            "count",
+            "filters",
+            "diagnostics",
+            "weights",
+            "query"
+          ],
+          "preferred_response_fields": [
+            "results",
+            "memories",
+            "contract",
+            "summary"
+          ]
+        }
+      },
+      "expected_count": 0,
+      "expected_fixture_ids": [],
+      "expected_ids": [],
+      "expected_rank": null,
+      "expected_server_ids": [],
+      "failure_type": "wrong_rank",
+      "found_expected_fixture_ids": [],
+      "found_expected_ids": [],
+      "found_expected_server_ids": [],
+      "hit_count": 0,
+      "latency_ms": 17.807290999996894,
+      "missing_expected_fixture_ids": [],
+      "mrr": 0.0,
+      "ndcg_at_10": 0.0,
+      "ndcg_at_5": 0.0,
+      "negative": true,
+      "parse_errors": [],
+      "precision_at_10": 0.0,
+      "precision_at_5": 0.0,
+      "query": "violet astrolabe moonlit parquet tensor",
+      "query_id": "medium_q_negative_no_match_synthetic_nonsense",
+      "query_type": "negative_no_match",
+      "raw_top_k": [
+        {
+          "fixture_id": "medium_mem_decision_lumen_parser_fallback_removed",
+          "preview": "DECISION: Lumen parser fallback was removed after migration cutover completion.",
+          "rank": 1,
+          "result_id": "f2a8939317396ec099a7",
+          "score": 0.006557375192642212
+        },
+        {
+          "fixture_id": "medium_mem_task_aurora_retention_snapshots",
+          "preview": "TASK: During FY26 planning, Keiko requested monthly retention anomaly snapshots for the Aurora growth cohort.",
+          "rank": 2,
+          "result_id": "bd35a5c5496cf1427575",
+          "score": 0.006451599765568972
+        },
+        {
+          "fixture_id": "medium_mem_decision_aurora_archive_partitions",
+          "preview": "DECISION: Aurora retention snapshots are archived in monthly partitions to preserve two-year trend continuity.",
+          "rank": 3,
+          "result_id": "26e5c0091c41ad11eb77",
+          "score": 0.006349204108119011
+        },
+        {
+          "fixture_id": "medium_mem_research_aurora_week_six_churn",
+          "preview": "RESEARCH: Legacy Aurora cohort notes mention churn around week-six onboarding for enterprise tenants.",
+          "rank": 4,
+          "result_id": "557412cb237be044e3ea",
+          "score": 0.006249997764825821
+        },
+        {
+          "fixture_id": "medium_mem_context_record_shaped_ids",
+          "preview": "CONTEXT: Surreal-style record-shaped IDs may appear as object wrappers with nested String fields.",
+          "rank": 5,
+          "result_id": "3fd0d830c5c0a58a7e63",
+          "score": 0.0061538442969322205
+        },
+        {
+          "fixture_id": "medium_mem_task_vega_timeout_regressions",
+          "preview": "TASK: Vega reliability squad tracks checkout timeout regressions separately from Aurora growth analysis.",
+          "rank": 6,
+          "result_id": "64a7b4f4b9db6290e68c",
+          "score": 0.006060594227164984
+        },
+        {
+          "fixture_id": "medium_mem_task_id_alias_mapping",
+          "preview": "TASK: Alias map links canonical fixture IDs with generated server IDs for deterministic evaluation remapping.",
+          "rank": 7,
+          "result_id": "4a72bab1826163ffa42a",
+          "score": 0.0059701381251215935
+        },
+        {
+          "fixture_id": "medium_mem_research_hermes_reason_codes",
+          "preview": "RESEARCH: Hermes partial responses map to reason codes missing, stale, partial, degraded, invalid_locator, generation_m\u2026",
+          "rank": 8,
+          "result_id": "6d5508448e943cd1435b",
+          "score": 0.005882351193577051
+        },
+        {
+          "fixture_id": "medium_mem_research_record_id_normalization",
+          "preview": "RESEARCH: Record-shaped ID normalization must extract stable String IDs from nested wrappers before ranking diagnostics.",
+          "rank": 9,
+          "result_id": "f98bc5a535a1187360b9",
+          "score": 0.0057970997877418995
+        },
+        {
+          "fixture_id": "medium_mem_decision_vega_rollback_namespace",
+          "preview": "DECISION: Vega rollback drills run every Tuesday and use a dedicated reliability namespace.",
+          "rank": 10,
+          "result_id": "757e40b76e7e7686a7ad",
+          "score": 0.005714283790439367
+        }
+      ],
+      "reason_code_classification": null,
+      "recall_at_10": 0.0,
+      "recall_at_5": 0.0,
+      "result_count": 12,
+      "result_ids": [
+        "f2a8939317396ec099a7",
+        "bd35a5c5496cf1427575",
+        "26e5c0091c41ad11eb77",
+        "557412cb237be044e3ea",
+        "3fd0d830c5c0a58a7e63",
+        "64a7b4f4b9db6290e68c",
+        "4a72bab1826163ffa42a",
+        "6d5508448e943cd1435b",
+        "f98bc5a535a1187360b9",
+        "757e40b76e7e7686a7ad",
+        "fa1f2b8aef6b4fa9df03",
+        "40cb6624ac3b505cf3f5"
+      ],
+      "summary_partial_reason_code": null,
+      "tool": "recall",
+      "tool_arguments": {
+        "query": "violet astrolabe moonlit parquet tensor"
+      },
+      "warnings": []
+    },
+    {
+      "contract": {
+        "compatibility": {
+          "clients_must_ignore_unknown_enum_values": true,
+          "clients_must_ignore_unknown_fields": true,
+          "db_shape_is_not_public_contract": true,
+          "mode": "additive_first"
+        },
+        "generated_at": "2026-04-28T12:59:24.357823Z",
+        "generation_basis": {
+          "semantic_generation": 0,
+          "structural_generation": 0
+        },
+        "identity": {
+          "edge_id_semantics": "no_public_edge_ids",
+          "edge_ids_are_local_only": true,
+          "node_id_semantics": "stable_public_memory_id",
+          "node_ids_are_project_scoped": false,
+          "stable_edge_ids": false,
+          "stable_node_ids": true
+        },
+        "projection": {
+          "basis": "semantic_generation",
+          "generation": 0,
+          "materialization": {
+            "addressability_semantics": "no_stable_external_read_target_is_promised_until_materialization_strategy_changes",
+            "consistent_with_projection_state": true,
+            "current_generation": 0,
+            "identity_basis": "project_id + semantic_generation",
+            "is_addressable": false,
+            "locator_can_be_persisted_by_clients": false,
+            "locator_is_opaque": true,
+            "locator_scope": "none_when_not_materialized",
+            "locator_semantics": "absent_when_not_materialized; when present it identifies the externally consumable projection instance",
+            "locator_stability": "not_stable_until_materialization_strategy_changes",
+            "locator_survives_generation_change": false,
+            "persistence": "ephemeral_contract_only",
+            "persistence_semantics": "contract is exposed on status surfaces only; no persisted projection artifact is promised yet",
+            "refresh_basis": "semantic_generation",
+            "shape_version": 1,
+            "shape_version_semantics": "materialized_projection_payload_shape_version",
+            "strategy": "not_materialized"
+          },
+          "state": "missing"
+        },
+        "projection_state": "missing",
+        "schema_version": 1,
+        "surface_guidance": {
+          "forbidden_to_depend_fields": [],
+          "legacy_compatibility_fields": [
+            "count",
+            "filters",
+            "diagnostics",
+            "weights",
+            "query"
+          ],
+          "preferred_response_fields": [
+            "results",
+            "memories",
+            "contract",
+            "summary"
+          ]
+        }
+      },
+      "expected_count": 2,
+      "expected_fixture_ids": [
+        "medium_mem_decision_hermes_partial_readiness",
+        "medium_mem_research_hermes_reason_codes"
+      ],
+      "expected_ids": [
+        "medium_mem_decision_hermes_partial_readiness",
+        "medium_mem_research_hermes_reason_codes"
+      ],
+      "expected_rank": 1,
+      "expected_server_ids": [
+        "40cb6624ac3b505cf3f5",
+        "6d5508448e943cd1435b"
+      ],
+      "failure_type": "none",
+      "found_expected_fixture_ids": [
+        "medium_mem_research_hermes_reason_codes",
+        "medium_mem_decision_hermes_partial_readiness"
+      ],
+      "found_expected_ids": [
+        "6d5508448e943cd1435b",
+        "40cb6624ac3b505cf3f5"
+      ],
+      "found_expected_server_ids": [
+        "6d5508448e943cd1435b",
+        "40cb6624ac3b505cf3f5"
+      ],
+      "hit_count": 1,
+      "latency_ms": 1.0249579999950242,
+      "missing_expected_fixture_ids": [],
+      "mrr": 1.0,
+      "ndcg_at_10": 1.0,
+      "ndcg_at_5": 1.0,
+      "negative": false,
+      "parse_errors": [],
+      "precision_at_10": 0.2,
+      "precision_at_5": 0.4,
+      "query": "partial readiness reason_code missing stale degraded generation_mismatch",
+      "query_id": "medium_q_partial_readiness_contract_reason_codes",
+      "query_type": "search_bm25",
+      "raw_top_k": [
+        {
+          "fixture_id": "medium_mem_research_hermes_reason_codes",
+          "preview": "RESEARCH: Hermes partial responses map to reason codes missing, stale, partial, degraded, invalid_locator, generation_m\u2026",
+          "rank": 1,
+          "result_id": "6d5508448e943cd1435b",
+          "score": 1.0
+        },
+        {
+          "fixture_id": "medium_mem_decision_hermes_partial_readiness",
+          "preview": "DECISION: Hermes read-side status responses may be partial while embedding readiness converges.",
+          "rank": 2,
+          "result_id": "40cb6624ac3b505cf3f5",
+          "score": 1.0
+        }
+      ],
+      "reason_code_classification": null,
+      "recall_at_10": 1.0,
+      "recall_at_5": 1.0,
+      "result_count": 2,
+      "result_ids": [
+        "6d5508448e943cd1435b",
+        "40cb6624ac3b505cf3f5"
+      ],
+      "summary_partial_reason_code": null,
+      "tool": "search_memory",
+      "tool_arguments": {
+        "mode": "bm25",
+        "query": "partial readiness reason_code missing stale degraded generation_mismatch"
+      },
+      "warnings": []
+    },
+    {
+      "contract": {
+        "compatibility": {
+          "clients_must_ignore_unknown_enum_values": true,
+          "clients_must_ignore_unknown_fields": true,
+          "db_shape_is_not_public_contract": true,
+          "mode": "additive_first"
+        },
+        "generated_at": "2026-04-28T12:59:24.376659Z",
+        "generation_basis": {
+          "semantic_generation": 0,
+          "structural_generation": 0
+        },
+        "identity": {
+          "edge_id_semantics": "no_public_edge_ids",
+          "edge_ids_are_local_only": true,
+          "node_id_semantics": "stable_public_memory_id",
+          "node_ids_are_project_scoped": false,
+          "stable_edge_ids": false,
+          "stable_node_ids": true
+        },
+        "projection": {
+          "basis": "semantic_generation",
+          "generation": 0,
+          "materialization": {
+            "addressability_semantics": "no_stable_external_read_target_is_promised_until_materialization_strategy_changes",
+            "consistent_with_projection_state": true,
+            "current_generation": 0,
+            "identity_basis": "project_id + semantic_generation",
+            "is_addressable": false,
+            "locator_can_be_persisted_by_clients": false,
+            "locator_is_opaque": true,
+            "locator_scope": "none_when_not_materialized",
+            "locator_semantics": "absent_when_not_materialized; when present it identifies the externally consumable projection instance",
+            "locator_stability": "not_stable_until_materialization_strategy_changes",
+            "locator_survives_generation_change": false,
+            "persistence": "ephemeral_contract_only",
+            "persistence_semantics": "contract is exposed on status surfaces only; no persisted projection artifact is promised yet",
+            "refresh_basis": "semantic_generation",
+            "shape_version": 1,
+            "shape_version_semantics": "materialized_projection_payload_shape_version",
+            "strategy": "not_materialized"
+          },
+          "state": "missing"
+        },
+        "projection_state": "missing",
+        "schema_version": 1,
+        "surface_guidance": {
+          "forbidden_to_depend_fields": [],
+          "legacy_compatibility_fields": [
+            "count",
+            "filters",
+            "diagnostics",
+            "weights",
+            "query"
+          ],
+          "preferred_response_fields": [
+            "results",
+            "memories",
+            "contract",
+            "summary"
+          ]
+        }
+      },
+      "expected_count": 2,
+      "expected_fixture_ids": [
+        "medium_mem_task_id_alias_mapping",
+        "medium_mem_decision_fixture_id_canonical"
+      ],
+      "expected_ids": [
+        "medium_mem_task_id_alias_mapping",
+        "medium_mem_decision_fixture_id_canonical"
+      ],
+      "expected_rank": 1,
+      "expected_server_ids": [
+        "4a72bab1826163ffa42a",
+        "fa1f2b8aef6b4fa9df03"
+      ],
+      "failure_type": "none",
+      "found_expected_fixture_ids": [
+        "medium_mem_task_id_alias_mapping",
+        "medium_mem_decision_fixture_id_canonical"
+      ],
+      "found_expected_ids": [
+        "4a72bab1826163ffa42a",
+        "fa1f2b8aef6b4fa9df03"
+      ],
+      "found_expected_server_ids": [
+        "4a72bab1826163ffa42a",
+        "fa1f2b8aef6b4fa9df03"
+      ],
+      "hit_count": 1,
+      "latency_ms": 19.562583999999106,
+      "missing_expected_fixture_ids": [],
+      "mrr": 1.0,
+      "ndcg_at_10": 1.0,
+      "ndcg_at_5": 1.0,
+      "negative": false,
+      "parse_errors": [],
+      "precision_at_10": 0.2,
+      "precision_at_5": 0.4,
+      "query": "fixture id alias mapping canonical server generated remap",
+      "query_id": "medium_q_id_alias_mapping_fixture_vs_server",
+      "query_type": "recall_fusion",
+      "raw_top_k": [
+        {
+          "fixture_id": "medium_mem_task_id_alias_mapping",
+          "preview": "TASK: Alias map links canonical fixture IDs with generated server IDs for deterministic evaluation remapping.",
+          "rank": 1,
+          "result_id": "4a72bab1826163ffa42a",
+          "score": 0.009016376920044422
+        },
+        {
+          "fixture_id": "medium_mem_decision_fixture_id_canonical",
+          "preview": "DECISION: Fixture IDs remain canonical labels even when server-generated IDs differ at runtime.",
+          "rank": 2,
+          "result_id": "fa1f2b8aef6b4fa9df03",
+          "score": 0.008870964869856834
+        },
+        {
+          "fixture_id": "medium_mem_research_record_id_normalization",
+          "preview": "RESEARCH: Record-shaped ID normalization must extract stable String IDs from nested wrappers before ranking diagnostics.",
+          "rank": 3,
+          "result_id": "f98bc5a535a1187360b9",
+          "score": 0.008730156347155571
+        },
+        {
+          "fixture_id": "medium_mem_context_record_shaped_ids",
+          "preview": "CONTEXT: Surreal-style record-shaped IDs may appear as object wrappers with nested String fields.",
+          "rank": 4,
+          "result_id": "3fd0d830c5c0a58a7e63",
+          "score": 0.006249998230487108
+        },
+        {
+          "fixture_id": "medium_mem_research_hermes_reason_codes",
+          "preview": "RESEARCH: Hermes partial responses map to reason codes missing, stale, partial, degraded, invalid_locator, generation_m\u2026",
+          "rank": 5,
+          "result_id": "6d5508448e943cd1435b",
+          "score": 0.0061538442969322205
+        },
+        {
+          "fixture_id": "medium_mem_decision_lumen_parser_fallback_removed",
+          "preview": "DECISION: Lumen parser fallback was removed after migration cutover completion.",
+          "rank": 6,
+          "result_id": "f2a8939317396ec099a7",
+          "score": 0.006060604006052017
+        },
+        {
+          "fixture_id": "medium_mem_task_aurora_retention_snapshots",
+          "preview": "TASK: During FY26 planning, Keiko requested monthly retention anomaly snapshots for the Aurora growth cohort.",
+          "rank": 7,
+          "result_id": "bd35a5c5496cf1427575",
+          "score": 0.005970137193799019
+        },
+        {
+          "fixture_id": "medium_mem_decision_aurora_archive_partitions",
+          "preview": "DECISION: Aurora retention snapshots are archived in monthly partitions to preserve two-year trend continuity.",
+          "rank": 8,
+          "result_id": "26e5c0091c41ad11eb77",
+          "score": 0.005882350727915764
+        },
+        {
+          "fixture_id": "medium_mem_task_vega_timeout_regressions",
+          "preview": "TASK: Vega reliability squad tracks checkout timeout regressions separately from Aurora growth analysis.",
+          "rank": 9,
+          "result_id": "64a7b4f4b9db6290e68c",
+          "score": 0.005797090474516153
+        },
+        {
+          "fixture_id": "medium_mem_decision_hermes_partial_readiness",
+          "preview": "DECISION: Hermes read-side status responses may be partial while embedding readiness converges.",
+          "rank": 10,
+          "result_id": "40cb6624ac3b505cf3f5",
+          "score": 0.005714283790439367
+        }
+      ],
+      "reason_code_classification": null,
+      "recall_at_10": 1.0,
+      "recall_at_5": 1.0,
+      "result_count": 12,
+      "result_ids": [
+        "4a72bab1826163ffa42a",
+        "fa1f2b8aef6b4fa9df03",
+        "f98bc5a535a1187360b9",
+        "3fd0d830c5c0a58a7e63",
+        "6d5508448e943cd1435b",
+        "f2a8939317396ec099a7",
+        "bd35a5c5496cf1427575",
+        "26e5c0091c41ad11eb77",
+        "64a7b4f4b9db6290e68c",
+        "40cb6624ac3b505cf3f5",
+        "757e40b76e7e7686a7ad",
+        "557412cb237be044e3ea"
+      ],
+      "summary_partial_reason_code": null,
+      "tool": "recall",
+      "tool_arguments": {
+        "query": "fixture id alias mapping canonical server generated remap"
+      },
+      "warnings": []
+    },
+    {
+      "contract": {
+        "compatibility": {
+          "clients_must_ignore_unknown_enum_values": true,
+          "clients_must_ignore_unknown_fields": true,
+          "db_shape_is_not_public_contract": true,
+          "mode": "additive_first"
+        },
+        "generated_at": "2026-04-28T12:59:24.398762Z",
+        "generation_basis": {
+          "semantic_generation": 0,
+          "structural_generation": 0
+        },
+        "identity": {
+          "edge_id_semantics": "no_public_edge_ids",
+          "edge_ids_are_local_only": true,
+          "node_id_semantics": "stable_public_memory_id",
+          "node_ids_are_project_scoped": false,
+          "stable_edge_ids": false,
+          "stable_node_ids": true
+        },
+        "projection": {
+          "basis": "semantic_generation",
+          "generation": 0,
+          "materialization": {
+            "addressability_semantics": "no_stable_external_read_target_is_promised_until_materialization_strategy_changes",
+            "consistent_with_projection_state": true,
+            "current_generation": 0,
+            "identity_basis": "project_id + semantic_generation",
+            "is_addressable": false,
+            "locator_can_be_persisted_by_clients": false,
+            "locator_is_opaque": true,
+            "locator_scope": "none_when_not_materialized",
+            "locator_semantics": "absent_when_not_materialized; when present it identifies the externally consumable projection instance",
+            "locator_stability": "not_stable_until_materialization_strategy_changes",
+            "locator_survives_generation_change": false,
+            "persistence": "ephemeral_contract_only",
+            "persistence_semantics": "contract is exposed on status surfaces only; no persisted projection artifact is promised yet",
+            "refresh_basis": "semantic_generation",
+            "shape_version": 1,
+            "shape_version_semantics": "materialized_projection_payload_shape_version",
+            "strategy": "not_materialized"
+          },
+          "state": "missing"
+        },
+        "projection_state": "missing",
+        "schema_version": 1,
+        "surface_guidance": {
+          "forbidden_to_depend_fields": [],
+          "legacy_compatibility_fields": [
+            "count",
+            "filters",
+            "diagnostics",
+            "weights",
+            "query"
+          ],
+          "preferred_response_fields": [
+            "results",
+            "memories",
+            "contract",
+            "summary"
+          ]
+        }
+      },
+      "expected_count": 2,
+      "expected_fixture_ids": [
+        "medium_mem_context_record_shaped_ids",
+        "medium_mem_research_record_id_normalization"
+      ],
+      "expected_ids": [
+        "medium_mem_context_record_shaped_ids",
+        "medium_mem_research_record_id_normalization"
+      ],
+      "expected_rank": 1,
+      "expected_server_ids": [
+        "3fd0d830c5c0a58a7e63",
+        "f98bc5a535a1187360b9"
+      ],
+      "failure_type": "none",
+      "found_expected_fixture_ids": [
+        "medium_mem_research_record_id_normalization",
+        "medium_mem_context_record_shaped_ids"
+      ],
+      "found_expected_ids": [
+        "f98bc5a535a1187360b9",
+        "3fd0d830c5c0a58a7e63"
+      ],
+      "found_expected_server_ids": [
+        "f98bc5a535a1187360b9",
+        "3fd0d830c5c0a58a7e63"
+      ],
+      "hit_count": 1,
+      "latency_ms": 21.018040999997822,
+      "missing_expected_fixture_ids": [],
+      "mrr": 1.0,
+      "ndcg_at_10": 1.0,
+      "ndcg_at_5": 1.0,
+      "negative": false,
+      "parse_errors": [],
+      "precision_at_10": 0.2,
+      "precision_at_5": 0.4,
+      "query": "nested String wrapper record-shaped IDs normalization diagnostics",
+      "query_id": "medium_q_record_shaped_id_normalization",
+      "query_type": "search_vector",
+      "raw_top_k": [
+        {
+          "fixture_id": "medium_mem_research_record_id_normalization",
+          "preview": "RESEARCH: Record-shaped ID normalization must extract stable String IDs from nested wrappers before ranking diagnostics.",
+          "rank": 1,
+          "result_id": "f98bc5a535a1187360b9",
+          "score": 0.9504036903381348
+        },
+        {
+          "fixture_id": "medium_mem_context_record_shaped_ids",
+          "preview": "CONTEXT: Surreal-style record-shaped IDs may appear as object wrappers with nested String fields.",
+          "rank": 2,
+          "result_id": "3fd0d830c5c0a58a7e63",
+          "score": 0.919853687286377
+        },
+        {
+          "fixture_id": "medium_mem_task_id_alias_mapping",
+          "preview": "TASK: Alias map links canonical fixture IDs with generated server IDs for deterministic evaluation remapping.",
+          "rank": 3,
+          "result_id": "4a72bab1826163ffa42a",
+          "score": 0.8573256134986877
+        },
+        {
+          "fixture_id": "medium_mem_decision_fixture_id_canonical",
+          "preview": "DECISION: Fixture IDs remain canonical labels even when server-generated IDs differ at runtime.",
+          "rank": 4,
+          "result_id": "fa1f2b8aef6b4fa9df03",
+          "score": 0.8565941452980042
+        },
+        {
+          "fixture_id": "medium_mem_research_hermes_reason_codes",
+          "preview": "RESEARCH: Hermes partial responses map to reason codes missing, stale, partial, degraded, invalid_locator, generation_m\u2026",
+          "rank": 5,
+          "result_id": "6d5508448e943cd1435b",
+          "score": 0.831570565700531
+        },
+        {
+          "fixture_id": "medium_mem_decision_hermes_partial_readiness",
+          "preview": "DECISION: Hermes read-side status responses may be partial while embedding readiness converges.",
+          "rank": 6,
+          "result_id": "40cb6624ac3b505cf3f5",
+          "score": 0.8223835229873657
+        },
+        {
+          "fixture_id": "medium_mem_task_vega_timeout_regressions",
+          "preview": "TASK: Vega reliability squad tracks checkout timeout regressions separately from Aurora growth analysis.",
+          "rank": 7,
+          "result_id": "64a7b4f4b9db6290e68c",
+          "score": 0.8204419612884521
+        },
+        {
+          "fixture_id": "medium_mem_decision_aurora_archive_partitions",
+          "preview": "DECISION: Aurora retention snapshots are archived in monthly partitions to preserve two-year trend continuity.",
+          "rank": 8,
+          "result_id": "26e5c0091c41ad11eb77",
+          "score": 0.8167939186096191
+        },
+        {
+          "fixture_id": "medium_mem_task_aurora_retention_snapshots",
+          "preview": "TASK: During FY26 planning, Keiko requested monthly retention anomaly snapshots for the Aurora growth cohort.",
+          "rank": 9,
+          "result_id": "bd35a5c5496cf1427575",
+          "score": 0.8151261210441589
+        },
+        {
+          "fixture_id": "medium_mem_decision_vega_rollback_namespace",
+          "preview": "DECISION: Vega rollback drills run every Tuesday and use a dedicated reliability namespace.",
+          "rank": 10,
+          "result_id": "757e40b76e7e7686a7ad",
+          "score": 0.8085205554962158
+        }
+      ],
+      "reason_code_classification": null,
+      "recall_at_10": 1.0,
+      "recall_at_5": 1.0,
+      "result_count": 12,
+      "result_ids": [
+        "f98bc5a535a1187360b9",
+        "3fd0d830c5c0a58a7e63",
+        "4a72bab1826163ffa42a",
+        "fa1f2b8aef6b4fa9df03",
+        "6d5508448e943cd1435b",
+        "40cb6624ac3b505cf3f5",
+        "64a7b4f4b9db6290e68c",
+        "26e5c0091c41ad11eb77",
+        "bd35a5c5496cf1427575",
+        "757e40b76e7e7686a7ad",
+        "557412cb237be044e3ea",
+        "f2a8939317396ec099a7"
+      ],
+      "summary_partial_reason_code": null,
+      "tool": "search_memory",
+      "tool_arguments": {
+        "mode": "vector",
+        "query": "nested String wrapper record-shaped IDs normalization diagnostics"
+      },
+      "warnings": []
+    }
+  ],
+  "readiness_summary": {
+    "readiness_fallback": {
+      "classification": "degraded",
+      "elapsed_s": 7.01,
+      "explanation": "Readiness used fallback settling because no direct ready signal was available; results can still be valid but should be reviewed with elapsed time.",
+      "fallback_sleep_s": 3.0,
+      "fallback_used": true,
+      "impact": "degraded",
+      "poll_attempts": 3,
+      "readiness_signal": "none",
+      "reason": "no_direct_readiness_signal",
+      "status": "fallback_after_no_signal"
+    },
+    "taxonomy": {
+      "reason_code_classification": {},
+      "reason_codes": []
+    },
+    "threshold_status_reason": "all required threshold checks passed"
+  },
+  "schema_version": "2.0",
+  "stderr_tail": [
+    "[memory-mcp] Auto-configured block cache: 16 MB (available RAM: 81 MB)",
+    "\u001b[2m2026-04-28T12:58:21.750978Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2mmemory_mcp\u001b[0m\u001b[2m:\u001b[0m memory-mcp starting \u001b[3mversion\u001b[0m\u001b[2m=\u001b[0m\"0.8.2\" \u001b[3mpid\u001b[0m\u001b[2m=\u001b[0m61690 \u001b[3mppid\u001b[0m\u001b[2m=\u001b[0m61688 \u001b[3mmode\u001b[0m\u001b[2m=\u001b[0m\"stdio\" \u001b[3mmodel\u001b[0m\u001b[2m=\u001b[0me5_small \u001b[3mdata_dir\u001b[0m\u001b[2m=\u001b[0m/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-8-memory-retrieval-data-0r4rbvzy",
+    "\u001b[2m2026-04-28T12:58:21.751315Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2msurrealdb::core::kvs::ds\u001b[0m\u001b[2m:\u001b[0m Starting kvs store at absolute path surrealkv:/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-8-memory-retrieval-data-0r4rbvzy/db",
+    "\u001b[2m2026-04-28T12:58:21.751480Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2msurrealdb::core::kvs::surrealkv\u001b[0m\u001b[2m:\u001b[0m Enabling value log separation: true",
+    "\u001b[2m2026-04-28T12:58:21.761051Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2msurrealdb::core::kvs::surrealkv\u001b[0m\u001b[2m:\u001b[0m Setting value log max file size: 268435456",
+    "\u001b[2m2026-04-28T12:58:21.761064Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2msurrealdb::core::kvs::surrealkv\u001b[0m\u001b[2m:\u001b[0m Setting value log threshold: 4096",
+    "\u001b[2m2026-04-28T12:58:21.761071Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2msurrealdb::core::kvs::surrealkv\u001b[0m\u001b[2m:\u001b[0m Versioning enabled: false with retention period: 0ns",
+    "\u001b[2m2026-04-28T12:58:21.761072Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2msurrealdb::core::kvs::surrealkv\u001b[0m\u001b[2m:\u001b[0m Versioning with versioned_index: false",
+    "\u001b[2m2026-04-28T12:58:21.761075Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2msurrealdb::core::kvs::surrealkv\u001b[0m\u001b[2m:\u001b[0m Setting block cache capacity: 16777216",
+    "\u001b[2m2026-04-28T12:58:21.761083Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2msurrealdb::core::kvs::surrealkv\u001b[0m\u001b[2m:\u001b[0m Setting block size: 65536",
+    "\u001b[2m2026-04-28T12:58:21.762534Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2msurrealkv::lsm\u001b[0m\u001b[2m:\u001b[0m === Starting LSM tree initialization ===",
+    "\u001b[2m2026-04-28T12:58:21.762541Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2msurrealkv::lsm\u001b[0m\u001b[2m:\u001b[0m Database path: \"/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-8-memory-retrieval-data-0r4rbvzy/db\"",
+    "\u001b[2m2026-04-28T12:58:21.795183Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2msurrealkv::lsm\u001b[0m\u001b[2m:\u001b[0m Manifest state: log_number=0, last_sequence=0",
+    "\u001b[2m2026-04-28T12:58:21.795194Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2msurrealkv::wal::recovery\u001b[0m\u001b[2m:\u001b[0m Starting WAL recovery from directory: \"/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-8-memory-retrieval-data-0r4rbvzy/db/wal\"",
+    "\u001b[2m2026-04-28T12:58:21.795341Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2msurrealkv::wal::recovery\u001b[0m\u001b[2m:\u001b[0m Replaying WAL segments #00000000000000000000 to #00000000000000000000",
+    "\u001b[2m2026-04-28T12:58:21.817509Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2msurrealkv::wal::recovery\u001b[0m\u001b[2m:\u001b[0m WAL recovery complete: 0 batches across 0 segments, 0 memtables created, max_seq_num=None",
+    "\u001b[2m2026-04-28T12:58:21.818089Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2msurrealkv::lsm\u001b[0m\u001b[2m:\u001b[0m === LSM tree initialization complete ===",
+    "\u001b[2m2026-04-28T12:58:21.825994Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2msurrealdb::core::kvs::surrealkv\u001b[0m\u001b[2m:\u001b[0m Sync mode: every transaction commit",
+    "\u001b[2m2026-04-28T12:58:21.826013Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2msurrealdb::core::kvs::surrealkv\u001b[0m\u001b[2m:\u001b[0m Grouped commit: enabled (timeout=5000000ns, wait_threshold=12, max_batch_size=4096)",
+    "\u001b[2m2026-04-28T12:58:21.826037Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2msurrealdb::core::kvs::ds\u001b[0m\u001b[2m:\u001b[0m Started surrealkv kvs store",
+    "\u001b[2m2026-04-28T12:58:22.460294Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2mmemory_mcp::storage::surrealdb\u001b[0m\u001b[2m:\u001b[0m Dimension check passed \u001b[3mmodel\u001b[0m\u001b[2m=\u001b[0m384 \u001b[3mdb\u001b[0m\u001b[2m=\u001b[0m384",
+    "\u001b[2m2026-04-28T12:58:22.460320Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2mmemory_mcp\u001b[0m\u001b[2m:\u001b[0m Embedding engine configured \u001b[3moutput_dim\u001b[0m\u001b[2m=\u001b[0m384 \u001b[3mmodel\u001b[0m\u001b[2m=\u001b[0me5_small",
+    "\u001b[2m2026-04-28T12:58:22.489705Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2mmemory_mcp::embedding::service\u001b[0m\u001b[2m:\u001b[0m Loading embedding model: E5Small",
+    "\u001b[2m2026-04-28T12:58:22.489703Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2mmemory_mcp::embedding::worker\u001b[0m\u001b[2m:\u001b[0m Embedding worker started, waiting for requests",
+    "\u001b[2m2026-04-28T12:58:22.489703Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2mmemory_mcp::forgetting::capacity\u001b[0m\u001b[2m:\u001b[0m Capacity controller started \u001b[3mcheck_interval_secs\u001b[0m\u001b[2m=\u001b[0m3600 \u001b[3msoft_limit\u001b[0m\u001b[2m=\u001b[0m10000 \u001b[3mcleanup_target_ratio\u001b[0m\u001b[2m=\u001b[0m0.800000011920929",
+    "\u001b[2m2026-04-28T12:58:22.490384Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2mrmcp::handler::server\u001b[0m\u001b[2m:\u001b[0m client initialized",
+    "\u001b[2m2026-04-28T12:58:22.490400Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[1mserve_inner\u001b[0m\u001b[2m:\u001b[0m \u001b[2mrmcp::service\u001b[0m\u001b[2m:\u001b[0m Service initialized as server \u001b[3mpeer_info\u001b[0m\u001b[2m=\u001b[0mSome(InitializeRequestParams { meta: None, protocol_version: ProtocolVersion(\"2024-11-05\"), capabilities: ClientCapabilities { experimental: None, extensions: None, roots: None, sampling: None, elicitation: None, tasks: None }, client_info: Implementation { name: \"memory-retrieval-benchmark\", title: None, version: \"0.1.0\", description: None, icons: None, website_url: None } })",
+    "\u001b[2m2026-04-28T12:58:22.490413Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2mmemory_mcp\u001b[0m\u001b[2m:\u001b[0m Server started in stdio mode, waiting for client disconnect or signals...",
+    "\u001b[2m2026-04-28T12:58:22.491154Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2mmemory_mcp::forgetting::capacity\u001b[0m\u001b[2m:\u001b[0m Capacity OK: 0 memories \u001b[3mcount\u001b[0m\u001b[2m=\u001b[0m0",
+    "\u001b[2m2026-04-28T12:58:29.010747Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2mmemory_mcp::embedding::service\u001b[0m\u001b[2m:\u001b[0m Downloading model weights from HuggingFace Hub...",
+    "\u001b[2m2026-04-28T12:59:15.447805Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2mmemory_mcp::embedding::service\u001b[0m\u001b[2m:\u001b[0m Embedding model ready \u001b[3melapsed_sec\u001b[0m\u001b[2m=\u001b[0m\"53.0\""
+  ],
+  "threshold_policy": "local-v2-threshold-policy",
+  "threshold_status": "pass",
+  "warnings": []
+}

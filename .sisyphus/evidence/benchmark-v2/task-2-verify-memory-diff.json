@@ -1,0 +1,112 @@
+{
+  "baseline_pair": {
+    "after": "/Users/xiayiming1/Documents/Workspace/memory-mcp-1file/.sisyphus/evidence/evals/memory-retrieval-baseline.json",
+    "after_available": true,
+    "before": "/Users/xiayiming1/Documents/Workspace/memory-mcp-1file/.sisyphus/evidence/evals/memory-retrieval-baseline-pre-remap-20260427172553.json",
+    "before_available": true
+  },
+  "benchmark_name": "memory_retrieval_baseline",
+  "comparison": {
+    "changed": [
+      "hit_rate",
+      "max_latency_ms",
+      "mean_latency_ms",
+      "mrr",
+      "p95_latency_ms",
+      "precision_at_10",
+      "precision_at_5"
+    ],
+    "improved": [
+      "hit_rate",
+      "max_latency_ms",
+      "mean_latency_ms",
+      "mrr",
+      "p95_latency_ms",
+      "precision_at_10",
+      "precision_at_5"
+    ],
+    "metric_status": {
+      "blocker_count": "unchanged",
+      "hit_rate": "improved",
+      "max_latency_ms": "improved",
+      "mean_latency_ms": "improved",
+      "mrr": "improved",
+      "p95_latency_ms": "improved",
+      "precision_at_10": "improved",
+      "precision_at_5": "improved"
+    },
+    "missing": {
+      "after": [],
+      "before": []
+    },
+    "regressed": [],
+    "unchanged": [
+      "blocker_count"
+    ]
+  },
+  "generated_at_utc": "2026-04-28T05:05:43.260248Z",
+  "metrics": {
+    "blocker_count": {
+      "after": 0,
+      "before": 0,
+      "delta": 0.0
+    },
+    "blockers": {
+      "after": [],
+      "before": [],
+      "delta": {
+        "added": [],
+        "count_delta": 0,
+        "removed": []
+      }
+    },
+    "hit_rate": {
+      "after": 0.8,
+      "before": 0.0,
+      "delta": 0.8
+    },
+    "max_latency_ms": {
+      "after": 27.262250000003263,
+      "before": 42.5356249999993,
+      "delta": -15.273374999996037
+    },
+    "mean_latency_ms": {
+      "after": 9.451091600000083,
+      "before": 11.051641600002426,
+      "delta": -1.6005500000023432
+    },
+    "mrr": {
+      "after": 0.75,
+      "before": 0.0,
+      "delta": 0.75
+    },
+    "p95_latency_ms": {
+      "after": 27.262250000003263,
+      "before": 42.5356249999993,
+      "delta": -15.273374999996037
+    },
+    "precision_at_10": {
+      "after": 0.19,
+      "before": 0.0,
+      "delta": 0.19
+    },
+    "precision_at_5": {
+      "after": 0.30000000000000004,
+      "before": 0.0,
+      "delta": 0.30000000000000004
+    },
+    "reason_codes": {
+      "after": [],
+      "before": [],
+      "delta": {
+        "added": [],
+        "count_delta": 0,
+        "removed": []
+      }
+    }
+  },
+  "notes": [
+    "Diff artifacts are evidence/reporting only.",
+    "These deltas are informational and are not used as CI regression gates."
+  ]
+}

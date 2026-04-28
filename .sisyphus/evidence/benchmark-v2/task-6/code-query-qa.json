@@ -1,0 +1,16 @@
+{
+  "canonical_source": "evals/golden/code_retrieval_queries_v2.json",
+  "legacy_bridge_usage": "legacy input only",
+  "medium": 14,
+  "medium_query_types": [
+    "codeish_symbol",
+    "deleted_symbol_expectation",
+    "file_path",
+    "hybrid_vector_disagreement",
+    "natural_language",
+    "renamed_symbol_expectation",
+    "similar_function_interference"
+  ],
+  "small": 15,
+  "stress": 6
+}

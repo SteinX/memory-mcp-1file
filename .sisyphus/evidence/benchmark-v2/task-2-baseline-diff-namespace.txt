@@ -1,0 +1,42 @@
+Task 2 baseline diff namespace verification
+
+Changed file:
+- evals/lib/metrics.py
+
+What changed:
+- Added V2_EVIDENCE_DIR = REPO_ROOT / ".sisyphus" / "evidence" / "benchmark-v2"
+- Added V2_BASELINE_DIFF_DIR = V2_EVIDENCE_DIR / "baseline-diff"
+- Moved only baseline-diff output defaults to V2_BASELINE_DIFF_DIR
+- Kept input defaults on historical .sisyphus/evidence/evals/ paths and task-2 legacy code baseline input
+
+Verification:
+- python3 -m py_compile evals/lib/metrics.py
+- python3 -m evals.lib.metrics --self-test
+- python3 -m evals.lib.metrics --baseline-diff
+
+Greps:
+- metrics.py now binds --memory-diff-json, --memory-diff-md, --code-diff-json, and --code-diff-md to V2_BASELINE_DIFF_DIR
+
+Command output:
+{
+  "code": {
+    "baseline_pair": {
+      "after": "/Users/xiayiming1/Documents/Workspace/memory-mcp-1file/.sisyphus/evidence/evals/code-retrieval-baseline.json",
+      "after_available": true,
+      "before": "/Users/xiayiming1/Documents/Workspace/memory-mcp-1file/.sisyphus/evidence/task-2-recall-code-baseline.json",
+      "before_available": true
+    },
+    "json": "/Users/xiayiming1/Documents/Workspace/memory-mcp-1file/.sisyphus/evidence/benchmark-v2/baseline-diff/code-retrieval-baseline-diff.json",
+    "markdown": "/Users/xiayiming1/Documents/Workspace/memory-mcp-1file/.sisyphus/evidence/benchmark-v2/baseline-diff/code-retrieval-baseline-diff.md"
+  },
+  "memory": {
+    "baseline_pair": {
+      "after": "/Users/xiayiming1/Documents/Workspace/memory-mcp-1file/.sisyphus/evidence/evals/memory-retrieval-baseline.json",
+      "after_available": true,
+      "before": "/Users/xiayiming1/Documents/Workspace/memory-mcp-1file/.sisyphus/evidence/evals/memory-retrieval-baseline-pre-remap-20260427172553.json",
+      "before_available": true
+    },
+    "json": "/Users/xiayiming1/Documents/Workspace/memory-mcp-1file/.sisyphus/evidence/benchmark-v2/baseline-diff/memory-retrieval-baseline-diff.json",
+    "markdown": "/Users/xiayiming1/Documents/Workspace/memory-mcp-1file/.sisyphus/evidence/benchmark-v2/baseline-diff/memory-retrieval-baseline-diff.md"
+  }
+}

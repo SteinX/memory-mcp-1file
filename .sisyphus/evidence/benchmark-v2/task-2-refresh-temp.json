@@ -1,0 +1,2940 @@
+{
+  "aggregate_metrics": {
+    "baseline_query_count": 10,
+    "blocker_count": 0,
+    "hit_rate": 0.8,
+    "latency_summary": {
+      "count": 10,
+      "max_latency_ms": 130.45512500001166,
+      "mean_latency_ms": 22.23098340000007,
+      "p95_latency_ms": 130.45512500001166
+    },
+    "max_latency_ms": 130.45512500001166,
+    "mean_expected_rank": 1.125,
+    "mean_latency_ms": 22.23098340000007,
+    "mrr": 0.75,
+    "ndcg_at_10": 0.699551519968257,
+    "ndcg_at_5": 0.6963282942423441,
+    "observed_summary_partial_reason_codes": [],
+    "p95_latency_ms": 130.45512500001166,
+    "positive_mean_mrr": 0.9375,
+    "positive_mean_precision_at_10": 0.225,
+    "positive_mean_precision_at_5": 0.35,
+    "positive_query_count": 8,
+    "precision_at_10": 0.18,
+    "precision_at_5": 0.27999999999999997,
+    "query_count": 10,
+    "readiness_fallback": {
+      "classification": "degraded",
+      "elapsed_s": 7.015,
+      "explanation": "Readiness used fallback settling because no direct ready signal was available; results can still be valid but should be reviewed with elapsed time.",
+      "fallback_sleep_s": 3.0,
+      "fallback_used": true,
+      "impact": "degraded",
+      "poll_attempts": 3,
+      "readiness_signal": "none",
+      "reason": "no_direct_readiness_signal",
+      "status": "fallback_after_no_signal"
+    },
+    "reason_code_classification": {},
+    "recall_at_10": 0.7083333333333333,
+    "recall_at_5": 0.675,
+    "seed_completed": true
+  },
+  "benchmark_name": "memory_retrieval_baseline",
+  "blockers": [],
+  "environment": {
+    "data_dir": "/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-8-memory-retrieval-data-1fov0eqr",
+    "data_dir_strategy": "temporary isolated DATA_DIR",
+    "duration_seconds": 125.47,
+    "embedding_model": "e5_small",
+    "mode": "benchmark",
+    "raw": {
+      "embedding_readiness": {
+        "elapsed_s": 114.264,
+        "poll_attempts": 58,
+        "poll_snapshots": [
+          {
+            "embedding_phase": "Cleaning stale cache...",
+            "embedding_progress_percent": null,
+            "embedding_status": "loading",
+            "parse_errors": [],
+            "reason_code": null,
+            "status": "loading"
+          },
+          {
+            "embedding_phase": "Fetching tokenizer...",
+            "embedding_progress_percent": null,
+            "embedding_status": "loading",
+            "parse_errors": [],
+            "reason_code": null,
+            "status": "loading"
+          },
+          {
+            "embedding_phase": "Fetching tokenizer...",
+            "embedding_progress_percent": null,
+            "embedding_status": "loading",
+            "parse_errors": [],
+            "reason_code": null,
+            "status": "loading"
+          },
+          {
+            "embedding_phase": "Fetching tokenizer...",
+            "embedding_progress_percent": null,
+            "embedding_status": "loading",
+            "parse_errors": [],
+            "reason_code": null,
+            "status": "loading"
+          },
+          {
+            "embedding_phase": "Fetching tokenizer...",
+            "embedding_progress_percent": null,
+            "embedding_status": "loading",
+            "parse_errors": [],
+            "reason_code": null,
+            "status": "loading"
+          },
+          {
+            "embedding_phase": "Downloading model weights...",
+            "embedding_progress_percent": 0.28071677684783936,
+            "embedding_status": "loading",
+            "parse_errors": [],
+            "reason_code": null,
+            "status": "loading"
+          },
+          {
+            "embedding_phase": "Downloading model weights...",
+            "embedding_progress_percent": 2.171011209487915,
+            "embedding_status": "loading",
+            "parse_errors": [],
+            "reason_code": null,
+            "status": "loading"
+          },
+          {
+            "embedding_phase": "Downloading model weights...",
+            "embedding_progress_percent": 4.049121379852295,
+            "embedding_status": "loading",
+            "parse_errors": [],
+            "reason_code": null,
+            "status": "loading"
+          },
+          {
+            "embedding_phase": "Downloading model weights...",
+            "embedding_progress_percent": 5.4955949783325195,
+            "embedding_status": "loading",
+            "parse_errors": [],
+            "reason_code": null,
+            "status": "loading"
+          },
+          {
+            "embedding_phase": "Downloading model weights...",
+            "embedding_progress_percent": 7.381946563720703,
+            "embedding_status": "loading",
+            "parse_errors": [],
+            "reason_code": null,
+            "status": "loading"
+          },
+          {
+            "embedding_phase": "Downloading model weights...",
+            "embedding_progress_percent": 9.263296127319336,
+            "embedding_status": "loading",
+            "parse_errors": [],
+            "reason_code": null,
+            "status": "loading"
+          },
+          {
+            "embedding_phase": "Downloading model weights...",
+            "embedding_progress_percent": 11.219734191894531,
+            "embedding_status": "loading",
+            "parse_errors": [],
+            "reason_code": null,
+            "status": "loading"
+          },
+          {
+            "embedding_phase": "Downloading model weights...",
+            "embedding_progress_percent": 13.059893608093262,
+            "embedding_status": "loading",
+            "parse_errors": [],
+            "reason_code": null,
+            "status": "loading"
+          },
+          {
+            "embedding_phase": "Downloading model weights...",
+            "embedding_progress_percent": 15.155160903930664,
+            "embedding_status": "loading",
+            "parse_errors": [],
+            "reason_code": null,
+            "status": "loading"
+          },
+          {
+            "embedding_phase": "Downloading model weights...",
+            "embedding_progress_percent": 17.167173385620117,
+            "embedding_status": "loading",
+            "parse_errors": [],
+            "reason_code": null,
+            "status": "loading"
+          },
+          {
+            "embedding_phase": "Downloading model weights...",
+            "embedding_progress_percent": 19.571287155151367,
+            "embedding_status": "loading",
+            "parse_errors": [],
+            "reason_code": null,
+            "status": "loading"
+          },
+          {
+            "embedding_phase": "Downloading model weights...",
+            "embedding_progress_percent": 21.274993896484375,
+            "embedding_status": "loading",
+            "parse_errors": [],
+            "reason_code": null,
+            "status": "loading"
+          },
+          {
+            "embedding_phase": "Downloading model weights...",
+            "embedding_progress_percent": 22.83753776550293,
+            "embedding_status": "loading",
+            "parse_errors": [],
+            "reason_code": null,
+            "status": "loading"
+          },
+          {
+            "embedding_phase": "Downloading model weights...",
+            "embedding_progress_percent": 24.9442195892334,
+            "embedding_status": "loading",
+            "parse_errors": [],
+            "reason_code": null,
+            "status": "loading"
+          },
+          {
+            "embedding_phase": "Downloading model weights...",
+            "embedding_progress_percent": 26.90678596496582,
+            "embedding_status": "loading",
+            "parse_errors": [],
+            "reason_code": null,
+            "status": "loading"
+          },
+          {
+            "embedding_phase": "Downloading model weights...",
+            "embedding_progress_percent": 28.868764877319336,
+            "embedding_status": "loading",
+            "parse_errors": [],
+            "reason_code": null,
+            "status": "loading"
+          },
+          {
+            "embedding_phase": "Downloading model weights...",
+            "embedding_progress_percent": 30.821853637695312,
+            "embedding_status": "loading",
+            "parse_errors": [],
+            "reason_code": null,
+            "status": "loading"
+          },
+          {
+            "embedding_phase": "Downloading model weights...",
+            "embedding_progress_percent": 33.25790023803711,
+            "embedding_status": "loading",
+            "parse_errors": [],
+            "reason_code": null,
+            "status": "loading"
+          },
+          {
+            "embedding_phase": "Downloading model weights...",
+            "embedding_progress_percent": 34.899227142333984,
+            "embedding_status": "loading",
+            "parse_errors": [],
+            "reason_code": null,
+            "status": "loading"
+          },
+          {
+            "embedding_phase": "Downloading model weights...",
+            "embedding_progress_percent": 36.89382553100586,
+            "embedding_status": "loading",
+            "parse_errors": [],
+            "reason_code": null,
+            "status": "loading"
+          },
+          {
+            "embedding_phase": "Downloading model weights...",
+            "embedding_progress_percent": 39.0426025390625,
+            "embedding_status": "loading",
+            "parse_errors": [],
+            "reason_code": null,
+            "status": "loading"
+          },
+          {
+            "embedding_phase": "Downloading model weights...",
+            "embedding_progress_percent": 41.200809478759766,
+            "embedding_status": "loading",
+            "parse_errors": [],
+            "reason_code": null,
+            "status": "loading"
+          },
+          {
+            "embedding_phase": "Downloading model weights...",
+            "embedding_progress_percent": 43.14790344238281,
+            "embedding_status": "loading",
+            "parse_errors": [],
+            "reason_code": null,
+            "status": "loading"
+          },
+          {
+            "embedding_phase": "Downloading model weights...",
+            "embedding_progress_percent": 45.0865592956543,
+            "embedding_status": "loading",
+            "parse_errors": [],
+            "reason_code": null,
+            "status": "loading"
+          },
+          {
+            "embedding_phase": "Downloading model weights...",
+            "embedding_progress_percent": 46.85401916503906,
+            "embedding_status": "loading",
+            "parse_errors": [],
+            "reason_code": null,
+            "status": "loading"
+          },
+          {
+            "embedding_phase": "Downloading model weights...",
+            "embedding_progress_percent": 48.97511672973633,
+            "embedding_status": "loading",
+            "parse_errors": [],
+            "reason_code": null,
+            "status": "loading"
+          },
+          {
+            "embedding_phase": "Downloading model weights...",
+            "embedding_progress_percent": 50.9183464050293,
+            "embedding_status": "loading",
+            "parse_errors": [],
+            "reason_code": null,
+            "status": "loading"
+          },
+          {
+            "embedding_phase": "Downloading model weights...",
+            "embedding_progress_percent": 52.30320739746094,
+            "embedding_status": "loading",
+            "parse_errors": [],
+            "reason_code": null,
+            "status": "loading"
+          },
+          {
+            "embedding_phase": "Downloading model weights...",
+            "embedding_progress_percent": 55.002655029296875,
+            "embedding_status": "loading",
+            "parse_errors": [],
+            "reason_code": null,
+            "status": "loading"
+          },
+          {
+            "embedding_phase": "Downloading model weights...",
+            "embedding_progress_percent": 56.924015045166016,
+            "embedding_status": "loading",
+            "parse_errors": [],
+            "reason_code": null,
+            "status": "loading"
+          },
+          {
+            "embedding_phase": "Downloading model weights...",
+            "embedding_progress_percent": 58.54973602294922,
+            "embedding_status": "loading",
+            "parse_errors": [],
+            "reason_code": null,
+            "status": "loading"
+          },
+          {
+            "embedding_phase": "Downloading model weights...",
+            "embedding_progress_percent": 61.02669906616211,
+            "embedding_status": "loading",
+            "parse_errors": [],
+            "reason_code": null,
+            "status": "loading"
+          },
+          {
+            "embedding_phase": "Downloading model weights...",
+            "embedding_progress_percent": 62.92466354370117,
+            "embedding_status": "loading",
+            "parse_errors": [],
+            "reason_code": null,
+            "status": "loading"
+          },
+          {
+            "embedding_phase": "Downloading model weights...",
+            "embedding_progress_percent": 64.82950592041016,
+            "embedding_status": "loading",
+            "parse_errors": [],
+            "reason_code": null,
+            "status": "loading"
+          },
+          {
+            "embedding_phase": "Downloading model weights...",
+            "embedding_progress_percent": 66.73723602294922,
+            "embedding_status": "loading",
+            "parse_errors": [],
+            "reason_code": null,
+            "status": "loading"
+          },
+          {
+            "embedding_phase": "Downloading model weights...",
+            "embedding_progress_percent": 68.64115905761719,
+            "embedding_status": "loading",
+            "parse_errors": [],
+            "reason_code": null,
+            "status": "loading"
+          },
+          {
+            "embedding_phase": "Downloading model weights...",
+            "embedding_progress_percent": 70.1059799194336,
+            "embedding_status": "loading",
+            "parse_errors": [],
+            "reason_code": null,
+            "status": "loading"
+          },
+          {
+            "embedding_phase": "Downloading model weights...",
+            "embedding_progress_percent": 72.23896026611328,
+            "embedding_status": "loading",
+            "parse_errors": [],
+            "reason_code": null,
+            "status": "loading"
+          },
+          {
+            "embedding_phase": "Downloading model weights...",
+            "embedding_progress_percent": 73.93692016601562,
+            "embedding_status": "loading",
+            "parse_errors": [],
+            "reason_code": null,
+            "status": "loading"
+          },
+          {
+            "embedding_phase": "Downloading model weights...",
+            "embedding_progress_percent": 75.89859008789062,
+            "embedding_status": "loading",
+            "parse_errors": [],
+            "reason_code": null,
+            "status": "loading"
+          },
+          {
+            "embedding_phase": "Downloading model weights...",
+            "embedding_progress_percent": 78.18116760253906,
+            "embedding_status": "loading",
+            "parse_errors": [],
+            "reason_code": null,
+            "status": "loading"
+          },
+          {
+            "embedding_phase": "Downloading model weights...",
+            "embedding_progress_percent": 80.17179107666016,
+            "embedding_status": "loading",
+            "parse_errors": [],
+            "reason_code": null,
+            "status": "loading"
+          },
+          {
+            "embedding_phase": "Downloading model weights...",
+            "embedding_progress_percent": 82.1633071899414,
+            "embedding_status": "loading",
+            "parse_errors": [],
+            "reason_code": null,
+            "status": "loading"
+          },
+          {
+            "embedding_phase": "Downloading model weights...",
+            "embedding_progress_percent": 83.91321563720703,
+            "embedding_status": "loading",
+            "parse_errors": [],
+            "reason_code": null,
+            "status": "loading"
+          },
+          {
+            "embedding_phase": "Downloading model weights...",
+            "embedding_progress_percent": 85.99514770507812,
+            "embedding_status": "loading",
+            "parse_errors": [],
+            "reason_code": null,
+            "status": "loading"
+          },
+          {
+            "embedding_phase": "Downloading model weights...",
+            "embedding_progress_percent": 88.07135009765625,
+            "embedding_status": "loading",
+            "parse_errors": [],
+            "reason_code": null,
+            "status": "loading"
+          },
+          {
+            "embedding_phase": "Downloading model weights...",
+            "embedding_progress_percent": 90.30680084228516,
+            "embedding_status": "loading",
+            "parse_errors": [],
+            "reason_code": null,
+            "status": "loading"
+          },
+          {
+            "embedding_phase": "Downloading model weights...",
+            "embedding_progress_percent": 92.1054916381836,
+            "embedding_status": "loading",
+            "parse_errors": [],
+            "reason_code": null,
+            "status": "loading"
+          },
+          {
+            "embedding_phase": "Downloading model weights...",
+            "embedding_progress_percent": 94.2908935546875,
+            "embedding_status": "loading",
+            "parse_errors": [],
+            "reason_code": null,
+            "status": "loading"
+          },
+          {
+            "embedding_phase": "Downloading model weights...",
+            "embedding_progress_percent": 95.9932861328125,
+            "embedding_status": "loading",
+            "parse_errors": [],
+            "reason_code": null,
+            "status": "loading"
+          },
+          {
+            "embedding_phase": "Downloading model weights...",
+            "embedding_progress_percent": 97.98248291015625,
+            "embedding_status": "loading",
+            "parse_errors": [],
+            "reason_code": null,
+            "status": "loading"
+          },
+          {
+            "embedding_phase": "Loading model into memory...",
+            "embedding_progress_percent": null,
+            "embedding_status": "loading",
+            "parse_errors": [],
+            "reason_code": null,
+            "status": "loading"
+          },
+          {
+            "embedding_phase": null,
+            "embedding_progress_percent": null,
+            "embedding_status": "ready",
+            "parse_errors": [],
+            "reason_code": null,
+            "status": "healthy"
+          }
+        ],
+        "reason": "embedding_ready",
+        "reason_codes": [],
+        "status": "ready",
+        "status_errors": []
+      },
+      "fixture_validation": {
+        "caps": {
+          "graph_entity_max": 5,
+          "graph_relation_max": 8,
+          "memory_count_max": 30,
+          "memory_count_min": 15
+        },
+        "graph_entity_count": 5,
+        "graph_relation_count": 8,
+        "memory_count": 15,
+        "memory_unique_ids": 15,
+        "query_count": 10,
+        "query_expected_id_total": 24,
+        "query_unique_ids": 10
+      },
+      "query_diagnostics": {
+        "call_error_count": 0,
+        "degraded_or_partial_count": 0,
+        "parse_issue_count": 0
+      },
+      "query_validation": {
+        "observed_query_types": [
+          "get_valid_filtered",
+          "get_valid_temporal",
+          "negative_no_match",
+          "recall_fusion",
+          "search_bm25",
+          "search_vector"
+        ],
+        "query_count": 10,
+        "required_query_types": [
+          "get_valid_filtered",
+          "get_valid_temporal",
+          "negative_no_match",
+          "recall_fusion",
+          "search_bm25",
+          "search_vector"
+        ]
+      },
+      "seed_progress": {
+        "blockers": [],
+        "finished_at": "2026-04-28T05:02:42Z",
+        "fixture_paths": {
+          "golden_queries": "/Users/xiayiming1/Documents/Workspace/memory-mcp-1file/evals/golden/memory_retrieval_queries.json",
+          "memory_corpus": "/Users/xiayiming1/Documents/Workspace/memory-mcp-1file/evals/fixtures/memory_corpus.json",
+          "memory_graph": "/Users/xiayiming1/Documents/Workspace/memory-mcp-1file/evals/fixtures/memory_graph.json"
+        },
+        "graph": {
+          "calls": [
+            {
+              "entity_id": "8e7b5fbe61d48a5190ad",
+              "kind": "entity",
+              "name": "memory-retrieval-benchmark",
+              "parse_errors": []
+            },
+            {
+              "entity_id": "f4105a68c48fec25d534",
+              "kind": "entity",
+              "name": "auth service",
+              "parse_errors": []
+            },
+            {
+              "entity_id": "b284769b60a855a64e0e",
+              "kind": "entity",
+              "name": "billing service",
+              "parse_errors": []
+            },
+            {
+              "entity_id": "082e7cb8418d6832c3bd",
+              "kind": "entity",
+              "name": "recall engine",
+              "parse_errors": []
+            },
+            {
+              "entity_id": "818d85494fb443f3ad7e",
+              "kind": "entity",
+              "name": "fixture corpus",
+              "parse_errors": []
+            },
+            {
+              "from_entity": "ent_benchmark_suite",
+              "kind": "relation",
+              "parse_errors": [],
+              "relation_id": "4acf340c6bc5d6b4f1c1",
+              "relation_type": "uses",
+              "to_entity": "ent_fixture_corpus"
+            },
+            {
+              "from_entity": "ent_benchmark_suite",
+              "kind": "relation",
+              "parse_errors": [],
+              "relation_id": "ebd8d46ecc16a170d66b",
+              "relation_type": "exercises",
+              "to_entity": "ent_recall_engine"
+            },
+            {
+              "from_entity": "ent_auth_service",
+              "kind": "relation",
+              "parse_errors": [],
+              "relation_id": "519f845a88d3a624ab2b",
+              "relation_type": "feeds",
+              "to_entity": "ent_recall_engine"
+            },
+            {
+              "from_entity": "ent_billing_service",
+              "kind": "relation",
+              "parse_errors": [],
+              "relation_id": "2200a81b9ee201c67542",
+              "relation_type": "feeds",
+              "to_entity": "ent_recall_engine"
+            },
+            {
+              "from_entity": "ent_recall_engine",
+              "kind": "relation",
+              "parse_errors": [],
+              "relation_id": "307589097df8cbcdabbb",
+              "relation_type": "queries",
+              "to_entity": "ent_fixture_corpus"
+            },
+            {
+              "from_entity": "ent_fixture_corpus",
+              "kind": "relation",
+              "parse_errors": [],
+              "relation_id": "0b0424d01cf587ffe814",
+              "relation_type": "covers",
+              "to_entity": "ent_auth_service"
+            },
+            {
+              "from_entity": "ent_fixture_corpus",
+              "kind": "relation",
+              "parse_errors": [],
+              "relation_id": "93b36881db6360bec80e",
+              "relation_type": "covers",
+              "to_entity": "ent_billing_service"
+            },
+            {
+              "from_entity": "ent_auth_service",
+              "kind": "relation",
+              "parse_errors": [],
+              "relation_id": "e3767828ecfb7e8c4183",
+              "relation_type": "shares_namespace",
+              "to_entity": "ent_billing_service"
+            }
+          ],
+          "entity_count": 5,
+          "entity_ids": [
+            "8e7b5fbe61d48a5190ad",
+            "f4105a68c48fec25d534",
+            "b284769b60a855a64e0e",
+            "082e7cb8418d6832c3bd",
+            "818d85494fb443f3ad7e"
+          ],
+          "relation_count": 8,
+          "relation_ids": [
+            "4acf340c6bc5d6b4f1c1",
+            "ebd8d46ecc16a170d66b",
+            "519f845a88d3a624ab2b",
+            "2200a81b9ee201c67542",
+            "307589097df8cbcdabbb",
+            "0b0424d01cf587ffe814",
+            "93b36881db6360bec80e",
+            "e3767828ecfb7e8c4183"
+          ]
+        },
+        "memory": {
+          "calls": [
+            {
+              "agent_id": "atlas",
+              "fixture_id": "mem_task_auth_timeout",
+              "memory_id": "abf112a06bf7f41af803",
+              "memory_type": "episodic",
+              "namespace": "evals/auth",
+              "parse_errors": [],
+              "run_id": "run-auth-001",
+              "user_id": "eval-user"
+            },
+            {
+              "agent_id": "atlas",
+              "fixture_id": "mem_decision_cache_ttl",
+              "memory_id": "6a1dee768aae44230215",
+              "memory_type": "semantic",
+              "namespace": "evals/auth",
+              "parse_errors": [],
+              "run_id": "run-auth-001",
+              "user_id": "eval-user"
+            },
+            {
+              "agent_id": "atlas",
+              "fixture_id": "mem_research_rrf_fusion",
+              "memory_id": "96d1122e9de6f4a98f48",
+              "memory_type": "semantic",
+              "namespace": "evals/search",
+              "parse_errors": [],
+              "run_id": "run-search-001",
+              "user_id": "eval-user"
+            },
+            {
+              "agent_id": "atlas",
+              "fixture_id": "mem_context_stdio_harness",
+              "memory_id": "dd6e4e06c9bbaed47a7d",
+              "memory_type": "semantic",
+              "namespace": "evals/core",
+              "parse_errors": [],
+              "run_id": "run-core-001",
+              "user_id": "eval-user"
+            },
+            {
+              "agent_id": "atlas",
+              "fixture_id": "mem_project_benchmark_scope",
+              "memory_id": "f5621ca51fac601f6166",
+              "memory_type": "semantic",
+              "namespace": "evals/benchmark",
+              "parse_errors": [],
+              "run_id": "run-benchmark-001",
+              "user_id": "eval-user"
+            },
+            {
+              "agent_id": "atlas",
+              "fixture_id": "mem_user_pref_concise_answers",
+              "memory_id": "e4940467ee23246677fc",
+              "memory_type": "semantic",
+              "namespace": "evals/notes",
+              "parse_errors": [],
+              "run_id": "run-notes-001",
+              "user_id": "eval-user"
+            },
+            {
+              "agent_id": "atlas",
+              "fixture_id": "mem_task_billing_retry_window",
+              "memory_id": "2684aec6fa58b09a1d83",
+              "memory_type": "episodic",
+              "namespace": "evals/billing",
+              "parse_errors": [],
+              "run_id": "run-billing-001",
+              "user_id": "eval-user"
+            },
+            {
+              "agent_id": "atlas",
+              "fixture_id": "mem_decision_query_ids",
+              "memory_id": "b3fd12747cf9fe1c0f7b",
+              "memory_type": "semantic",
+              "namespace": "evals/benchmark",
+              "parse_errors": [],
+              "run_id": "run-benchmark-002",
+              "user_id": "eval-user"
+            },
+            {
+              "agent_id": "atlas",
+              "fixture_id": "mem_research_temporal_windows",
+              "memory_id": "a85010547cd4f382a975",
+              "memory_type": "semantic",
+              "namespace": "evals/validity",
+              "parse_errors": [],
+              "run_id": "run-validity-001",
+              "user_id": "eval-user"
+            },
+            {
+              "agent_id": "atlas",
+              "fixture_id": "mem_context_no_private_data",
+              "memory_id": "a38a47794330535d5185",
+              "memory_type": "semantic",
+              "namespace": "evals/safety",
+              "parse_errors": [],
+              "run_id": "run-safety-001",
+              "user_id": "eval-user"
+            },
+            {
+              "agent_id": "atlas",
+              "fixture_id": "mem_task_temporal_cutoff",
+              "memory_id": "dd8fa760daee0b2fe437",
+              "memory_type": "episodic",
+              "namespace": "evals/validity",
+              "parse_errors": [],
+              "run_id": "run-validity-002",
+              "user_id": "eval-user"
+            },
+            {
+              "agent_id": "atlas",
+              "fixture_id": "mem_decision_temporal_utc",
+              "memory_id": "345a8538acd5f53305ba",
+              "memory_type": "semantic",
+              "namespace": "evals/validity",
+              "parse_errors": [],
+              "run_id": "run-validity-003",
+              "user_id": "eval-user"
+            },
+            {
+              "agent_id": "atlas",
+              "fixture_id": "mem_project_recall_fusion_plan",
+              "memory_id": "1d71e5579056cc94b53f",
+              "memory_type": "semantic",
+              "namespace": "evals/search",
+              "parse_errors": [],
+              "run_id": "run-search-002",
+              "user_id": "eval-user"
+            },
+            {
+              "agent_id": "atlas",
+              "fixture_id": "mem_user_pref_terse_notes",
+              "memory_id": "5c5a3a56f0be96ef7623",
+              "memory_type": "semantic",
+              "namespace": "evals/notes",
+              "parse_errors": [],
+              "run_id": "run-notes-002",
+              "user_id": "eval-user"
+            },
+            {
+              "agent_id": "atlas",
+              "fixture_id": "mem_context_namespace_evals",
+              "memory_id": "823ab9c8566d1c817aa2",
+              "memory_type": "semantic",
+              "namespace": "evals/core",
+              "parse_errors": [],
+              "run_id": "run-core-002",
+              "user_id": "eval-user"
+            }
+          ],
+          "fixture_to_server_id_map": {
+            "mem_context_namespace_evals": "823ab9c8566d1c817aa2",
+            "mem_context_no_private_data": "a38a47794330535d5185",
+            "mem_context_stdio_harness": "dd6e4e06c9bbaed47a7d",
+            "mem_decision_cache_ttl": "6a1dee768aae44230215",
+            "mem_decision_query_ids": "b3fd12747cf9fe1c0f7b",
+            "mem_decision_temporal_utc": "345a8538acd5f53305ba",
+            "mem_project_benchmark_scope": "f5621ca51fac601f6166",
+            "mem_project_recall_fusion_plan": "1d71e5579056cc94b53f",
+            "mem_research_rrf_fusion": "96d1122e9de6f4a98f48",
+            "mem_research_temporal_windows": "a85010547cd4f382a975",
+            "mem_task_auth_timeout": "abf112a06bf7f41af803",
+            "mem_task_billing_retry_window": "2684aec6fa58b09a1d83",
+            "mem_task_temporal_cutoff": "dd8fa760daee0b2fe437",
+            "mem_user_pref_concise_answers": "e4940467ee23246677fc",
+            "mem_user_pref_terse_notes": "5c5a3a56f0be96ef7623"
+          },
+          "memory_count": 15,
+          "memory_ids": [
+            "abf112a06bf7f41af803",
+            "6a1dee768aae44230215",
+            "96d1122e9de6f4a98f48",
+            "dd6e4e06c9bbaed47a7d",
+            "f5621ca51fac601f6166",
+            "e4940467ee23246677fc",
+            "2684aec6fa58b09a1d83",
+            "b3fd12747cf9fe1c0f7b",
+            "a85010547cd4f382a975",
+            "a38a47794330535d5185",
+            "dd8fa760daee0b2fe437",
+            "345a8538acd5f53305ba",
+            "1d71e5579056cc94b53f",
+            "5c5a3a56f0be96ef7623",
+            "823ab9c8566d1c817aa2"
+          ]
+        },
+        "phases": [
+          {
+            "finished_at": "2026-04-28T05:02:35Z",
+            "phase": "load_and_validate_fixtures",
+            "started_at": "2026-04-28T05:02:35Z",
+            "status": "completed",
+            "validation": {
+              "caps": {
+                "graph_entity_max": 5,
+                "graph_relation_max": 8,
+                "memory_count_max": 30,
+                "memory_count_min": 15
+              },
+              "graph_entity_count": 5,
+              "graph_relation_count": 8,
+              "memory_count": 15,
+              "memory_unique_ids": 15,
+              "query_count": 10,
+              "query_expected_id_total": 24,
+              "query_unique_ids": 10
+            }
+          },
+          {
+            "entity_count": 5,
+            "finished_at": "2026-04-28T05:02:35Z",
+            "phase": "seed_graph",
+            "relation_count": 8,
+            "started_at": "2026-04-28T05:02:35Z",
+            "status": "completed"
+          },
+          {
+            "finished_at": "2026-04-28T05:02:35Z",
+            "memory_count": 15,
+            "phase": "seed_memories",
+            "started_at": "2026-04-28T05:02:35Z",
+            "status": "completed"
+          },
+          {
+            "elapsed_s": 7.015,
+            "finished_at": "2026-04-28T05:02:42Z",
+            "phase": "settle_readiness",
+            "settle_status": "fallback_after_no_signal",
+            "started_at": "2026-04-28T05:02:35Z",
+            "status": "completed"
+          }
+        ],
+        "query_count": 10,
+        "seed_order": [
+          "knowledge_graph",
+          "store_memory"
+        ],
+        "settle": {
+          "elapsed_s": 7.015,
+          "fallback_sleep_s": 3.0,
+          "poll_attempts": 3,
+          "poll_snapshots": [
+            {
+              "attempt": 1,
+              "parse_errors": [],
+              "ready": null,
+              "signal_source": "none",
+              "status": "healthy"
+            },
+            {
+              "attempt": 2,
+              "parse_errors": [],
+              "ready": null,
+              "signal_source": "none",
+              "status": "healthy"
+            },
+            {
+              "attempt": 3,
+              "parse_errors": [],
+              "ready": null,
+              "signal_source": "none",
+              "status": "healthy"
+            }
+          ],
+          "readiness_signal": "none",
+          "reason": "no_direct_readiness_signal",
+          "status": "fallback_after_no_signal",
+          "status_errors": []
+        },
+        "started_at": "2026-04-28T05:02:34Z",
+        "status": "completed"
+      },
+      "startup_status": {
+        "embedding": {
+          "cached": false,
+          "dimensions": 384,
+          "elapsed_seconds": 0,
+          "eta_seconds": null,
+          "model": "e5_small_384",
+          "phase": "Cleaning stale cache...",
+          "status": "loading"
+        },
+        "memories_count": 0,
+        "status": "loading",
+        "version": "0.8.2"
+      }
+    },
+    "root": "/Users/xiayiming1/Documents/Workspace/memory-mcp-1file",
+    "server_command": [
+      "/Users/xiayiming1/Documents/Workspace/memory-mcp-1file/target/fast/memory-mcp",
+      "--stdio"
+    ],
+    "started_at_utc": "2026-04-28T05:00:38.604260+00:00",
+    "stderr_tail": [
+      "[memory-mcp] Auto-configured block cache: 11 MB (available RAM: 56 MB)",
+      "\u001b[2m2026-04-28T05:00:39.422066Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2mmemory_mcp\u001b[0m\u001b[2m:\u001b[0m memory-mcp starting \u001b[3mversion\u001b[0m\u001b[2m=\u001b[0m\"0.8.2\" \u001b[3mpid\u001b[0m\u001b[2m=\u001b[0m38452 \u001b[3mppid\u001b[0m\u001b[2m=\u001b[0m38420 \u001b[3mmode\u001b[0m\u001b[2m=\u001b[0m\"stdio\" \u001b[3mmodel\u001b[0m\u001b[2m=\u001b[0me5_small \u001b[3mdata_dir\u001b[0m\u001b[2m=\u001b[0m/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-8-memory-retrieval-data-1fov0eqr",
+      "\u001b[2m2026-04-28T05:00:39.451620Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2msurrealdb::core::kvs::ds\u001b[0m\u001b[2m:\u001b[0m Starting kvs store at absolute path surrealkv:/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-8-memory-retrieval-data-1fov0eqr/db",
+      "\u001b[2m2026-04-28T05:00:39.454586Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2msurrealdb::core::kvs::surrealkv\u001b[0m\u001b[2m:\u001b[0m Enabling value log separation: true",
+      "\u001b[2m2026-04-28T05:00:39.464997Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2msurrealdb::core::kvs::surrealkv\u001b[0m\u001b[2m:\u001b[0m Setting value log max file size: 268435456",
+      "\u001b[2m2026-04-28T05:00:39.465011Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2msurrealdb::core::kvs::surrealkv\u001b[0m\u001b[2m:\u001b[0m Setting value log threshold: 4096",
+      "\u001b[2m2026-04-28T05:00:39.465012Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2msurrealdb::core::kvs::surrealkv\u001b[0m\u001b[2m:\u001b[0m Versioning enabled: false with retention period: 0ns",
+      "\u001b[2m2026-04-28T05:00:39.465013Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2msurrealdb::core::kvs::surrealkv\u001b[0m\u001b[2m:\u001b[0m Versioning with versioned_index: false",
+      "\u001b[2m2026-04-28T05:00:39.465173Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2msurrealdb::core::kvs::surrealkv\u001b[0m\u001b[2m:\u001b[0m Setting block cache capacity: 11534336",
+      "\u001b[2m2026-04-28T05:00:39.465499Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2msurrealdb::core::kvs::surrealkv\u001b[0m\u001b[2m:\u001b[0m Setting block size: 65536",
+      "\u001b[2m2026-04-28T05:00:39.734903Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2msurrealkv::lsm\u001b[0m\u001b[2m:\u001b[0m === Starting LSM tree initialization ===",
+      "\u001b[2m2026-04-28T05:00:39.735167Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2msurrealkv::lsm\u001b[0m\u001b[2m:\u001b[0m Database path: \"/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-8-memory-retrieval-data-1fov0eqr/db\"",
+      "\u001b[2m2026-04-28T05:00:39.866690Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2msurrealkv::lsm\u001b[0m\u001b[2m:\u001b[0m Manifest state: log_number=0, last_sequence=0",
+      "\u001b[2m2026-04-28T05:00:39.866702Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2msurrealkv::wal::recovery\u001b[0m\u001b[2m:\u001b[0m Starting WAL recovery from directory: \"/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-8-memory-retrieval-data-1fov0eqr/db/wal\"",
+      "\u001b[2m2026-04-28T05:00:39.866808Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2msurrealkv::wal::recovery\u001b[0m\u001b[2m:\u001b[0m Replaying WAL segments #00000000000000000000 to #00000000000000000000",
+      "\u001b[2m2026-04-28T05:00:39.887561Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2msurrealkv::wal::recovery\u001b[0m\u001b[2m:\u001b[0m WAL recovery complete: 0 batches across 0 segments, 0 memtables created, max_seq_num=None",
+      "\u001b[2m2026-04-28T05:00:39.888719Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2msurrealkv::lsm\u001b[0m\u001b[2m:\u001b[0m === LSM tree initialization complete ===",
+      "\u001b[2m2026-04-28T05:00:39.903115Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2msurrealdb::core::kvs::surrealkv\u001b[0m\u001b[2m:\u001b[0m Sync mode: every transaction commit",
+      "\u001b[2m2026-04-28T05:00:39.903363Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2msurrealdb::core::kvs::surrealkv\u001b[0m\u001b[2m:\u001b[0m Grouped commit: enabled (timeout=5000000ns, wait_threshold=12, max_batch_size=4096)",
+      "\u001b[2m2026-04-28T05:00:39.903616Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2msurrealdb::core::kvs::ds\u001b[0m\u001b[2m:\u001b[0m Started surrealkv kvs store",
+      "\u001b[2m2026-04-28T05:00:40.641093Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2mmemory_mcp::storage::surrealdb\u001b[0m\u001b[2m:\u001b[0m Dimension check passed \u001b[3mmodel\u001b[0m\u001b[2m=\u001b[0m384 \u001b[3mdb\u001b[0m\u001b[2m=\u001b[0m384",
+      "\u001b[2m2026-04-28T05:00:40.641110Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2mmemory_mcp\u001b[0m\u001b[2m:\u001b[0m Embedding engine configured \u001b[3moutput_dim\u001b[0m\u001b[2m=\u001b[0m384 \u001b[3mmodel\u001b[0m\u001b[2m=\u001b[0me5_small",
+      "\u001b[2m2026-04-28T05:00:40.717788Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2mmemory_mcp::embedding::service\u001b[0m\u001b[2m:\u001b[0m Loading embedding model: E5Small",
+      "\u001b[2m2026-04-28T05:00:40.718595Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2mmemory_mcp::forgetting::capacity\u001b[0m\u001b[2m:\u001b[0m Capacity controller started \u001b[3mcheck_interval_secs\u001b[0m\u001b[2m=\u001b[0m3600 \u001b[3msoft_limit\u001b[0m\u001b[2m=\u001b[0m10000 \u001b[3mcleanup_target_ratio\u001b[0m\u001b[2m=\u001b[0m0.800000011920929",
+      "\u001b[2m2026-04-28T05:00:40.718763Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2mmemory_mcp::embedding::worker\u001b[0m\u001b[2m:\u001b[0m Embedding worker started, waiting for requests",
+      "\u001b[2m2026-04-28T05:00:40.721797Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2mmemory_mcp::forgetting::capacity\u001b[0m\u001b[2m:\u001b[0m Capacity OK: 0 memories \u001b[3mcount\u001b[0m\u001b[2m=\u001b[0m0",
+      "\u001b[2m2026-04-28T05:00:40.723505Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2mrmcp::handler::server\u001b[0m\u001b[2m:\u001b[0m client initialized",
+      "\u001b[2m2026-04-28T05:00:40.723520Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[1mserve_inner\u001b[0m\u001b[2m:\u001b[0m \u001b[2mrmcp::service\u001b[0m\u001b[2m:\u001b[0m Service initialized as server \u001b[3mpeer_info\u001b[0m\u001b[2m=\u001b[0mSome(InitializeRequestParams { meta: None, protocol_version: ProtocolVersion(\"2024-11-05\"), capabilities: ClientCapabilities { experimental: None, extensions: None, roots: None, sampling: None, elicitation: None, tasks: None }, client_info: Implementation { name: \"memory-retrieval-benchmark\", title: None, version: \"0.1.0\", description: None, icons: None, website_url: None } })",
+      "\u001b[2m2026-04-28T05:00:40.723543Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2mmemory_mcp\u001b[0m\u001b[2m:\u001b[0m Server started in stdio mode, waiting for client disconnect or signals...",
+      "\u001b[2m2026-04-28T05:00:49.217579Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2mmemory_mcp::embedding::service\u001b[0m\u001b[2m:\u001b[0m Downloading model weights from HuggingFace Hub...",
+      "\u001b[2m2026-04-28T05:02:34.600879Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2mmemory_mcp::embedding::service\u001b[0m\u001b[2m:\u001b[0m Embedding model ready \u001b[3melapsed_sec\u001b[0m\u001b[2m=\u001b[0m\"113.9\""
+    ]
+  },
+  "generated_at_utc": "2026-04-28T05:02:44.077959Z",
+  "manifest": {
+    "baseline_refresh": {
+      "baseline_version": "v2-contract-test",
+      "canonical_target_requested": false,
+      "canonical_target_written": false,
+      "command": "python3 evals/memory_retrieval_benchmark.py --refresh-baseline --refresh-reason benchmark-v2-contract-test --baseline-version v2-contract-test --fixture-tier small --output-json /Users/xiayiming1/Documents/Workspace/memory-mcp-1file/.sisyphus/evidence/benchmark-v2/task-2-refresh-temp.json --output-md /Users/xiayiming1/Documents/Workspace/memory-mcp-1file/.sisyphus/evidence/benchmark-v2/task-2-refresh-temp.md",
+      "fixture_tier": "small",
+      "git_commit": "99ac9f7f3d83e89ef434df3c14bf70488dea95aa",
+      "model": "e5_small",
+      "output_json": "/Users/xiayiming1/Documents/Workspace/memory-mcp-1file/.sisyphus/evidence/benchmark-v2/task-2-refresh-temp.json",
+      "output_md": "/Users/xiayiming1/Documents/Workspace/memory-mcp-1file/.sisyphus/evidence/benchmark-v2/task-2-refresh-temp.md",
+      "refresh_mode": true,
+      "refresh_reason": "benchmark-v2-contract-test",
+      "refresh_requested": true,
+      "refresh_timestamp_utc": "2026-04-28T05:02:43.948024Z",
+      "schema_version": "2.0"
+    },
+    "baseline_version": "v2-contract-test",
+    "command_selected": [
+      "/Users/xiayiming1/Documents/Workspace/memory-mcp-1file/target/fast/memory-mcp",
+      "--stdio"
+    ],
+    "data_dir_strategy": "temporary isolated DATA_DIR",
+    "determinism_policy": {
+      "name": "stable_fixture_order+stable_tie_break+stable_report_order+tolerance_1e-9_1e-6"
+    },
+    "fixture_counts": {
+      "golden_queries": 10,
+      "graph_entities": 5,
+      "graph_relations": 8,
+      "memories": 15
+    },
+    "fixture_paths": {
+      "golden_queries": "evals/golden/memory_retrieval_queries.json",
+      "memory_corpus": "evals/fixtures/memory_corpus.json",
+      "memory_graph": "evals/fixtures/memory_graph.json"
+    },
+    "fixture_tier": "small",
+    "query_types": [
+      "get_valid_filtered",
+      "get_valid_temporal",
+      "negative_no_match",
+      "recall_fusion",
+      "search_bm25",
+      "search_vector"
+    ],
+    "required_query_types": [
+      "get_valid_filtered",
+      "get_valid_temporal",
+      "negative_no_match",
+      "recall_fusion",
+      "search_bm25",
+      "search_vector"
+    ],
+    "runtime_target": {
+      "optional_policy": "small tier default",
+      "required_by_default": true,
+      "target_minutes": "5-10"
+    },
+    "schema_version": "2.0",
+    "seed_order": [
+      "knowledge_graph",
+      "store_memory"
+    ],
+    "threshold_policy": {
+      "enforcement": "local-only",
+      "name": "local-v2-policy-tbd"
+    },
+    "tool_set": [
+      "knowledge_graph",
+      "store_memory",
+      "recall",
+      "search_memory",
+      "get_valid"
+    ]
+  },
+  "per_query": [
+    {
+      "contract": {
+        "compatibility": {
+          "clients_must_ignore_unknown_enum_values": true,
+          "clients_must_ignore_unknown_fields": true,
+          "db_shape_is_not_public_contract": true,
+          "mode": "additive_first"
+        },
+        "generated_at": "2026-04-28T05:02:43.116401Z",
+        "generation_basis": {
+          "semantic_generation": 0,
+          "structural_generation": 0
+        },
+        "identity": {
+          "edge_id_semantics": "no_public_edge_ids",
+          "edge_ids_are_local_only": true,
+          "node_id_semantics": "stable_public_memory_id",
+          "node_ids_are_project_scoped": false,
+          "stable_edge_ids": false,
+          "stable_node_ids": true
+        },
+        "projection": {
+          "basis": "semantic_generation",
+          "generation": 0,
+          "materialization": {
+            "addressability_semantics": "no_stable_external_read_target_is_promised_until_materialization_strategy_changes",
+            "consistent_with_projection_state": true,
+            "current_generation": 0,
+            "identity_basis": "project_id + semantic_generation",
+            "is_addressable": false,
+            "locator_can_be_persisted_by_clients": false,
+            "locator_is_opaque": true,
+            "locator_scope": "none_when_not_materialized",
+            "locator_semantics": "absent_when_not_materialized; when present it identifies the externally consumable projection instance",
+            "locator_stability": "not_stable_until_materialization_strategy_changes",
+            "locator_survives_generation_change": false,
+            "persistence": "ephemeral_contract_only",
+            "persistence_semantics": "contract is exposed on status surfaces only; no persisted projection artifact is promised yet",
+            "refresh_basis": "semantic_generation",
+            "shape_version": 1,
+            "shape_version_semantics": "materialized_projection_payload_shape_version",
+            "strategy": "not_materialized"
+          },
+          "state": "missing"
+        },
+        "projection_state": "missing",
+        "schema_version": 1,
+        "surface_guidance": {
+          "forbidden_to_depend_fields": [],
+          "legacy_compatibility_fields": [
+            "count",
+            "filters",
+            "diagnostics",
+            "weights",
+            "query"
+          ],
+          "preferred_response_fields": [
+            "results",
+            "memories",
+            "contract",
+            "summary"
+          ]
+        }
+      },
+      "expected_count": 2,
+      "expected_fixture_ids": [
+        "mem_task_auth_timeout",
+        "mem_decision_cache_ttl"
+      ],
+      "expected_ids": [
+        "mem_task_auth_timeout",
+        "mem_decision_cache_ttl"
+      ],
+      "expected_rank": 1,
+      "expected_server_ids": [
+        "abf112a06bf7f41af803",
+        "6a1dee768aae44230215"
+      ],
+      "failure_type": "none",
+      "found_expected_fixture_ids": [
+        "mem_task_auth_timeout",
+        "mem_decision_cache_ttl"
+      ],
+      "found_expected_ids": [
+        "abf112a06bf7f41af803",
+        "6a1dee768aae44230215"
+      ],
+      "found_expected_server_ids": [
+        "abf112a06bf7f41af803",
+        "6a1dee768aae44230215"
+      ],
+      "hit_count": 1,
+      "latency_ms": 130.45512500001166,
+      "missing_expected_fixture_ids": [],
+      "mrr": 1.0,
+      "ndcg_at_10": 1.0,
+      "ndcg_at_5": 1.0,
+      "negative": false,
+      "parse_errors": [],
+      "precision_at_10": 0.2,
+      "precision_at_5": 0.4,
+      "query": "auth timeout retry window",
+      "query_id": "q_recall_fusion_auth_timeout",
+      "query_type": "recall_fusion",
+      "raw_top_k": [
+        {
+          "fixture_id": "mem_task_auth_timeout",
+          "preview": "TASK: Retry auth requests for 15 minutes when the token refresh path stalls.",
+          "rank": 1,
+          "result_id": "abf112a06bf7f41af803",
+          "score": 0.008976712822914124
+        },
+        {
+          "fixture_id": "mem_decision_cache_ttl",
+          "preview": "DECISION: Use a 15 minute cache ttl for auth token refresh state.",
+          "rank": 2,
+          "result_id": "6a1dee768aae44230215",
+          "score": 0.00883256271481514
+        },
+        {
+          "fixture_id": "mem_task_billing_retry_window",
+          "preview": "TASK: Billing retries stay open for a 15 minute retry window.",
+          "rank": 3,
+          "result_id": "2684aec6fa58b09a1d83",
+          "score": 0.008808204904198647
+        },
+        {
+          "fixture_id": "mem_decision_temporal_utc",
+          "preview": "DECISION: Represent temporal windows in ISO 8601 UTC for deterministic parsing.",
+          "rank": 4,
+          "result_id": "345a8538acd5f53305ba",
+          "score": 0.006249998230487108
+        },
+        {
+          "fixture_id": "mem_research_temporal_windows",
+          "preview": "RESEARCH: Temporal validity should be checked with explicit valid_from and valid_until windows.",
+          "rank": 5,
+          "result_id": "a85010547cd4f382a975",
+          "score": 0.006153843831270933
+        },
+        {
+          "fixture_id": "mem_task_temporal_cutoff",
+          "preview": "TASK: This temporary memory expires before the February validity checkpoint.",
+          "rank": 6,
+          "result_id": "dd8fa760daee0b2fe437",
+          "score": 0.006060594227164984
+        },
+        {
+          "fixture_id": "mem_user_pref_concise_answers",
+          "preview": "USER: Keep benchmark notes concise and factual.",
+          "rank": 7,
+          "result_id": "e4940467ee23246677fc",
+          "score": 0.005970146972686052
+        },
+        {
+          "fixture_id": "mem_decision_query_ids",
+          "preview": "DECISION: Golden queries must cite stable memory ids exactly as written.",
+          "rank": 8,
+          "result_id": "b3fd12747cf9fe1c0f7b",
+          "score": 0.005882350727915764
+        },
+        {
+          "fixture_id": "mem_context_namespace_evals",
+          "preview": "CONTEXT: Use namespace evals/memory-retrieval for benchmark runs and fixtures.",
+          "rank": 9,
+          "result_id": "823ab9c8566d1c817aa2",
+          "score": 0.0057970997877418995
+        },
+        {
+          "fixture_id": "mem_context_stdio_harness",
+          "preview": "CONTEXT: The stdio harness should prefer local binaries before cargo run.",
+          "rank": 10,
+          "result_id": "dd6e4e06c9bbaed47a7d",
+          "score": 0.005714283790439367
+        }
+      ],
+      "reason_code_classification": null,
+      "recall_at_10": 1.0,
+      "recall_at_5": 1.0,
+      "result_count": 14,
+      "result_ids": [
+        "abf112a06bf7f41af803",
+        "6a1dee768aae44230215",
+        "2684aec6fa58b09a1d83",
+        "345a8538acd5f53305ba",
+        "a85010547cd4f382a975",
+        "dd8fa760daee0b2fe437",
+        "e4940467ee23246677fc",
+        "b3fd12747cf9fe1c0f7b",
+        "823ab9c8566d1c817aa2",
+        "dd6e4e06c9bbaed47a7d",
+        "a38a47794330535d5185",
+        "96d1122e9de6f4a98f48",
+        "f5621ca51fac601f6166",
+        "1d71e5579056cc94b53f"
+      ],
+      "summary_partial_reason_code": null,
+      "tool": "recall",
+      "tool_arguments": {
+        "query": "auth timeout retry window"
+      },
+      "warnings": []
+    },
+    {
+      "contract": {
+        "compatibility": {
+          "clients_must_ignore_unknown_enum_values": true,
+          "clients_must_ignore_unknown_fields": true,
+          "db_shape_is_not_public_contract": true,
+          "mode": "additive_first"
+        },
+        "generated_at": "2026-04-28T05:02:43.137602Z",
+        "generation_basis": {
+          "semantic_generation": 0,
+          "structural_generation": 0
+        },
+        "identity": {
+          "edge_id_semantics": "no_public_edge_ids",
+          "edge_ids_are_local_only": true,
+          "node_id_semantics": "stable_public_memory_id",
+          "node_ids_are_project_scoped": false,
+          "stable_edge_ids": false,
+          "stable_node_ids": true
+        },
+        "projection": {
+          "basis": "semantic_generation",
+          "generation": 0,
+          "materialization": {
+            "addressability_semantics": "no_stable_external_read_target_is_promised_until_materialization_strategy_changes",
+            "consistent_with_projection_state": true,
+            "current_generation": 0,
+            "identity_basis": "project_id + semantic_generation",
+            "is_addressable": false,
+            "locator_can_be_persisted_by_clients": false,
+            "locator_is_opaque": true,
+            "locator_scope": "none_when_not_materialized",
+            "locator_semantics": "absent_when_not_materialized; when present it identifies the externally consumable projection instance",
+            "locator_stability": "not_stable_until_materialization_strategy_changes",
+            "locator_survives_generation_change": false,
+            "persistence": "ephemeral_contract_only",
+            "persistence_semantics": "contract is exposed on status surfaces only; no persisted projection artifact is promised yet",
+            "refresh_basis": "semantic_generation",
+            "shape_version": 1,
+            "shape_version_semantics": "materialized_projection_payload_shape_version",
+            "strategy": "not_materialized"
+          },
+          "state": "missing"
+        },
+        "projection_state": "missing",
+        "schema_version": 1,
+        "surface_guidance": {
+          "forbidden_to_depend_fields": [],
+          "legacy_compatibility_fields": [
+            "count",
+            "filters",
+            "diagnostics",
+            "weights",
+            "query"
+          ],
+          "preferred_response_fields": [
+            "results",
+            "memories",
+            "contract",
+            "summary"
+          ]
+        }
+      },
+      "expected_count": 2,
+      "expected_fixture_ids": [
+        "mem_project_benchmark_scope",
+        "mem_decision_query_ids"
+      ],
+      "expected_ids": [
+        "mem_project_benchmark_scope",
+        "mem_decision_query_ids"
+      ],
+      "expected_rank": 2,
+      "expected_server_ids": [
+        "f5621ca51fac601f6166",
+        "b3fd12747cf9fe1c0f7b"
+      ],
+      "failure_type": "none",
+      "found_expected_fixture_ids": [
+        "mem_decision_query_ids",
+        "mem_project_benchmark_scope"
+      ],
+      "found_expected_ids": [
+        "b3fd12747cf9fe1c0f7b",
+        "f5621ca51fac601f6166"
+      ],
+      "found_expected_server_ids": [
+        "b3fd12747cf9fe1c0f7b",
+        "f5621ca51fac601f6166"
+      ],
+      "hit_count": 1,
+      "latency_ms": 19.88949999999079,
+      "missing_expected_fixture_ids": [],
+      "mrr": 0.5,
+      "ndcg_at_10": 0.6509209298071326,
+      "ndcg_at_5": 0.6509209298071326,
+      "negative": false,
+      "parse_errors": [],
+      "precision_at_10": 0.2,
+      "precision_at_5": 0.4,
+      "query": "synthetic benchmark scope and stable memory ids",
+      "query_id": "q_recall_fusion_benchmark_scope",
+      "query_type": "recall_fusion",
+      "raw_top_k": [
+        {
+          "fixture_id": "mem_context_namespace_evals",
+          "preview": "CONTEXT: Use namespace evals/memory-retrieval for benchmark runs and fixtures.",
+          "rank": 1,
+          "result_id": "823ab9c8566d1c817aa2",
+          "score": 0.008938326500356197
+        },
+        {
+          "fixture_id": "mem_decision_query_ids",
+          "preview": "DECISION: Golden queries must cite stable memory ids exactly as written.",
+          "rank": 2,
+          "result_id": "b3fd12747cf9fe1c0f7b",
+          "score": 0.00880821980535984
+        },
+        {
+          "fixture_id": "mem_user_pref_concise_answers",
+          "preview": "USER: Keep benchmark notes concise and factual.",
+          "rank": 3,
+          "result_id": "e4940467ee23246677fc",
+          "score": 0.00879536010324955
+        },
+        {
+          "fixture_id": "mem_project_benchmark_scope",
+          "preview": "PROJECT: This benchmark uses only synthetic fixtures and no private memory content.",
+          "rank": 4,
+          "result_id": "f5621ca51fac601f6166",
+          "score": 0.008669352158904076
+        },
+        {
+          "fixture_id": "mem_project_recall_fusion_plan",
+          "preview": "PROJECT: Recall fusion blends lexical evidence and graph evidence for benchmark queries.",
+          "rank": 5,
+          "result_id": "1d71e5579056cc94b53f",
+          "score": 0.00842657033354044
+        },
+        {
+          "fixture_id": "mem_research_rrf_fusion",
+          "preview": "RESEARCH: RRF fusion should combine vector, BM25, and graph signals for recall.",
+          "rank": 6,
+          "result_id": "96d1122e9de6f4a98f48",
+          "score": 0.008234516717493534
+        },
+        {
+          "fixture_id": "mem_research_temporal_windows",
+          "preview": "RESEARCH: Temporal validity should be checked with explicit valid_from and valid_until windows.",
+          "rank": 7,
+          "result_id": "a85010547cd4f382a975",
+          "score": 0.008025207556784153
+        },
+        {
+          "fixture_id": "mem_task_temporal_cutoff",
+          "preview": "TASK: This temporary memory expires before the February validity checkpoint.",
+          "rank": 8,
+          "result_id": "dd8fa760daee0b2fe437",
+          "score": 0.00795307569205761
+        },
+        {
+          "fixture_id": "mem_context_no_private_data",
+          "preview": "CONTEXT: Never use production, private, or local personal memory content in fixtures.",
+          "rank": 9,
+          "result_id": "a38a47794330535d5185",
+          "score": 0.007761435583233833
+        },
+        {
+          "fixture_id": "mem_context_stdio_harness",
+          "preview": "CONTEXT: The stdio harness should prefer local binaries before cargo run.",
+          "rank": 10,
+          "result_id": "dd6e4e06c9bbaed47a7d",
+          "score": 0.005970146972686052
+        }
+      ],
+      "reason_code_classification": null,
+      "recall_at_10": 1.0,
+      "recall_at_5": 1.0,
+      "result_count": 15,
+      "result_ids": [
+        "823ab9c8566d1c817aa2",
+        "b3fd12747cf9fe1c0f7b",
+        "e4940467ee23246677fc",
+        "f5621ca51fac601f6166",
+        "1d71e5579056cc94b53f",
+        "96d1122e9de6f4a98f48",
+        "a85010547cd4f382a975",
+        "dd8fa760daee0b2fe437",
+        "a38a47794330535d5185",
+        "dd6e4e06c9bbaed47a7d",
+        "345a8538acd5f53305ba",
+        "6a1dee768aae44230215",
+        "abf112a06bf7f41af803",
+        "2684aec6fa58b09a1d83",
+        "5c5a3a56f0be96ef7623"
+      ],
+      "summary_partial_reason_code": null,
+      "tool": "recall",
+      "tool_arguments": {
+        "query": "synthetic benchmark scope and stable memory ids"
+      },
+      "warnings": []
+    },
+    {
+      "contract": {
+        "compatibility": {
+          "clients_must_ignore_unknown_enum_values": true,
+          "clients_must_ignore_unknown_fields": true,
+          "db_shape_is_not_public_contract": true,
+          "mode": "additive_first"
+        },
+        "generated_at": "2026-04-28T05:02:43.153178Z",
+        "generation_basis": {
+          "semantic_generation": 0,
+          "structural_generation": 0
+        },
+        "identity": {
+          "edge_id_semantics": "no_public_edge_ids",
+          "edge_ids_are_local_only": true,
+          "node_id_semantics": "stable_public_memory_id",
+          "node_ids_are_project_scoped": false,
+          "stable_edge_ids": false,
+          "stable_node_ids": true
+        },
+        "projection": {
+          "basis": "semantic_generation",
+          "generation": 0,
+          "materialization": {
+            "addressability_semantics": "no_stable_external_read_target_is_promised_until_materialization_strategy_changes",
+            "consistent_with_projection_state": true,
+            "current_generation": 0,
+            "identity_basis": "project_id + semantic_generation",
+            "is_addressable": false,
+            "locator_can_be_persisted_by_clients": false,
+            "locator_is_opaque": true,
+            "locator_scope": "none_when_not_materialized",
+            "locator_semantics": "absent_when_not_materialized; when present it identifies the externally consumable projection instance",
+            "locator_stability": "not_stable_until_materialization_strategy_changes",
+            "locator_survives_generation_change": false,
+            "persistence": "ephemeral_contract_only",
+            "persistence_semantics": "contract is exposed on status surfaces only; no persisted projection artifact is promised yet",
+            "refresh_basis": "semantic_generation",
+            "shape_version": 1,
+            "shape_version_semantics": "materialized_projection_payload_shape_version",
+            "strategy": "not_materialized"
+          },
+          "state": "missing"
+        },
+        "projection_state": "missing",
+        "schema_version": 1,
+        "surface_guidance": {
+          "forbidden_to_depend_fields": [],
+          "legacy_compatibility_fields": [
+            "count",
+            "filters",
+            "diagnostics",
+            "weights",
+            "query"
+          ],
+          "preferred_response_fields": [
+            "results",
+            "memories",
+            "contract",
+            "summary"
+          ]
+        }
+      },
+      "expected_count": 2,
+      "expected_fixture_ids": [
+        "mem_user_pref_concise_answers",
+        "mem_user_pref_terse_notes"
+      ],
+      "expected_ids": [
+        "mem_user_pref_concise_answers",
+        "mem_user_pref_terse_notes"
+      ],
+      "expected_rank": 1,
+      "expected_server_ids": [
+        "e4940467ee23246677fc",
+        "5c5a3a56f0be96ef7623"
+      ],
+      "failure_type": "none",
+      "found_expected_fixture_ids": [
+        "mem_user_pref_concise_answers",
+        "mem_user_pref_terse_notes"
+      ],
+      "found_expected_ids": [
+        "e4940467ee23246677fc",
+        "5c5a3a56f0be96ef7623"
+      ],
+      "found_expected_server_ids": [
+        "e4940467ee23246677fc",
+        "5c5a3a56f0be96ef7623"
+      ],
+      "hit_count": 1,
+      "latency_ms": 15.51762500000109,
+      "missing_expected_fixture_ids": [],
+      "mrr": 1.0,
+      "ndcg_at_10": 0.6131471927654584,
+      "ndcg_at_5": 0.6131471927654584,
+      "negative": false,
+      "parse_errors": [],
+      "precision_at_10": 0.1,
+      "precision_at_5": 0.2,
+      "query": "keep notes concise and terse",
+      "query_id": "q_recall_fusion_terse_notes",
+      "query_type": "recall_fusion",
+      "raw_top_k": [
+        {
+          "fixture_id": "mem_user_pref_concise_answers",
+          "preview": "USER: Keep benchmark notes concise and factual.",
+          "rank": 1,
+          "result_id": "e4940467ee23246677fc",
+          "score": 0.009016390889883041
+        },
+        {
+          "fixture_id": "mem_context_namespace_evals",
+          "preview": "CONTEXT: Use namespace evals/memory-retrieval for benchmark runs and fixtures.",
+          "rank": 2,
+          "result_id": "823ab9c8566d1c817aa2",
+          "score": 0.008730156347155571
+        },
+        {
+          "fixture_id": "mem_research_temporal_windows",
+          "preview": "RESEARCH: Temporal validity should be checked with explicit valid_from and valid_until windows.",
+          "rank": 3,
+          "result_id": "a85010547cd4f382a975",
+          "score": 0.008690415881574154
+        },
+        {
+          "fixture_id": "mem_research_rrf_fusion",
+          "preview": "RESEARCH: RRF fusion should combine vector, BM25, and graph signals for recall.",
+          "rank": 4,
+          "result_id": "96d1122e9de6f4a98f48",
+          "score": 0.008069826290011406
+        },
+        {
+          "fixture_id": "mem_project_recall_fusion_plan",
+          "preview": "PROJECT: Recall fusion blends lexical evidence and graph evidence for benchmark queries.",
+          "rank": 5,
+          "result_id": "1d71e5579056cc94b53f",
+          "score": 0.00797754991799593
+        },
+        {
+          "fixture_id": "mem_project_benchmark_scope",
+          "preview": "PROJECT: This benchmark uses only synthetic fixtures and no private memory content.",
+          "rank": 6,
+          "result_id": "f5621ca51fac601f6166",
+          "score": 0.00778714194893837
+        },
+        {
+          "fixture_id": "mem_task_temporal_cutoff",
+          "preview": "TASK: This temporary memory expires before the February validity checkpoint.",
+          "rank": 7,
+          "result_id": "dd8fa760daee0b2fe437",
+          "score": 0.0062499879859387875
+        },
+        {
+          "fixture_id": "mem_decision_query_ids",
+          "preview": "DECISION: Golden queries must cite stable memory ids exactly as written.",
+          "rank": 8,
+          "result_id": "b3fd12747cf9fe1c0f7b",
+          "score": 0.006153843831270933
+        },
+        {
+          "fixture_id": "mem_context_no_private_data",
+          "preview": "CONTEXT: Never use production, private, or local personal memory content in fixtures.",
+          "rank": 9,
+          "result_id": "a38a47794330535d5185",
+          "score": 0.006060604006052017
+        },
+        {
+          "fixture_id": "mem_task_billing_retry_window",
+          "preview": "TASK: Billing retries stay open for a 15 minute retry window.",
+          "rank": 10,
+          "result_id": "2684aec6fa58b09a1d83",
+          "score": 0.005970137659460306
+        }
+      ],
+      "reason_code_classification": null,
+      "recall_at_10": 0.5,
+      "recall_at_5": 0.5,
+      "result_count": 15,
+      "result_ids": [
+        "e4940467ee23246677fc",
+        "823ab9c8566d1c817aa2",
+        "a85010547cd4f382a975",
+        "96d1122e9de6f4a98f48",
+        "1d71e5579056cc94b53f",
+        "f5621ca51fac601f6166",
+        "dd8fa760daee0b2fe437",
+        "b3fd12747cf9fe1c0f7b",
+        "a38a47794330535d5185",
+        "2684aec6fa58b09a1d83",
+        "6a1dee768aae44230215",
+        "345a8538acd5f53305ba",
+        "dd6e4e06c9bbaed47a7d",
+        "abf112a06bf7f41af803",
+        "5c5a3a56f0be96ef7623"
+      ],
+      "summary_partial_reason_code": null,
+      "tool": "recall",
+      "tool_arguments": {
+        "query": "keep notes concise and terse"
+      },
+      "warnings": []
+    },
+    {
+      "contract": {
+        "compatibility": {
+          "clients_must_ignore_unknown_enum_values": true,
+          "clients_must_ignore_unknown_fields": true,
+          "db_shape_is_not_public_contract": true,
+          "mode": "additive_first"
+        },
+        "generated_at": "2026-04-28T05:02:43.154899Z",
+        "generation_basis": {
+          "semantic_generation": 0,
+          "structural_generation": 0
+        },
+        "identity": {
+          "edge_id_semantics": "no_public_edge_ids",
+          "edge_ids_are_local_only": true,
+          "node_id_semantics": "stable_public_memory_id",
+          "node_ids_are_project_scoped": false,
+          "stable_edge_ids": false,
+          "stable_node_ids": true
+        },
+        "projection": {
+          "basis": "semantic_generation",
+          "generation": 0,
+          "materialization": {
+            "addressability_semantics": "no_stable_external_read_target_is_promised_until_materialization_strategy_changes",
+            "consistent_with_projection_state": true,
+            "current_generation": 0,
+            "identity_basis": "project_id + semantic_generation",
+            "is_addressable": false,
+            "locator_can_be_persisted_by_clients": false,
+            "locator_is_opaque": true,
+            "locator_scope": "none_when_not_materialized",
+            "locator_semantics": "absent_when_not_materialized; when present it identifies the externally consumable projection instance",
+            "locator_stability": "not_stable_until_materialization_strategy_changes",
+            "locator_survives_generation_change": false,
+            "persistence": "ephemeral_contract_only",
+            "persistence_semantics": "contract is exposed on status surfaces only; no persisted projection artifact is promised yet",
+            "refresh_basis": "semantic_generation",
+            "shape_version": 1,
+            "shape_version_semantics": "materialized_projection_payload_shape_version",
+            "strategy": "not_materialized"
+          },
+          "state": "missing"
+        },
+        "projection_state": "missing",
+        "schema_version": 1,
+        "surface_guidance": {
+          "forbidden_to_depend_fields": [],
+          "legacy_compatibility_fields": [
+            "count",
+            "filters",
+            "diagnostics",
+            "weights",
+            "query"
+          ],
+          "preferred_response_fields": [
+            "results",
+            "memories",
+            "contract",
+            "summary"
+          ]
+        }
+      },
+      "expected_count": 1,
+      "expected_fixture_ids": [
+        "mem_decision_cache_ttl"
+      ],
+      "expected_ids": [
+        "mem_decision_cache_ttl"
+      ],
+      "expected_rank": 1,
+      "expected_server_ids": [
+        "6a1dee768aae44230215"
+      ],
+      "failure_type": "none",
+      "found_expected_fixture_ids": [
+        "mem_decision_cache_ttl"
+      ],
+      "found_expected_ids": [
+        "6a1dee768aae44230215"
+      ],
+      "found_expected_server_ids": [
+        "6a1dee768aae44230215"
+      ],
+      "hit_count": 1,
+      "latency_ms": 1.4214579999958232,
+      "missing_expected_fixture_ids": [],
+      "mrr": 1.0,
+      "ndcg_at_10": 1.0,
+      "ndcg_at_5": 1.0,
+      "negative": false,
+      "parse_errors": [],
+      "precision_at_10": 0.1,
+      "precision_at_5": 0.2,
+      "query": "DECISION cache ttl auth",
+      "query_id": "q_search_bm25_cache_prefix",
+      "query_type": "search_bm25",
+      "raw_top_k": [
+        {
+          "fixture_id": "mem_decision_cache_ttl",
+          "preview": "DECISION: Use a 15 minute cache ttl for auth token refresh state.",
+          "rank": 1,
+          "result_id": "6a1dee768aae44230215",
+          "score": 1.0
+        },
+        {
+          "fixture_id": "mem_task_auth_timeout",
+          "preview": "TASK: Retry auth requests for 15 minutes when the token refresh path stalls.",
+          "rank": 2,
+          "result_id": "abf112a06bf7f41af803",
+          "score": 1.0
+        },
+        {
+          "fixture_id": "mem_decision_query_ids",
+          "preview": "DECISION: Golden queries must cite stable memory ids exactly as written.",
+          "rank": 3,
+          "result_id": "b3fd12747cf9fe1c0f7b",
+          "score": 1.0
+        },
+        {
+          "fixture_id": "mem_decision_temporal_utc",
+          "preview": "DECISION: Represent temporal windows in ISO 8601 UTC for deterministic parsing.",
+          "rank": 4,
+          "result_id": "345a8538acd5f53305ba",
+          "score": 1.0
+        }
+      ],
+      "reason_code_classification": null,
+      "recall_at_10": 1.0,
+      "recall_at_5": 1.0,
+      "result_count": 4,
+      "result_ids": [
+        "6a1dee768aae44230215",
+        "abf112a06bf7f41af803",
+        "b3fd12747cf9fe1c0f7b",
+        "345a8538acd5f53305ba"
+      ],
+      "summary_partial_reason_code": null,
+      "tool": "search_memory",
+      "tool_arguments": {
+        "mode": "bm25",
+        "query": "DECISION cache ttl auth"
+      },
+      "warnings": []
+    },
+    {
+      "contract": {
+        "compatibility": {
+          "clients_must_ignore_unknown_enum_values": true,
+          "clients_must_ignore_unknown_fields": true,
+          "db_shape_is_not_public_contract": true,
+          "mode": "additive_first"
+        },
+        "generated_at": "2026-04-28T05:02:43.156319Z",
+        "generation_basis": {
+          "semantic_generation": 0,
+          "structural_generation": 0
+        },
+        "identity": {
+          "edge_id_semantics": "no_public_edge_ids",
+          "edge_ids_are_local_only": true,
+          "node_id_semantics": "stable_public_memory_id",
+          "node_ids_are_project_scoped": false,
+          "stable_edge_ids": false,
+          "stable_node_ids": true
+        },
+        "projection": {
+          "basis": "semantic_generation",
+          "generation": 0,
+          "materialization": {
+            "addressability_semantics": "no_stable_external_read_target_is_promised_until_materialization_strategy_changes",
+            "consistent_with_projection_state": true,
+            "current_generation": 0,
+            "identity_basis": "project_id + semantic_generation",
+            "is_addressable": false,
+            "locator_can_be_persisted_by_clients": false,
+            "locator_is_opaque": true,
+            "locator_scope": "none_when_not_materialized",
+            "locator_semantics": "absent_when_not_materialized; when present it identifies the externally consumable projection instance",
+            "locator_stability": "not_stable_until_materialization_strategy_changes",
+            "locator_survives_generation_change": false,
+            "persistence": "ephemeral_contract_only",
+            "persistence_semantics": "contract is exposed on status surfaces only; no persisted projection artifact is promised yet",
+            "refresh_basis": "semantic_generation",
+            "shape_version": 1,
+            "shape_version_semantics": "materialized_projection_payload_shape_version",
+            "strategy": "not_materialized"
+          },
+          "state": "missing"
+        },
+        "projection_state": "missing",
+        "schema_version": 1,
+        "surface_guidance": {
+          "forbidden_to_depend_fields": [],
+          "legacy_compatibility_fields": [
+            "count",
+            "filters",
+            "diagnostics",
+            "weights",
+            "query"
+          ],
+          "preferred_response_fields": [
+            "results",
+            "memories",
+            "contract",
+            "summary"
+          ]
+        }
+      },
+      "expected_count": 2,
+      "expected_fixture_ids": [
+        "mem_research_temporal_windows",
+        "mem_decision_temporal_utc"
+      ],
+      "expected_ids": [
+        "mem_research_temporal_windows",
+        "mem_decision_temporal_utc"
+      ],
+      "expected_rank": 1,
+      "expected_server_ids": [
+        "a85010547cd4f382a975",
+        "345a8538acd5f53305ba"
+      ],
+      "failure_type": "none",
+      "found_expected_fixture_ids": [
+        "mem_decision_temporal_utc",
+        "mem_research_temporal_windows"
+      ],
+      "found_expected_ids": [
+        "345a8538acd5f53305ba",
+        "a85010547cd4f382a975"
+      ],
+      "found_expected_server_ids": [
+        "345a8538acd5f53305ba",
+        "a85010547cd4f382a975"
+      ],
+      "hit_count": 1,
+      "latency_ms": 1.274875000007114,
+      "missing_expected_fixture_ids": [],
+      "mrr": 1.0,
+      "ndcg_at_10": 1.0,
+      "ndcg_at_5": 1.0,
+      "negative": false,
+      "parse_errors": [],
+      "precision_at_10": 0.2,
+      "precision_at_5": 0.4,
+      "query": "temporal validity windows UTC",
+      "query_id": "q_search_bm25_temporal_windows",
+      "query_type": "search_bm25",
+      "raw_top_k": [
+        {
+          "fixture_id": "mem_decision_temporal_utc",
+          "preview": "DECISION: Represent temporal windows in ISO 8601 UTC for deterministic parsing.",
+          "rank": 1,
+          "result_id": "345a8538acd5f53305ba",
+          "score": 1.0
+        },
+        {
+          "fixture_id": "mem_research_temporal_windows",
+          "preview": "RESEARCH: Temporal validity should be checked with explicit valid_from and valid_until windows.",
+          "rank": 2,
+          "result_id": "a85010547cd4f382a975",
+          "score": 1.0
+        },
+        {
+          "fixture_id": "mem_task_temporal_cutoff",
+          "preview": "TASK: This temporary memory expires before the February validity checkpoint.",
+          "rank": 3,
+          "result_id": "dd8fa760daee0b2fe437",
+          "score": 1.0
+        }
+      ],
+      "reason_code_classification": null,
+      "recall_at_10": 1.0,
+      "recall_at_5": 1.0,
+      "result_count": 3,
+      "result_ids": [
+        "345a8538acd5f53305ba",
+        "a85010547cd4f382a975",
+        "dd8fa760daee0b2fe437"
+      ],
+      "summary_partial_reason_code": null,
+      "tool": "search_memory",
+      "tool_arguments": {
+        "mode": "bm25",
+        "query": "temporal validity windows UTC"
+      },
+      "warnings": []
+    },
+    {
+      "contract": {
+        "compatibility": {
+          "clients_must_ignore_unknown_enum_values": true,
+          "clients_must_ignore_unknown_fields": true,
+          "db_shape_is_not_public_contract": true,
+          "mode": "additive_first"
+        },
+        "generated_at": "2026-04-28T05:02:43.172856Z",
+        "generation_basis": {
+          "semantic_generation": 0,
+          "structural_generation": 0
+        },
+        "identity": {
+          "edge_id_semantics": "no_public_edge_ids",
+          "edge_ids_are_local_only": true,
+          "node_id_semantics": "stable_public_memory_id",
+          "node_ids_are_project_scoped": false,
+          "stable_edge_ids": false,
+          "stable_node_ids": true
+        },
+        "projection": {
+          "basis": "semantic_generation",
+          "generation": 0,
+          "materialization": {
+            "addressability_semantics": "no_stable_external_read_target_is_promised_until_materialization_strategy_changes",
+            "consistent_with_projection_state": true,
+            "current_generation": 0,
+            "identity_basis": "project_id + semantic_generation",
+            "is_addressable": false,
+            "locator_can_be_persisted_by_clients": false,
+            "locator_is_opaque": true,
+            "locator_scope": "none_when_not_materialized",
+            "locator_semantics": "absent_when_not_materialized; when present it identifies the externally consumable projection instance",
+            "locator_stability": "not_stable_until_materialization_strategy_changes",
+            "locator_survives_generation_change": false,
+            "persistence": "ephemeral_contract_only",
+            "persistence_semantics": "contract is exposed on status surfaces only; no persisted projection artifact is promised yet",
+            "refresh_basis": "semantic_generation",
+            "shape_version": 1,
+            "shape_version_semantics": "materialized_projection_payload_shape_version",
+            "strategy": "not_materialized"
+          },
+          "state": "missing"
+        },
+        "projection_state": "missing",
+        "schema_version": 1,
+        "surface_guidance": {
+          "forbidden_to_depend_fields": [],
+          "legacy_compatibility_fields": [
+            "count",
+            "filters",
+            "diagnostics",
+            "weights",
+            "query"
+          ],
+          "preferred_response_fields": [
+            "results",
+            "memories",
+            "contract",
+            "summary"
+          ]
+        }
+      },
+      "expected_count": 1,
+      "expected_fixture_ids": [
+        "mem_task_billing_retry_window"
+      ],
+      "expected_ids": [
+        "mem_task_billing_retry_window"
+      ],
+      "expected_rank": 1,
+      "expected_server_ids": [
+        "2684aec6fa58b09a1d83"
+      ],
+      "failure_type": "none",
+      "found_expected_fixture_ids": [
+        "mem_task_billing_retry_window"
+      ],
+      "found_expected_ids": [
+        "2684aec6fa58b09a1d83"
+      ],
+      "found_expected_server_ids": [
+        "2684aec6fa58b09a1d83"
+      ],
+      "hit_count": 1,
+      "latency_ms": 16.766250000003424,
+      "missing_expected_fixture_ids": [],
+      "mrr": 1.0,
+      "ndcg_at_10": 1.0,
+      "ndcg_at_5": 1.0,
+      "negative": false,
+      "parse_errors": [],
+      "precision_at_10": 0.1,
+      "precision_at_5": 0.2,
+      "query": "Billing retries stay open for a 15 minute retry window",
+      "query_id": "q_search_vector_billing_retry",
+      "query_type": "search_vector",
+      "raw_top_k": [
+        {
+          "fixture_id": "mem_task_billing_retry_window",
+          "preview": "TASK: Billing retries stay open for a 15 minute retry window.",
+          "rank": 1,
+          "result_id": "2684aec6fa58b09a1d83",
+          "score": 0.9700629115104675
+        },
+        {
+          "fixture_id": "mem_task_auth_timeout",
+          "preview": "TASK: Retry auth requests for 15 minutes when the token refresh path stalls.",
+          "rank": 2,
+          "result_id": "abf112a06bf7f41af803",
+          "score": 0.8856439590454102
+        },
+        {
+          "fixture_id": "mem_decision_cache_ttl",
+          "preview": "DECISION: Use a 15 minute cache ttl for auth token refresh state.",
+          "rank": 3,
+          "result_id": "6a1dee768aae44230215",
+          "score": 0.8707281351089478
+        },
+        {
+          "fixture_id": "mem_research_temporal_windows",
+          "preview": "RESEARCH: Temporal validity should be checked with explicit valid_from and valid_until windows.",
+          "rank": 4,
+          "result_id": "a85010547cd4f382a975",
+          "score": 0.8261145353317261
+        },
+        {
+          "fixture_id": "mem_task_temporal_cutoff",
+          "preview": "TASK: This temporary memory expires before the February validity checkpoint.",
+          "rank": 5,
+          "result_id": "dd8fa760daee0b2fe437",
+          "score": 0.8228482604026794
+        },
+        {
+          "fixture_id": "mem_decision_temporal_utc",
+          "preview": "DECISION: Represent temporal windows in ISO 8601 UTC for deterministic parsing.",
+          "rank": 6,
+          "result_id": "345a8538acd5f53305ba",
+          "score": 0.8223975300788879
+        },
+        {
+          "fixture_id": "mem_context_stdio_harness",
+          "preview": "CONTEXT: The stdio harness should prefer local binaries before cargo run.",
+          "rank": 7,
+          "result_id": "dd6e4e06c9bbaed47a7d",
+          "score": 0.8214051127433777
+        },
+        {
+          "fixture_id": "mem_user_pref_concise_answers",
+          "preview": "USER: Keep benchmark notes concise and factual.",
+          "rank": 8,
+          "result_id": "e4940467ee23246677fc",
+          "score": 0.8187820911407471
+        },
+        {
+          "fixture_id": "mem_decision_query_ids",
+          "preview": "DECISION: Golden queries must cite stable memory ids exactly as written.",
+          "rank": 9,
+          "result_id": "b3fd12747cf9fe1c0f7b",
+          "score": 0.8107767105102539
+        },
+        {
+          "fixture_id": "mem_research_rrf_fusion",
+          "preview": "RESEARCH: RRF fusion should combine vector, BM25, and graph signals for recall.",
+          "rank": 10,
+          "result_id": "96d1122e9de6f4a98f48",
+          "score": 0.8014578223228455
+        }
+      ],
+      "reason_code_classification": null,
+      "recall_at_10": 1.0,
+      "recall_at_5": 1.0,
+      "result_count": 14,
+      "result_ids": [
+        "2684aec6fa58b09a1d83",
+        "abf112a06bf7f41af803",
+        "6a1dee768aae44230215",
+        "a85010547cd4f382a975",
+        "dd8fa760daee0b2fe437",
+        "345a8538acd5f53305ba",
+        "dd6e4e06c9bbaed47a7d",
+        "e4940467ee23246677fc",
+        "b3fd12747cf9fe1c0f7b",
+        "96d1122e9de6f4a98f48",
+        "823ab9c8566d1c817aa2",
+        "f5621ca51fac601f6166",
+        "a38a47794330535d5185",
+        "1d71e5579056cc94b53f"
+      ],
+      "summary_partial_reason_code": null,
+      "tool": "search_memory",
+      "tool_arguments": {
+        "mode": "vector",
+        "query": "Billing retries stay open for a 15 minute retry window"
+      },
+      "warnings": []
+    },
+    {
+      "contract": {
+        "compatibility": {
+          "clients_must_ignore_unknown_enum_values": true,
+          "clients_must_ignore_unknown_fields": true,
+          "db_shape_is_not_public_contract": true,
+          "mode": "additive_first"
+        },
+        "generated_at": "2026-04-28T05:02:43.174569Z",
+        "generation_basis": {
+          "semantic_generation": 0,
+          "structural_generation": 0
+        },
+        "identity": {
+          "edge_id_semantics": "no_public_edge_ids",
+          "edge_ids_are_local_only": true,
+          "node_id_semantics": "stable_public_memory_id",
+          "node_ids_are_project_scoped": false,
+          "stable_edge_ids": false,
+          "stable_node_ids": true
+        },
+        "projection": {
+          "basis": "semantic_generation",
+          "generation": 0,
+          "materialization": {
+            "addressability_semantics": "no_stable_external_read_target_is_promised_until_materialization_strategy_changes",
+            "consistent_with_projection_state": true,
+            "current_generation": 0,
+            "identity_basis": "project_id + semantic_generation",
+            "is_addressable": false,
+            "locator_can_be_persisted_by_clients": false,
+            "locator_is_opaque": true,
+            "locator_scope": "none_when_not_materialized",
+            "locator_semantics": "absent_when_not_materialized; when present it identifies the externally consumable projection instance",
+            "locator_stability": "not_stable_until_materialization_strategy_changes",
+            "locator_survives_generation_change": false,
+            "persistence": "ephemeral_contract_only",
+            "persistence_semantics": "contract is exposed on status surfaces only; no persisted projection artifact is promised yet",
+            "refresh_basis": "semantic_generation",
+            "shape_version": 1,
+            "shape_version_semantics": "materialized_projection_payload_shape_version",
+            "strategy": "not_materialized"
+          },
+          "state": "missing"
+        },
+        "projection_state": "missing",
+        "schema_version": 1,
+        "surface_guidance": {
+          "forbidden_to_depend_fields": [],
+          "legacy_compatibility_fields": [
+            "count",
+            "total",
+            "filters",
+            "metadata_filter_diagnostics"
+          ],
+          "preferred_response_fields": [
+            "memory",
+            "memories",
+            "contract",
+            "summary"
+          ]
+        }
+      },
+      "expected_count": 12,
+      "expected_fixture_ids": [
+        "mem_context_namespace_evals",
+        "mem_context_no_private_data",
+        "mem_context_stdio_harness",
+        "mem_decision_cache_ttl",
+        "mem_decision_query_ids",
+        "mem_decision_temporal_utc",
+        "mem_project_benchmark_scope",
+        "mem_research_rrf_fusion",
+        "mem_task_auth_timeout",
+        "mem_task_billing_retry_window",
+        "mem_user_pref_concise_answers",
+        "mem_user_pref_terse_notes"
+      ],
+      "expected_ids": [
+        "mem_context_namespace_evals",
+        "mem_context_no_private_data",
+        "mem_context_stdio_harness",
+        "mem_decision_cache_ttl",
+        "mem_decision_query_ids",
+        "mem_decision_temporal_utc",
+        "mem_project_benchmark_scope",
+        "mem_research_rrf_fusion",
+        "mem_task_auth_timeout",
+        "mem_task_billing_retry_window",
+        "mem_user_pref_concise_answers",
+        "mem_user_pref_terse_notes"
+      ],
+      "expected_rank": 1,
+      "expected_server_ids": [
+        "823ab9c8566d1c817aa2",
+        "a38a47794330535d5185",
+        "dd6e4e06c9bbaed47a7d",
+        "6a1dee768aae44230215",
+        "b3fd12747cf9fe1c0f7b",
+        "345a8538acd5f53305ba",
+        "f5621ca51fac601f6166",
+        "96d1122e9de6f4a98f48",
+        "abf112a06bf7f41af803",
+        "2684aec6fa58b09a1d83",
+        "e4940467ee23246677fc",
+        "5c5a3a56f0be96ef7623"
+      ],
+      "failure_type": "none",
+      "found_expected_fixture_ids": [
+        "mem_context_namespace_evals",
+        "mem_user_pref_terse_notes",
+        "mem_decision_temporal_utc",
+        "mem_context_no_private_data",
+        "mem_decision_query_ids",
+        "mem_task_billing_retry_window",
+        "mem_user_pref_concise_answers",
+        "mem_project_benchmark_scope",
+        "mem_context_stdio_harness",
+        "mem_research_rrf_fusion",
+        "mem_decision_cache_ttl",
+        "mem_task_auth_timeout"
+      ],
+      "found_expected_ids": [
+        "823ab9c8566d1c817aa2",
+        "5c5a3a56f0be96ef7623",
+        "345a8538acd5f53305ba",
+        "a38a47794330535d5185",
+        "b3fd12747cf9fe1c0f7b",
+        "2684aec6fa58b09a1d83",
+        "e4940467ee23246677fc",
+        "f5621ca51fac601f6166",
+        "dd6e4e06c9bbaed47a7d",
+        "96d1122e9de6f4a98f48",
+        "6a1dee768aae44230215",
+        "abf112a06bf7f41af803"
+      ],
+      "found_expected_server_ids": [
+        "823ab9c8566d1c817aa2",
+        "5c5a3a56f0be96ef7623",
+        "345a8538acd5f53305ba",
+        "a38a47794330535d5185",
+        "b3fd12747cf9fe1c0f7b",
+        "2684aec6fa58b09a1d83",
+        "e4940467ee23246677fc",
+        "f5621ca51fac601f6166",
+        "dd6e4e06c9bbaed47a7d",
+        "96d1122e9de6f4a98f48",
+        "6a1dee768aae44230215",
+        "abf112a06bf7f41af803"
+      ],
+      "hit_count": 1,
+      "latency_ms": 1.6759589999963964,
+      "missing_expected_fixture_ids": [],
+      "mrr": 1.0,
+      "ndcg_at_10": 0.7314470771099789,
+      "ndcg_at_5": 0.6992148198508501,
+      "negative": false,
+      "parse_errors": [],
+      "precision_at_10": 0.7,
+      "precision_at_5": 0.6,
+      "query": "memories valid at the February checkpoint",
+      "query_id": "q_get_valid_temporal_checkpoint",
+      "query_type": "get_valid_temporal",
+      "raw_top_k": [
+        {
+          "fixture_id": "mem_context_namespace_evals",
+          "preview": "CONTEXT: Use namespace evals/memory-retrieval for benchmark runs and fixtures.",
+          "rank": 1,
+          "result_id": "823ab9c8566d1c817aa2"
+        },
+        {
+          "fixture_id": "mem_user_pref_terse_notes",
+          "preview": "USER: Prefer terse benchmark notes and short rationale lines.",
+          "rank": 2,
+          "result_id": "5c5a3a56f0be96ef7623"
+        },
+        {
+          "fixture_id": "mem_project_recall_fusion_plan",
+          "preview": "PROJECT: Recall fusion blends lexical evidence and graph evidence for benchmark queries.",
+          "rank": 3,
+          "result_id": "1d71e5579056cc94b53f"
+        },
+        {
+          "fixture_id": "mem_decision_temporal_utc",
+          "preview": "DECISION: Represent temporal windows in ISO 8601 UTC for deterministic parsing.",
+          "rank": 4,
+          "result_id": "345a8538acd5f53305ba"
+        },
+        {
+          "fixture_id": "mem_task_temporal_cutoff",
+          "preview": "TASK: This temporary memory expires before the February validity checkpoint.",
+          "rank": 5,
+          "result_id": "dd8fa760daee0b2fe437"
+        },
+        {
+          "fixture_id": "mem_context_no_private_data",
+          "preview": "CONTEXT: Never use production, private, or local personal memory content in fixtures.",
+          "rank": 6,
+          "result_id": "a38a47794330535d5185"
+        },
+        {
+          "fixture_id": "mem_research_temporal_windows",
+          "preview": "RESEARCH: Temporal validity should be checked with explicit valid_from and valid_until windows.",
+          "rank": 7,
+          "result_id": "a85010547cd4f382a975"
+        },
+        {
+          "fixture_id": "mem_decision_query_ids",
+          "preview": "DECISION: Golden queries must cite stable memory ids exactly as written.",
+          "rank": 8,
+          "result_id": "b3fd12747cf9fe1c0f7b"
+        },
+        {
+          "fixture_id": "mem_task_billing_retry_window",
+          "preview": "TASK: Billing retries stay open for a 15 minute retry window.",
+          "rank": 9,
+          "result_id": "2684aec6fa58b09a1d83"
+        },
+        {
+          "fixture_id": "mem_user_pref_concise_answers",
+          "preview": "USER: Keep benchmark notes concise and factual.",
+          "rank": 10,
+          "result_id": "e4940467ee23246677fc"
+        }
+      ],
+      "reason_code_classification": null,
+      "recall_at_10": 0.5833333333333334,
+      "recall_at_5": 0.25,
+      "result_count": 15,
+      "result_ids": [
+        "823ab9c8566d1c817aa2",
+        "5c5a3a56f0be96ef7623",
+        "1d71e5579056cc94b53f",
+        "345a8538acd5f53305ba",
+        "dd8fa760daee0b2fe437",
+        "a38a47794330535d5185",
+        "a85010547cd4f382a975",
+        "b3fd12747cf9fe1c0f7b",
+        "2684aec6fa58b09a1d83",
+        "e4940467ee23246677fc",
+        "f5621ca51fac601f6166",
+        "dd6e4e06c9bbaed47a7d",
+        "96d1122e9de6f4a98f48",
+        "6a1dee768aae44230215",
+        "abf112a06bf7f41af803"
+      ],
+      "summary_partial_reason_code": null,
+      "tool": "get_valid",
+      "tool_arguments": {
+        "valid_at": "2026-02-20T00:00:00Z"
+      },
+      "warnings": []
+    },
+    {
+      "contract": {
+        "compatibility": {
+          "clients_must_ignore_unknown_enum_values": true,
+          "clients_must_ignore_unknown_fields": true,
+          "db_shape_is_not_public_contract": true,
+          "mode": "additive_first"
+        },
+        "generated_at": "2026-04-28T05:02:43.175988Z",
+        "generation_basis": {
+          "semantic_generation": 0,
+          "structural_generation": 0
+        },
+        "identity": {
+          "edge_id_semantics": "no_public_edge_ids",
+          "edge_ids_are_local_only": true,
+          "node_id_semantics": "stable_public_memory_id",
+          "node_ids_are_project_scoped": false,
+          "stable_edge_ids": false,
+          "stable_node_ids": true
+        },
+        "projection": {
+          "basis": "semantic_generation",
+          "generation": 0,
+          "materialization": {
+            "addressability_semantics": "no_stable_external_read_target_is_promised_until_materialization_strategy_changes",
+            "consistent_with_projection_state": true,
+            "current_generation": 0,
+            "identity_basis": "project_id + semantic_generation",
+            "is_addressable": false,
+            "locator_can_be_persisted_by_clients": false,
+            "locator_is_opaque": true,
+            "locator_scope": "none_when_not_materialized",
+            "locator_semantics": "absent_when_not_materialized; when present it identifies the externally consumable projection instance",
+            "locator_stability": "not_stable_until_materialization_strategy_changes",
+            "locator_survives_generation_change": false,
+            "persistence": "ephemeral_contract_only",
+            "persistence_semantics": "contract is exposed on status surfaces only; no persisted projection artifact is promised yet",
+            "refresh_basis": "semantic_generation",
+            "shape_version": 1,
+            "shape_version_semantics": "materialized_projection_payload_shape_version",
+            "strategy": "not_materialized"
+          },
+          "state": "missing"
+        },
+        "projection_state": "missing",
+        "schema_version": 1,
+        "surface_guidance": {
+          "forbidden_to_depend_fields": [],
+          "legacy_compatibility_fields": [
+            "count",
+            "total",
+            "filters",
+            "metadata_filter_diagnostics"
+          ],
+          "preferred_response_fields": [
+            "memory",
+            "memories",
+            "contract",
+            "summary"
+          ]
+        }
+      },
+      "expected_count": 2,
+      "expected_fixture_ids": [
+        "mem_task_auth_timeout",
+        "mem_decision_cache_ttl"
+      ],
+      "expected_ids": [
+        "mem_task_auth_timeout",
+        "mem_decision_cache_ttl"
+      ],
+      "expected_rank": 1,
+      "expected_server_ids": [
+        "abf112a06bf7f41af803",
+        "6a1dee768aae44230215"
+      ],
+      "failure_type": "none",
+      "found_expected_fixture_ids": [
+        "mem_decision_cache_ttl",
+        "mem_task_auth_timeout"
+      ],
+      "found_expected_ids": [
+        "6a1dee768aae44230215",
+        "abf112a06bf7f41af803"
+      ],
+      "found_expected_server_ids": [
+        "6a1dee768aae44230215",
+        "abf112a06bf7f41af803"
+      ],
+      "hit_count": 1,
+      "latency_ms": 1.0336669999873038,
+      "missing_expected_fixture_ids": [],
+      "mrr": 1.0,
+      "ndcg_at_10": 1.0,
+      "ndcg_at_5": 1.0,
+      "negative": false,
+      "parse_errors": [],
+      "precision_at_10": 0.2,
+      "precision_at_5": 0.4,
+      "query": "valid auth memories in the evals/auth namespace",
+      "query_id": "q_get_valid_filtered_auth_namespace",
+      "query_type": "get_valid_filtered",
+      "raw_top_k": [
+        {
+          "fixture_id": "mem_decision_cache_ttl",
+          "preview": "DECISION: Use a 15 minute cache ttl for auth token refresh state.",
+          "rank": 1,
+          "result_id": "6a1dee768aae44230215"
+        },
+        {
+          "fixture_id": "mem_task_auth_timeout",
+          "preview": "TASK: Retry auth requests for 15 minutes when the token refresh path stalls.",
+          "rank": 2,
+          "result_id": "abf112a06bf7f41af803"
+        }
+      ],
+      "reason_code_classification": null,
+      "recall_at_10": 1.0,
+      "recall_at_5": 1.0,
+      "result_count": 2,
+      "result_ids": [
+        "6a1dee768aae44230215",
+        "abf112a06bf7f41af803"
+      ],
+      "summary_partial_reason_code": null,
+      "tool": "get_valid",
+      "tool_arguments": {
+        "metadata_filter": {
+          "project": "auth"
+        },
+        "valid_at": "2026-02-20T00:00:00Z"
+      },
+      "warnings": []
+    },
+    {
+      "contract": {
+        "compatibility": {
+          "clients_must_ignore_unknown_enum_values": true,
+          "clients_must_ignore_unknown_fields": true,
+          "db_shape_is_not_public_contract": true,
+          "mode": "additive_first"
+        },
+        "generated_at": "2026-04-28T05:02:43.208547Z",
+        "generation_basis": {
+          "semantic_generation": 0,
+          "structural_generation": 0
+        },
+        "identity": {
+          "edge_id_semantics": "no_public_edge_ids",
+          "edge_ids_are_local_only": true,
+          "node_id_semantics": "stable_public_memory_id",
+          "node_ids_are_project_scoped": false,
+          "stable_edge_ids": false,
+          "stable_node_ids": true
+        },
+        "projection": {
+          "basis": "semantic_generation",
+          "generation": 0,
+          "materialization": {
+            "addressability_semantics": "no_stable_external_read_target_is_promised_until_materialization_strategy_changes",
+            "consistent_with_projection_state": true,
+            "current_generation": 0,
+            "identity_basis": "project_id + semantic_generation",
+            "is_addressable": false,
+            "locator_can_be_persisted_by_clients": false,
+            "locator_is_opaque": true,
+            "locator_scope": "none_when_not_materialized",
+            "locator_semantics": "absent_when_not_materialized; when present it identifies the externally consumable projection instance",
+            "locator_stability": "not_stable_until_materialization_strategy_changes",
+            "locator_survives_generation_change": false,
+            "persistence": "ephemeral_contract_only",
+            "persistence_semantics": "contract is exposed on status surfaces only; no persisted projection artifact is promised yet",
+            "refresh_basis": "semantic_generation",
+            "shape_version": 1,
+            "shape_version_semantics": "materialized_projection_payload_shape_version",
+            "strategy": "not_materialized"
+          },
+          "state": "missing"
+        },
+        "projection_state": "missing",
+        "schema_version": 1,
+        "surface_guidance": {
+          "forbidden_to_depend_fields": [],
+          "legacy_compatibility_fields": [
+            "count",
+            "filters",
+            "diagnostics",
+            "weights",
+            "query"
+          ],
+          "preferred_response_fields": [
+            "results",
+            "memories",
+            "contract",
+            "summary"
+          ]
+        }
+      },
+      "expected_count": 0,
+      "expected_fixture_ids": [],
+      "expected_ids": [],
+      "expected_rank": null,
+      "expected_server_ids": [],
+      "failure_type": "wrong_rank",
+      "found_expected_fixture_ids": [],
+      "found_expected_ids": [],
+      "found_expected_server_ids": [],
+      "hit_count": 0,
+      "latency_ms": 32.96475000000498,
+      "missing_expected_fixture_ids": [],
+      "mrr": 0.0,
+      "ndcg_at_10": 0.0,
+      "ndcg_at_5": 0.0,
+      "negative": true,
+      "parse_errors": [],
+      "precision_at_10": 0.0,
+      "precision_at_5": 0.0,
+      "query": "zebra quokka lantern",
+      "query_id": "q_negative_no_match_nonsense",
+      "query_type": "negative_no_match",
+      "raw_top_k": [
+        {
+          "fixture_id": "mem_task_temporal_cutoff",
+          "preview": "TASK: This temporary memory expires before the February validity checkpoint.",
+          "rank": 1,
+          "result_id": "dd8fa760daee0b2fe437",
+          "score": 0.0065573640167713165
+        },
+        {
+          "fixture_id": "mem_decision_cache_ttl",
+          "preview": "DECISION: Use a 15 minute cache ttl for auth token refresh state.",
+          "rank": 2,
+          "result_id": "6a1dee768aae44230215",
+          "score": 0.00645161047577858
+        },
+        {
+          "fixture_id": "mem_task_auth_timeout",
+          "preview": "TASK: Retry auth requests for 15 minutes when the token refresh path stalls.",
+          "rank": 3,
+          "result_id": "abf112a06bf7f41af803",
+          "score": 0.006349193397909403
+        },
+        {
+          "fixture_id": "mem_user_pref_concise_answers",
+          "preview": "USER: Keep benchmark notes concise and factual.",
+          "rank": 4,
+          "result_id": "e4940467ee23246677fc",
+          "score": 0.006249997764825821
+        },
+        {
+          "fixture_id": "mem_task_billing_retry_window",
+          "preview": "TASK: Billing retries stay open for a 15 minute retry window.",
+          "rank": 5,
+          "result_id": "2684aec6fa58b09a1d83",
+          "score": 0.006153833586722612
+        },
+        {
+          "fixture_id": "mem_context_namespace_evals",
+          "preview": "CONTEXT: Use namespace evals/memory-retrieval for benchmark runs and fixtures.",
+          "rank": 6,
+          "result_id": "823ab9c8566d1c817aa2",
+          "score": 0.0060606044717133045
+        },
+        {
+          "fixture_id": "mem_project_recall_fusion_plan",
+          "preview": "PROJECT: Recall fusion blends lexical evidence and graph evidence for benchmark queries.",
+          "rank": 7,
+          "result_id": "1d71e5579056cc94b53f",
+          "score": 0.00597014743834734
+        },
+        {
+          "fixture_id": "mem_research_rrf_fusion",
+          "preview": "RESEARCH: RRF fusion should combine vector, BM25, and graph signals for recall.",
+          "rank": 8,
+          "result_id": "96d1122e9de6f4a98f48",
+          "score": 0.005882350727915764
+        },
+        {
+          "fixture_id": "mem_context_stdio_harness",
+          "preview": "CONTEXT: The stdio harness should prefer local binaries before cargo run.",
+          "rank": 9,
+          "result_id": "dd6e4e06c9bbaed47a7d",
+          "score": 0.0057970997877418995
+        },
+        {
+          "fixture_id": "mem_context_no_private_data",
+          "preview": "CONTEXT: Never use production, private, or local personal memory content in fixtures.",
+          "rank": 10,
+          "result_id": "a38a47794330535d5185",
+          "score": 0.005714283790439367
+        }
+      ],
+      "reason_code_classification": null,
+      "recall_at_10": 0.0,
+      "recall_at_5": 0.0,
+      "result_count": 14,
+      "result_ids": [
+        "dd8fa760daee0b2fe437",
+        "6a1dee768aae44230215",
+        "abf112a06bf7f41af803",
+        "e4940467ee23246677fc",
+        "2684aec6fa58b09a1d83",
+        "823ab9c8566d1c817aa2",
+        "1d71e5579056cc94b53f",
+        "96d1122e9de6f4a98f48",
+        "dd6e4e06c9bbaed47a7d",
+        "a38a47794330535d5185",
+        "b3fd12747cf9fe1c0f7b",
+        "345a8538acd5f53305ba",
+        "a85010547cd4f382a975",
+        "f5621ca51fac601f6166"
+      ],
+      "summary_partial_reason_code": null,
+      "tool": "recall",
+      "tool_arguments": {
+        "query": "zebra quokka lantern"
+      },
+      "warnings": []
+    },
+    {
+      "contract": {
+        "compatibility": {
+          "clients_must_ignore_unknown_enum_values": true,
+          "clients_must_ignore_unknown_fields": true,
+          "db_shape_is_not_public_contract": true,
+          "mode": "additive_first"
+        },
+        "generated_at": "2026-04-28T05:02:43.210295Z",
+        "generation_basis": {
+          "semantic_generation": 0,
+          "structural_generation": 0
+        },
+        "identity": {
+          "edge_id_semantics": "no_public_edge_ids",
+          "edge_ids_are_local_only": true,
+          "node_id_semantics": "stable_public_memory_id",
+          "node_ids_are_project_scoped": false,
+          "stable_edge_ids": false,
+          "stable_node_ids": true
+        },
+        "projection": {
+          "basis": "semantic_generation",
+          "generation": 0,
+          "materialization": {
+            "addressability_semantics": "no_stable_external_read_target_is_promised_until_materialization_strategy_changes",
+            "consistent_with_projection_state": true,
+            "current_generation": 0,
+            "identity_basis": "project_id + semantic_generation",
+            "is_addressable": false,
+            "locator_can_be_persisted_by_clients": false,
+            "locator_is_opaque": true,
+            "locator_scope": "none_when_not_materialized",
+            "locator_semantics": "absent_when_not_materialized; when present it identifies the externally consumable projection instance",
+            "locator_stability": "not_stable_until_materialization_strategy_changes",
+            "locator_survives_generation_change": false,
+            "persistence": "ephemeral_contract_only",
+            "persistence_semantics": "contract is exposed on status surfaces only; no persisted projection artifact is promised yet",
+            "refresh_basis": "semantic_generation",
+            "shape_version": 1,
+            "shape_version_semantics": "materialized_projection_payload_shape_version",
+            "strategy": "not_materialized"
+          },
+          "state": "missing"
+        },
+        "projection_state": "missing",
+        "schema_version": 1,
+        "surface_guidance": {
+          "forbidden_to_depend_fields": [],
+          "legacy_compatibility_fields": [
+            "count",
+            "filters",
+            "diagnostics",
+            "weights",
+            "query"
+          ],
+          "preferred_response_fields": [
+            "results",
+            "memories",
+            "contract",
+            "summary"
+          ]
+        }
+      },
+      "expected_count": 0,
+      "expected_fixture_ids": [],
+      "expected_ids": [],
+      "expected_rank": null,
+      "expected_server_ids": [],
+      "failure_type": "wrong_rank",
+      "found_expected_fixture_ids": [],
+      "found_expected_ids": [],
+      "found_expected_server_ids": [],
+      "hit_count": 0,
+      "latency_ms": 1.3106250000021191,
+      "missing_expected_fixture_ids": [],
+      "mrr": 0.0,
+      "ndcg_at_10": 0.0,
+      "ndcg_at_5": 0.0,
+      "negative": true,
+      "parse_errors": [],
+      "precision_at_10": 0.0,
+      "precision_at_5": 0.0,
+      "query": "DECISION nonexistent token",
+      "query_id": "q_negative_no_match_missing_prefix",
+      "query_type": "negative_no_match",
+      "raw_top_k": [
+        {
+          "fixture_id": "mem_decision_cache_ttl",
+          "preview": "DECISION: Use a 15 minute cache ttl for auth token refresh state.",
+          "rank": 1,
+          "result_id": "6a1dee768aae44230215",
+          "score": 1.0
+        },
+        {
+          "fixture_id": "mem_task_auth_timeout",
+          "preview": "TASK: Retry auth requests for 15 minutes when the token refresh path stalls.",
+          "rank": 2,
+          "result_id": "abf112a06bf7f41af803",
+          "score": 1.0
+        },
+        {
+          "fixture_id": "mem_decision_query_ids",
+          "preview": "DECISION: Golden queries must cite stable memory ids exactly as written.",
+          "rank": 3,
+          "result_id": "b3fd12747cf9fe1c0f7b",
+          "score": 1.0
+        },
+        {
+          "fixture_id": "mem_decision_temporal_utc",
+          "preview": "DECISION: Represent temporal windows in ISO 8601 UTC for deterministic parsing.",
+          "rank": 4,
+          "result_id": "345a8538acd5f53305ba",
+          "score": 1.0
+        }
+      ],
+      "reason_code_classification": null,
+      "recall_at_10": 0.0,
+      "recall_at_5": 0.0,
+      "result_count": 4,
+      "result_ids": [
+        "6a1dee768aae44230215",
+        "abf112a06bf7f41af803",
+        "b3fd12747cf9fe1c0f7b",
+        "345a8538acd5f53305ba"
+      ],
+      "summary_partial_reason_code": null,
+      "tool": "search_memory",
+      "tool_arguments": {
+        "mode": "bm25",
+        "query": "DECISION nonexistent token"
+      },
+      "warnings": []
+    }
+  ],
+  "stderr_tail": [
+    "[memory-mcp] Auto-configured block cache: 11 MB (available RAM: 56 MB)",
+    "\u001b[2m2026-04-28T05:00:39.422066Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2mmemory_mcp\u001b[0m\u001b[2m:\u001b[0m memory-mcp starting \u001b[3mversion\u001b[0m\u001b[2m=\u001b[0m\"0.8.2\" \u001b[3mpid\u001b[0m\u001b[2m=\u001b[0m38452 \u001b[3mppid\u001b[0m\u001b[2m=\u001b[0m38420 \u001b[3mmode\u001b[0m\u001b[2m=\u001b[0m\"stdio\" \u001b[3mmodel\u001b[0m\u001b[2m=\u001b[0me5_small \u001b[3mdata_dir\u001b[0m\u001b[2m=\u001b[0m/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-8-memory-retrieval-data-1fov0eqr",
+    "\u001b[2m2026-04-28T05:00:39.451620Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2msurrealdb::core::kvs::ds\u001b[0m\u001b[2m:\u001b[0m Starting kvs store at absolute path surrealkv:/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-8-memory-retrieval-data-1fov0eqr/db",
+    "\u001b[2m2026-04-28T05:00:39.454586Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2msurrealdb::core::kvs::surrealkv\u001b[0m\u001b[2m:\u001b[0m Enabling value log separation: true",
+    "\u001b[2m2026-04-28T05:00:39.464997Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2msurrealdb::core::kvs::surrealkv\u001b[0m\u001b[2m:\u001b[0m Setting value log max file size: 268435456",
+    "\u001b[2m2026-04-28T05:00:39.465011Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2msurrealdb::core::kvs::surrealkv\u001b[0m\u001b[2m:\u001b[0m Setting value log threshold: 4096",
+    "\u001b[2m2026-04-28T05:00:39.465012Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2msurrealdb::core::kvs::surrealkv\u001b[0m\u001b[2m:\u001b[0m Versioning enabled: false with retention period: 0ns",
+    "\u001b[2m2026-04-28T05:00:39.465013Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2msurrealdb::core::kvs::surrealkv\u001b[0m\u001b[2m:\u001b[0m Versioning with versioned_index: false",
+    "\u001b[2m2026-04-28T05:00:39.465173Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2msurrealdb::core::kvs::surrealkv\u001b[0m\u001b[2m:\u001b[0m Setting block cache capacity: 11534336",
+    "\u001b[2m2026-04-28T05:00:39.465499Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2msurrealdb::core::kvs::surrealkv\u001b[0m\u001b[2m:\u001b[0m Setting block size: 65536",
+    "\u001b[2m2026-04-28T05:00:39.734903Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2msurrealkv::lsm\u001b[0m\u001b[2m:\u001b[0m === Starting LSM tree initialization ===",
+    "\u001b[2m2026-04-28T05:00:39.735167Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2msurrealkv::lsm\u001b[0m\u001b[2m:\u001b[0m Database path: \"/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-8-memory-retrieval-data-1fov0eqr/db\"",
+    "\u001b[2m2026-04-28T05:00:39.866690Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2msurrealkv::lsm\u001b[0m\u001b[2m:\u001b[0m Manifest state: log_number=0, last_sequence=0",
+    "\u001b[2m2026-04-28T05:00:39.866702Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2msurrealkv::wal::recovery\u001b[0m\u001b[2m:\u001b[0m Starting WAL recovery from directory: \"/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-8-memory-retrieval-data-1fov0eqr/db/wal\"",
+    "\u001b[2m2026-04-28T05:00:39.866808Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2msurrealkv::wal::recovery\u001b[0m\u001b[2m:\u001b[0m Replaying WAL segments #00000000000000000000 to #00000000000000000000",
+    "\u001b[2m2026-04-28T05:00:39.887561Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2msurrealkv::wal::recovery\u001b[0m\u001b[2m:\u001b[0m WAL recovery complete: 0 batches across 0 segments, 0 memtables created, max_seq_num=None",
+    "\u001b[2m2026-04-28T05:00:39.888719Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2msurrealkv::lsm\u001b[0m\u001b[2m:\u001b[0m === LSM tree initialization complete ===",
+    "\u001b[2m2026-04-28T05:00:39.903115Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2msurrealdb::core::kvs::surrealkv\u001b[0m\u001b[2m:\u001b[0m Sync mode: every transaction commit",
+    "\u001b[2m2026-04-28T05:00:39.903363Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2msurrealdb::core::kvs::surrealkv\u001b[0m\u001b[2m:\u001b[0m Grouped commit: enabled (timeout=5000000ns, wait_threshold=12, max_batch_size=4096)",
+    "\u001b[2m2026-04-28T05:00:39.903616Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2msurrealdb::core::kvs::ds\u001b[0m\u001b[2m:\u001b[0m Started surrealkv kvs store",
+    "\u001b[2m2026-04-28T05:00:40.641093Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2mmemory_mcp::storage::surrealdb\u001b[0m\u001b[2m:\u001b[0m Dimension check passed \u001b[3mmodel\u001b[0m\u001b[2m=\u001b[0m384 \u001b[3mdb\u001b[0m\u001b[2m=\u001b[0m384",
+    "\u001b[2m2026-04-28T05:00:40.641110Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2mmemory_mcp\u001b[0m\u001b[2m:\u001b[0m Embedding engine configured \u001b[3moutput_dim\u001b[0m\u001b[2m=\u001b[0m384 \u001b[3mmodel\u001b[0m\u001b[2m=\u001b[0me5_small",
+    "\u001b[2m2026-04-28T05:00:40.717788Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2mmemory_mcp::embedding::service\u001b[0m\u001b[2m:\u001b[0m Loading embedding model: E5Small",
+    "\u001b[2m2026-04-28T05:00:40.718595Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2mmemory_mcp::forgetting::capacity\u001b[0m\u001b[2m:\u001b[0m Capacity controller started \u001b[3mcheck_interval_secs\u001b[0m\u001b[2m=\u001b[0m3600 \u001b[3msoft_limit\u001b[0m\u001b[2m=\u001b[0m10000 \u001b[3mcleanup_target_ratio\u001b[0m\u001b[2m=\u001b[0m0.800000011920929",
+    "\u001b[2m2026-04-28T05:00:40.718763Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2mmemory_mcp::embedding::worker\u001b[0m\u001b[2m:\u001b[0m Embedding worker started, waiting for requests",
+    "\u001b[2m2026-04-28T05:00:40.721797Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2mmemory_mcp::forgetting::capacity\u001b[0m\u001b[2m:\u001b[0m Capacity OK: 0 memories \u001b[3mcount\u001b[0m\u001b[2m=\u001b[0m0",
+    "\u001b[2m2026-04-28T05:00:40.723505Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2mrmcp::handler::server\u001b[0m\u001b[2m:\u001b[0m client initialized",
+    "\u001b[2m2026-04-28T05:00:40.723520Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[1mserve_inner\u001b[0m\u001b[2m:\u001b[0m \u001b[2mrmcp::service\u001b[0m\u001b[2m:\u001b[0m Service initialized as server \u001b[3mpeer_info\u001b[0m\u001b[2m=\u001b[0mSome(InitializeRequestParams { meta: None, protocol_version: ProtocolVersion(\"2024-11-05\"), capabilities: ClientCapabilities { experimental: None, extensions: None, roots: None, sampling: None, elicitation: None, tasks: None }, client_info: Implementation { name: \"memory-retrieval-benchmark\", title: None, version: \"0.1.0\", description: None, icons: None, website_url: None } })",
+    "\u001b[2m2026-04-28T05:00:40.723543Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2mmemory_mcp\u001b[0m\u001b[2m:\u001b[0m Server started in stdio mode, waiting for client disconnect or signals...",
+    "\u001b[2m2026-04-28T05:00:49.217579Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2mmemory_mcp::embedding::service\u001b[0m\u001b[2m:\u001b[0m Downloading model weights from HuggingFace Hub...",
+    "\u001b[2m2026-04-28T05:02:34.600879Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2mmemory_mcp::embedding::service\u001b[0m\u001b[2m:\u001b[0m Embedding model ready \u001b[3melapsed_sec\u001b[0m\u001b[2m=\u001b[0m\"113.9\""
+  ],
+  "warnings": []
+}

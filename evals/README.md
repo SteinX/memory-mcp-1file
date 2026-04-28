@@ -1,128 +1,160 @@
-# 📊 Memory Retrieval Benchmarks (V1 Baseline)
+# 📊 Memory Retrieval Benchmarks (V2)
 
-This directory contains the benchmarks for the Memory MCP server. 
+This directory contains the benchmarks for the Memory MCP server. Benchmark V2 is a reproducible, tiered, comparable evaluation loop designed for local regression visibility and dataset quality.
 
-## 🎯 V1 Scope: Baseline-Only
-The current V1 implementation focuses on **baseline data collection**.
-- No pass/fail gates are enforced in this version.
-- All results are recorded as reference points for future regressions.
-- Focused on deterministic retrieval from JSON fixtures.
+## 🎯 Benchmark V2 Scope
+Benchmark V2 focuses on providing a trustworthy local runbook for evaluating retrieval quality.
+- **Reproducible**: Tiered deterministic fixtures and golden queries with explicit schemas.
+- **Comparable**: Local interpretation policy (`local-v2-threshold-policy`) with baseline diffing.
+- **Explainable**: Failure taxonomy distinguishing expected no-match, empty results, and true misses.
+- **Non-blocking**: Thresholds are for local interpretation only and do not change CI behavior or production server APIs.
 
-### 🧪 Benchmark Scope
-- **Memory Retrieval**: Evaluates `recall` and `search_memory` performance using golden queries and deterministic fixtures.
-- **Fixture Philosophy**: Uses high-fidelity, deterministic JSON fixtures (`evals/fixtures/`) to ensure repeatable results across environments.
-- **Metrics**: Track Reciprocal Rank Fusion (RRF) scores, hit rates, and latency. Tracked metrics include **Recall@k**, **NDCG@k** (where k=5, 10), and **MRR**.
-- **Readiness/Contract Diagnostics**: Reports preserve raw `summary.partial.reason_code` values and add compact impact classification (`informational`, `degraded`, or `blocking`) so `partial` is not treated as a failure without supporting evidence. Memory reports also surface `settle_readiness` fallback status, elapsed time, and impact.
-- **Diagnostic Taxonomy**: Failures are classified into categories like `call_error`, `parse_error`, `embedding_not_ready`, `empty_results`, `id_mismatch` (harness-side remapping), and `wrong_rank`.
-- **ID Remapping Logic**: Fixture IDs (from JSON) are mapped to server-generated IDs during seeding. The harness uses a `fixture_to_server_id_map` to evaluate results correctly. A score of zero due to ID mismatch is classified as a harness-side remapping concern, not a server failure.
+### 🧪 Benchmark Scenarios
+- **Memory Retrieval**: Evaluates `recall` and `search_memory` performance using golden queries covering long-memory recall, namespace boundaries, temporal boundaries, and ID mismatch cases.
+- **Code Retrieval**: Evaluates codebase indexing and `recall_code` performance covering symbol definitions, caller/callee relationships, and similar-function interference.
+- **Readiness & Contract Diagnostics**: Reports preserve `reason_code` taxonomy and classify impact as `informational`, `degraded`, or `blocking`.
 
-### 🚫 Exclusions
-- **CI Enforcement**: V1 does not block CI/CD pipelines.
-- **Multi-Model** (`multi-model`): Testing is primarily against the default embedding model (`e5_small`).
-- **LongMemEval**: Large-scale long-context evaluations are deferred to V2+.
+### 🚫 Exclusions & Non-Goals
+- **CI Gates**: V2 does not block CI/CD pipelines.
+- **Multi-Model Deferral**: Qwen3 and multi-model comparison are **deferred** until dataset/baseline quality is stable. Default model remains `e5_small`.
+- **Production Changes**: V2 is a test-only harness and does not modify `src/` or MCP tool contracts.
 
 ---
 
 ## 🚀 Execution Commands
 
 ### ✅ Evaluation Library (Self-Test)
-Use the metrics self-test to verify the evaluation library logic:
+Verify the evaluation library logic, report schemas, and tier resolution:
 ```bash
 python3 -m evals.lib.metrics --self-test
 ```
 
-### 🆚 Baseline Diff Report (Memory + Code)
-Generate lightweight before/after/delta reports from archived/current baseline JSON artifacts:
+### 📊 Memory Retrieval Benchmark
+```bash
+# Self-Test (Logic only)
+python3 evals/memory_retrieval_benchmark.py --self-test
+
+# Run default (small tier)
+python3 evals/memory_retrieval_benchmark.py
+
+# Run specific tier
+python3 evals/memory_retrieval_benchmark.py --tier medium
+```
+
+### 💻 Code Retrieval Benchmark
+```bash
+# Self-Test (Logic only)
+python3 evals/code_retrieval_benchmark.py --self-test
+
+# Run default (small tier)
+python3 evals/code_retrieval_benchmark.py
+
+# Run specific tier
+python3 evals/code_retrieval_benchmark.py --tier medium
+```
+
+---
+
+## 💾 Runbook: Tiers & Baselines
+
+### 🪜 Fixture Tiers
+| Tier | Purpose | Target Runtime | Policy |
+|---|---|---|---|
+| `small` | Smoke/Regression (Default) | 5-10 mins | Required for local validation. |
+| `medium` | Expanded edge cases & Label QA | 15-30 mins | Validation required; full execution explicit. |
+| `stress` | Scale & Soak (Non-default) | 45-90+ mins | Manual/optional; skip if runtime is high. |
+
+### 🔄 Baseline Refresh Workflow
+Normal benchmark runs **never** overwrite canonical baseline artifacts. Refresh is an intentional, explicit workflow.
+- **Default Evidence Path**: `.sisyphus/evidence/benchmark-v2/runs/`
+- **Canonical Baseline Paths**: `.sisyphus/evidence/evals/memory-retrieval-baseline.json` (and `.md`)
+
+To perform an intentional refresh:
+```bash
+python3 evals/memory_retrieval_benchmark.py \
+  --refresh-baseline \
+  --refresh-reason "Updated medium-tier golden queries" \
+  --baseline-version v2-20240428 \
+  --fixture-tier small
+```
+
+### 🆚 Baseline Diff Report
+Compare current results against canonical baselines:
 ```bash
 python3 -m evals.lib.metrics --baseline-diff
 ```
-
-- **Outputs**:
-  - `.sisyphus/evidence/evals/memory-retrieval-baseline-diff.json`
-  - `.sisyphus/evidence/evals/memory-retrieval-baseline-diff.md`
-  - `.sisyphus/evidence/evals/code-retrieval-baseline-diff.json`
-  - `.sisyphus/evidence/evals/code-retrieval-baseline-diff.md`
-- **Pair selection policy**:
-  - Memory diff defaults to latest archived pre-remap baseline (`memory-retrieval-baseline-pre-remap-*.json`) as **before** and current `memory-retrieval-baseline.json` as **after**.
-  - Code diff defaults to archived `.sisyphus/evidence/task-2-recall-code-baseline.json` as **before** and current `code-retrieval-baseline.json` as **after**.
-- **No gate policy**:
-  - These diff artifacts are reporting/evidence only.
-  - They do **not** enforce CI pass/fail behavior.
-
-### 📊 Memory Retrieval Benchmark
-Evaluates `recall` and `search_memory` performance using golden queries and deterministic fixtures.
-- **Self-Test**: `python3 evals/memory_retrieval_benchmark.py --self-test`
-- **Run Benchmark**: `python3 evals/memory_retrieval_benchmark.py`
-- **Outputs**:
-  - `.sisyphus/evidence/evals/memory-retrieval-baseline.json` (Structured metrics)
-  - `.sisyphus/evidence/evals/memory-retrieval-baseline.md` (Human-readable summary)
-- **Execution Details**:
-  - Uses a temporary isolated `DATA_DIR` by default to prevent database lock contention.
-  - Defaults to `EMBEDDING_MODEL=e5_small` for fast, lightweight baseline runs.
-  - Automatically handles server startup, seeding, and readiness polling.
-
-### 💻 Code Retrieval Benchmark
-Evaluates codebase indexing and `recall_code` retrieval using a fixture project.
-- **Self-Test**: `python3 evals/code_retrieval_benchmark.py --self-test`
-- **Run Benchmark**: `python3 evals/code_retrieval_benchmark.py`
-- **Outputs**:
-  - `.sisyphus/evidence/evals/code-retrieval-baseline.json`
-  - `.sisyphus/evidence/evals/code-retrieval-baseline.md`
-- **Execution Details**:
-  - Uses an isolated `DATA_DIR` and a temporary copy of the fixture project.
-  - Validates full indexing lifecycle: server initialization, embedding readiness, background indexing, and query execution.
-  - Surfaces structured blockers if indexing or retrieval fails.
+Diff outputs default to `.sisyphus/evidence/benchmark-v2/baseline-diff/`.
 
 ---
 
-## 💾 Baseline Policy & Gates
+## 🧐 Report Interpretation
 
-### V1 Baseline Policy (Current)
-The current version is **baseline-only**.
-- **No Score Gates**: Baselines are collected for reference; there are no pass/fail score thresholds enforced in V1.
-- **Baseline-Not-Gate**: The purpose is to establish a known-good performance profile. Failure to run the benchmark is a "gate" failure, but the specific score achieved is currently informational.
-- **Manual Review**: Regressions must be manually identified by comparing new runs against the `.sisyphus/evidence/evals/*-baseline.json` artifacts.
-- **Archive Policy**: When major remapping or metric interpretation changes occur, existing baseline artifacts are archived (e.g., `*-pre-remap-*.json`) to preserve historical reference before a new baseline is established.
-- **Comparability Note**: These local benchmarks use specific deterministic fixtures and are not directly comparable with external or public benchmark numbers (e.g., MemPalace) due to different corpus and query distributions.
-- **Mini Long-Memory Fixture**: The `evals/fixtures/memory_corpus_mini_long_memory.json` is a **synthetic** fixture inspired by the **evaluation shape** (temporal, person/project/topic, namespace) of public long-memory benchmarks like MemPalace. It is designed for lightweight local validation only; performance scores on this fixture do **not** reflect or correlate with public MemPalace benchmark scores.
+### 🚥 Local Threshold Policy (`local-v2-threshold-policy`)
+Threshold statuses are local interpretation only:
+- **`pass`**: All metrics satisfy the tier threshold.
+- **`warn`**: Warning-severity failure (e.g., latency > 5s or NDCG < 0.75).
+- **`blocker`**: Blocker-severity failure (e.g., hit_rate < 0.8 or MRR < 0.7).
+- **`deferred`**: Threshold evaluation skipped (e.g., stress tier).
 
-### Future Policy (Planned)
-- **Threshold Enforcement**: V2+ will introduce automated comparison against baselines.
-- **CI Gates**: Automated blocking of PRs that significantly degrade MRR (Mean Reciprocal Rank) or hit rates.
-- **Multi-Model Regression**: Automated checks across different embedding models (Gemma, Qwen3, etc.).
+### 📉 Failure Taxonomy & Report Fields
+Reports distinguish between different failure modes and use a standardized schema for compatibility.
+
+#### Core Report Fields
+- **`schema_version`**: The version of the benchmark report schema (e.g., `v2`).
+- **`fixture_tier`**: The complexity tier of the dataset used (`small`, `medium`, `stress`).
+- **`baseline_version`**: The identifier of the canonical baseline being compared against.
+- **`threshold_policy`**: The policy name used for status evaluation (e.g., `local-v2-threshold-policy`).
+- **`threshold_status`**: The final local status (`pass`, `warn`, `blocker`, `deferred`).
+- **`readiness_summary`**: High-level diagnostic of harness and model readiness.
+- **`failure_buckets`**: Breakdown of failures by mode (see Taxonomy below).
+- **`baseline_diff_summary`**: Summary of performance changes relative to the baseline.
+- **`metric_summary`**: Aggregated performance metrics (Hit Rate, MRR, NDCG, Latency).
+
+#### Failure Mode Taxonomy
+Failure modes tracked in `failure_buckets`:
+- **`expected_no_match`**: Negative query correctly returned zero results.
+- **`empty_results`**: Positive query returned zero results (Severe).
+- **`low_confidence`**: Result returned but with very low relevance score.
+- **`true_miss`**: Results returned, but the ground-truth ID was missing or ranked poorly.
+- **`id_mismatch`**: Harness-side remapping failed (check re-map policy).
+
+### 🏷️ Label QA Requirements
+Every new golden query MUST include a `label_rationale` object:
+- `rationale`: Explanation of why the label is correct.
+- `category`: Scenario category (e.g., `long_memory_recall`).
+- `expected_behavior`: What the model should specifically find.
+- `tier`: The intended fixture tier (`small`, `medium`, `stress`).
 
 ---
 
-## 💾 Evidence & Data
+## ⚠️ Important Warnings
 
-### Evidence Namespace
-All benchmark runs must record evidence in:
-`.sisyphus/evidence/evals/`
-
-### ⚠️ Important Warnings
-
-#### 1. Isolated `DATA_DIR`
-**Always** use an isolated `DATA_DIR` for benchmark runs to avoid corrupting your production memory or hitting lock contention.
+### 1. Isolated `DATA_DIR`
+**Always** use an isolated `DATA_DIR` for benchmark runs to avoid database lock contention.
 ```bash
 export DATA_DIR=$(mktemp -d)
 ```
 
-#### 2. Avoid `docker exec` Lock Hazard
-**NEVER** run `docker exec` against a running container to perform benchmark queries or stats collection.
-- SurrealDB uses exclusive file locks on the database.
-- Running a second process (via `exec`) that attempts to open the same database will fail with a storage lock error.
-- **Safe Pattern**: Use `docker run --rm -i ... --stdio` for isolated, one-shot benchmark commands as described in `AGENTS.md`.
+### 2. Avoid `docker exec` Lock Hazard
+**NEVER** run `docker exec` against a running container to perform benchmark queries. SurrealDB uses exclusive file locks. Use `docker run --rm -i ... --stdio` instead.
 
-#### 3. Stale Harness Warning
-Avoid using the following stale scripts:
+### 3. Stale Harness Warning
+The following scripts are **stale/deprecated** and should be avoided:
 - `test_mcp.sh`
 - `query_stats.sh`
-These scripts use outdated MCP tool names (e.g., `search` instead of `search_memory`) and unsafe `docker exec` patterns. They are retained only for historical reference and should not be used for current validation.
+They use outdated tool names and unsafe patterns.
 
 ---
 
-## 🛠️ Verification
-To verify the benchmark environment readiness, ensure:
-1. Deterministic fixtures exist in `evals/fixtures/`.
-2. The `evals/lib/mcp_client.py` correctly points to the `memory-mcp` binary.
-3. Python dependencies are installed.
+## 🏺 Historical Continuity
+
+### V2 Compatibility Map
+| Legacy Field | V2 Canonical Target |
+|---|---|
+| `version` (V1) | `schema_version` |
+| Legacy memory queries | Tiered files (`small`, `medium`, `stress`) |
+| `task-2-recall-code-baseline.json` | `evals/golden/code_retrieval_queries_v2.json` |
+| `.sisyphus/evidence/evals/` | `.sisyphus/evidence/benchmark-v2/` (New) |
+
+### V1 Baseline Context (V1 Baseline)
+Historical V1 implementation focused on baseline data collection without gates. V2 preserves this continuity by using `small` tier as the V1 baseline bridge.

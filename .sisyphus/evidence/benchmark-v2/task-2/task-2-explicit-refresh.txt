@@ -1,0 +1,34 @@
+command=python3 evals/memory_retrieval_benchmark.py --output-json .sisyphus/evidence/benchmark-v2/task-2/refresh.json --output-md .sisyphus/evidence/benchmark-v2/task-2/refresh.md --refresh-baseline --refresh-reason benchmark-v2-contract-test --baseline-version v2-initial --fixture-tier small
+{
+  "output_json": ".sisyphus/evidence/benchmark-v2/task-2/refresh.json",
+  "output_md": ".sisyphus/evidence/benchmark-v2/task-2/refresh.md",
+  "query_count": 10,
+  "ran_queries": 10,
+  "blocker_count": 0,
+  "observed_reason_codes": [],
+  "baseline_refresh": {
+    "schema_version": "2.0",
+    "fixture_tier": "small",
+    "baseline_version": "v2-initial",
+    "model": "e5_small",
+    "command": "python3 evals/memory_retrieval_benchmark.py --output-json .sisyphus/evidence/benchmark-v2/task-2/refresh.json --output-md .sisyphus/evidence/benchmark-v2/task-2/refresh.md --refresh-baseline --refresh-reason benchmark-v2-contract-test --baseline-version v2-initial --fixture-tier small",
+    "refresh_reason": "benchmark-v2-contract-test",
+    "refresh_mode": true,
+    "refresh_requested": true,
+    "canonical_target_requested": false,
+    "canonical_target_written": false,
+    "output_json": ".sisyphus/evidence/benchmark-v2/task-2/refresh.json",
+    "output_md": ".sisyphus/evidence/benchmark-v2/task-2/refresh.md",
+    "refresh_timestamp_utc": "2026-04-28T10:36:22.174691Z",
+    "git_commit": "99ac9f7f3d83e89ef434df3c14bf70488dea95aa"
+  }
+}
+exit_status=0
+manifest.baseline_version=v2-initial
+manifest.fixture_tier=small
+refresh.model=e5_small
+refresh.command=python3 evals/memory_retrieval_benchmark.py --output-json .sisyphus/evidence/benchmark-v2/task-2/refresh.json --output-md .sisyphus/evidence/benchmark-v2/task-2/refresh.md --refresh-baseline --refresh-reason benchmark-v2-contract-test --baseline-version v2-initial --fixture-tier small
+refresh.refresh_reason=benchmark-v2-contract-test
+refresh.canonical_target_requested=False
+refresh.canonical_target_written=False
+metadata_assert_status=0

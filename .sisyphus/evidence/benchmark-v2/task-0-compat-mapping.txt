@@ -1,0 +1,46 @@
+# T0 compatibility mapping search output
+
+
+## term: legacy
+
+evals/README.md:91: This section is an inert compatibility contract for Benchmark V2 planning. It documents how legacy benchmark sources map into V2-owned files before any schema migration or harness behavior change occurs.
+evals/README.md:93: | Legacy source or field | V2 canonical target | Compatibility policy |
+evals/README.md:95: | Legacy golden-query top-level `version` field, such as `evals/golden/memory_retrieval_queries.json` with `"version": 1` | V2 `schema_version` field on fixture, golden query, baseline, and report artifacts | Later V2 schema work must read or migrate `version` as legacy input and emit `schema_version` in V2 artifacts. T0 does not rewrite the JSON file. |
+evals/README.md:96: | Existing memory golden files under `evals/golden/`, including `evals/golden/memory_retrieval_queries.json` and mini long-memory variants | Tiered V2 memory query files under `evals/golden/`, named by fixture tier (`small`, `medium`, `stress`) | Current files remain legacy/small-tier inputs until T1/T5/T8 define and wire tiered V2 query paths. |
+evals/README.md:97: | Current code retrieval query source loaded by `evals/code_retrieval_benchmark.py`: `.sisyphus/evidence/task-2-recall-code-baseline.json` | **Canonical V2 code query source: `evals/golden/code_retrieval_queries_v2.json`** | Later T6/T9 work must wire code retrieval to the canonical `evals/` source. The legacy evidence JSON may be read only as a bridge/backfill input while V2 query files are introduced. |
+
+## term: schema_version
+
+evals/README.md:95: | Legacy golden-query top-level `version` field, such as `evals/golden/memory_retrieval_queries.json` with `"version": 1` | V2 `schema_version` field on fixture, golden query, baseline, and report artifacts | Later V2 schema work must read or migrate `version` as legacy input and emit `schema_version` in V2 artifacts. T0 does not rewrite the JSON file. |
+
+## term: version
+
+evals/README.md:7: - No pass/fail gates are enforced in this version.
+evals/README.md:81: The current version is **baseline-only**.
+evals/README.md:95: | Legacy golden-query top-level `version` field, such as `evals/golden/memory_retrieval_queries.json` with `"version": 1` | V2 `schema_version` field on fixture, golden query, baseline, and report artifacts | Later V2 schema work must read or migrate `version` as legacy input and emit `schema_version` in V2 artifacts. T0 does not rewrite the JSON file. |
+evals/code_retrieval_benchmark.py:356:             client_version="0.1.0",
+evals/golden/memory_retrieval_queries.json:143:   "version": 1
+
+## term: canonical
+
+evals/README.md:93: | Legacy source or field | V2 canonical target | Compatibility policy |
+evals/README.md:97: | Current code retrieval query source loaded by `evals/code_retrieval_benchmark.py`: `.sisyphus/evidence/task-2-recall-code-baseline.json` | **Canonical V2 code query source: `evals/golden/code_retrieval_queries_v2.json`** | Later T6/T9 work must wire code retrieval to the canonical `evals/` source. The legacy evidence JSON may be read only as a bridge/backfill input while V2 query files are introduced. |
+
+## term: .sisyphus/evidence/benchmark-v2
+
+evals/README.md:98: | Historical evidence namespace `.sisyphus/evidence/evals/` | New V2 evidence namespace `.sisyphus/evidence/benchmark-v2/` | `.sisyphus/evidence/evals/` is historical/read-only context for V2. New V2 task evidence and QA transcripts must be written under `.sisyphus/evidence/benchmark-v2/`. |
+evals/README.md:122: `.sisyphus/evidence/benchmark-v2/`
+
+## term: .sisyphus/evidence/evals
+
+evals/README.md:41:   - `.sisyphus/evidence/evals/memory-retrieval-baseline-diff.json`
+evals/README.md:42:   - `.sisyphus/evidence/evals/memory-retrieval-baseline-diff.md`
+evals/README.md:43:   - `.sisyphus/evidence/evals/code-retrieval-baseline-diff.json`
+evals/README.md:44:   - `.sisyphus/evidence/evals/code-retrieval-baseline-diff.md`
+evals/README.md:57:   - `.sisyphus/evidence/evals/memory-retrieval-baseline.json` (Structured metrics)
+evals/README.md:58:   - `.sisyphus/evidence/evals/memory-retrieval-baseline.md` (Human-readable summary)
+evals/README.md:69:   - `.sisyphus/evidence/evals/code-retrieval-baseline.json`
+evals/README.md:70:   - `.sisyphus/evidence/evals/code-retrieval-baseline.md`
+evals/README.md:84: - **Manual Review**: Regressions must be manually identified by comparing new runs against the `.sisyphus/evidence/evals/*-baseline.json` artifacts.
+evals/README.md:98: | Historical evidence namespace `.sisyphus/evidence/evals/` | New V2 evidence namespace `.sisyphus/evidence/benchmark-v2/` | `.sisyphus/evidence/evals/` is historical/read-only context for V2. New V2 task evidence and QA transcripts must be written under `.sisyphus/evidence/benchmark-v2/`. |
+evals/README.md:119: `.sisyphus/evidence/evals/`

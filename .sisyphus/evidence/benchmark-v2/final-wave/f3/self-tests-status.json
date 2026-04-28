@@ -1,0 +1,23 @@
+{
+  "generated_at_utc": "2026-04-28T12:55:21.731032Z",
+  "results": [
+    {
+      "name": "metrics",
+      "command": "python3 -m evals.lib.metrics --self-test",
+      "exit_code": 0,
+      "transcript": ".sisyphus/evidence/benchmark-v2/final-wave/f3/self-test-metrics.txt"
+    },
+    {
+      "name": "memory",
+      "command": "python3 evals/memory_retrieval_benchmark.py --self-test",
+      "exit_code": 0,
+      "transcript": ".sisyphus/evidence/benchmark-v2/final-wave/f3/self-test-memory.txt"
+    },
+    {
+      "name": "code",
+      "command": "python3 evals/code_retrieval_benchmark.py --self-test",
+      "exit_code": 0,
+      "transcript": ".sisyphus/evidence/benchmark-v2/final-wave/f3/self-test-code.txt"
+    }
+  ]
+}

@@ -1,0 +1,13 @@
+{
+  "generated_at_utc": "2026-04-28T13:01:09.752566Z",
+  "results": [
+    {
+      "command": "python3 evals/memory_retrieval_benchmark.py --tier medium --output-json .sisyphus/evidence/benchmark-v2/final-wave/f3/memory-medium.json --output-md .sisyphus/evidence/benchmark-v2/final-wave/f3/memory-medium.md",
+      "exit_code": 0
+    },
+    {
+      "command": "python3 evals/code_retrieval_benchmark.py --tier medium --output-json .sisyphus/evidence/benchmark-v2/final-wave/f3/code-medium.json --output-md .sisyphus/evidence/benchmark-v2/final-wave/f3/code-medium.md",
+      "exit_code": 0
+    }
+  ]
+}

@@ -1,0 +1,164 @@
+{
+  "generated_at_utc": "2026-04-28T13:02:38.204432Z",
+  "scenarios": [
+    {
+      "scenario": "self-tests pass",
+      "pass": true,
+      "evidence": "self-tests-status.json",
+      "details": {
+        "results": [
+          {
+            "name": "metrics",
+            "command": "python3 -m evals.lib.metrics --self-test",
+            "exit_code": 0,
+            "transcript": ".sisyphus/evidence/benchmark-v2/final-wave/f3/self-test-metrics.txt"
+          },
+          {
+            "name": "memory",
+            "command": "python3 evals/memory_retrieval_benchmark.py --self-test",
+            "exit_code": 0,
+            "transcript": ".sisyphus/evidence/benchmark-v2/final-wave/f3/self-test-memory.txt"
+          },
+          {
+            "name": "code",
+            "command": "python3 evals/code_retrieval_benchmark.py --self-test",
+            "exit_code": 0,
+            "transcript": ".sisyphus/evidence/benchmark-v2/final-wave/f3/self-test-code.txt"
+          }
+        ]
+      }
+    },
+    {
+      "scenario": "small-tier runs + blockers",
+      "pass": true,
+      "evidence": "small-tier-status.json",
+      "details": {
+        "status_results": [
+          {
+            "command": "python3 evals/memory_retrieval_benchmark.py --tier small --output-json .sisyphus/evidence/benchmark-v2/final-wave/f3/memory-small.json --output-md .sisyphus/evidence/benchmark-v2/final-wave/f3/memory-small.md",
+            "exit_code": 0
+          },
+          {
+            "command": "python3 evals/code_retrieval_benchmark.py --tier small --output-json .sisyphus/evidence/benchmark-v2/final-wave/f3/code-small.json --output-md .sisyphus/evidence/benchmark-v2/final-wave/f3/code-small.md",
+            "exit_code": 0
+          }
+        ],
+        "memory_small_blocker_count": 0,
+        "code_small_blocker_count": 0
+      }
+    },
+    {
+      "scenario": "medium-tier runs executed",
+      "pass": true,
+      "evidence": "medium-tier-status.json",
+      "details": {
+        "results": [
+          {
+            "command": "python3 evals/memory_retrieval_benchmark.py --tier medium --output-json .sisyphus/evidence/benchmark-v2/final-wave/f3/memory-medium.json --output-md .sisyphus/evidence/benchmark-v2/final-wave/f3/memory-medium.md",
+            "exit_code": 0
+          },
+          {
+            "command": "python3 evals/code_retrieval_benchmark.py --tier medium --output-json .sisyphus/evidence/benchmark-v2/final-wave/f3/code-medium.json --output-md .sisyphus/evidence/benchmark-v2/final-wave/f3/code-medium.md",
+            "exit_code": 0
+          }
+        ]
+      }
+    },
+    {
+      "scenario": "v2 field contract check",
+      "pass": true,
+      "evidence": "v2-field-check.json",
+      "details": {
+        "errors": []
+      }
+    },
+    {
+      "scenario": "markdown summary sections",
+      "pass": true,
+      "evidence": "*.md",
+      "details": {
+        "files": [
+          "memory-small.md",
+          "memory-medium.md",
+          "code-small.md",
+          "code-medium.md"
+        ]
+      }
+    },
+    {
+      "scenario": "final-bundle consistency",
+      "pass": true,
+      "evidence": "final-bundle-consistency.json",
+      "details": {
+        "missing_final_bundle_artifacts": [],
+        "consistency": {
+          "memory-small.json": {
+            "same_schema_version": true,
+            "same_fixture_tier": true,
+            "same_baseline_version": true,
+            "same_threshold_policy": true,
+            "same_threshold_status": true,
+            "f3_blocker_count": null,
+            "bundle_blocker_count": null
+          },
+          "code-small.json": {
+            "same_schema_version": true,
+            "same_fixture_tier": true,
+            "same_baseline_version": true,
+            "same_threshold_policy": true,
+            "same_threshold_status": true,
+            "f3_blocker_count": null,
+            "bundle_blocker_count": null
+          },
+          "memory-medium.json": {
+            "same_schema_version": true,
+            "same_fixture_tier": true,
+            "same_baseline_version": true,
+            "same_threshold_policy": true,
+            "same_threshold_status": true,
+            "f3_blocker_count": null,
+            "bundle_blocker_count": null
+          },
+          "code-medium.json": {
+            "same_schema_version": true,
+            "same_fixture_tier": true,
+            "same_baseline_version": true,
+            "same_threshold_policy": true,
+            "same_threshold_status": true,
+            "f3_blocker_count": null,
+            "bundle_blocker_count": null
+          }
+        }
+      }
+    },
+    {
+      "scenario": "forbidden scope transcript captured",
+      "pass": true,
+      "evidence": "forbidden-scope.txt",
+      "details": {
+        "bytes": 6873
+      }
+    },
+    {
+      "scenario": "plan QA scenario summary checked",
+      "pass": true,
+      "evidence": ".sisyphus/plans/benchmark-v2.md",
+      "details": {}
+    }
+  ],
+  "scenario_pass_count": 8,
+  "scenario_total": 8,
+  "reports_present": 8,
+  "reports_total": 8,
+  "required_report_files": [
+    "memory-small.json",
+    "memory-small.md",
+    "code-small.json",
+    "code-small.md",
+    "memory-medium.json",
+    "memory-medium.md",
+    "code-medium.json",
+    "code-medium.md"
+  ],
+  "verdict": "APPROVE"
+}

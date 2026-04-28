@@ -1,0 +1,11 @@
+usage: code_retrieval_benchmark.py [-h] [--self-test]
+                                   [--embedding-model EMBEDDING_MODEL]
+                                   [--embedding-timeout-s EMBEDDING_TIMEOUT_S]
+                                   [--index-timeout-s INDEX_TIMEOUT_S]
+                                   [--query-timeout-s QUERY_TIMEOUT_S]
+                                   [--poll-interval-s POLL_INTERVAL_S]
+                                   [--output-json OUTPUT_JSON]
+                                   [--output-md OUTPUT_MD]
+                                   [--fixture-tier TIER]
+                                   [--baseline-version BASELINE_VERSION]
+code_retrieval_benchmark.py: error: argument --fixture-tier/--tier: invalid fixture tier 'invalid'; valid choices: small, medium, stress

@@ -1,0 +1,389 @@
+{
+  "aggregate_metrics": {
+    "baseline_query_count": 0,
+    "blocker_count": 0,
+    "hit_rate": 0.0,
+    "latency_summary": {
+      "count": 0,
+      "max_latency_ms": 0.0,
+      "mean_latency_ms": 0.0,
+      "p95_latency_ms": 0.0
+    },
+    "max_latency_ms": 0.0,
+    "mean_expected_rank": null,
+    "mean_latency_ms": 0.0,
+    "mrr": 0.0,
+    "ndcg_at_10": 0.0,
+    "ndcg_at_5": 0.0,
+    "observed_summary_partial_reason_codes": [],
+    "p95_latency_ms": 0.0,
+    "positive_hit_rate": null,
+    "positive_mean_mrr": null,
+    "positive_mean_ndcg_at_5": null,
+    "positive_mean_precision_at_10": null,
+    "positive_mean_precision_at_5": null,
+    "positive_mean_recall_at_5": null,
+    "positive_query_count": 0,
+    "precision_at_10": 0.0,
+    "precision_at_5": 0.0,
+    "query_count": 0,
+    "readiness_fallback": {
+      "elapsed_s": null,
+      "explanation": "No settle_readiness result was recorded for this run.",
+      "impact": "informational",
+      "status": "unavailable"
+    },
+    "reason_code_classification": {},
+    "recall_at_10": 0.0,
+    "recall_at_5": 0.0,
+    "runtime_minutes": 0.329812,
+    "seed_completed": false,
+    "threshold_evaluation": {
+      "enforcement": "local-only",
+      "evaluated_metrics": 0,
+      "failures": [],
+      "fixture_tier": "stress",
+      "policy_name": "local-v2-threshold-policy",
+      "reason": "threshold evaluation deferred because no queries were executed",
+      "status": "deferred"
+    }
+  },
+  "baseline_diff_summary": {
+    "reason": "baseline diff summary is produced by explicit baseline-diff workflow",
+    "status": "deferred"
+  },
+  "baseline_version": "v2-initial",
+  "benchmark_name": "memory_retrieval_baseline",
+  "blockers": [],
+  "deterministic_local_metadata": {
+    "determinism_policy": {
+      "name": "stable_fixture_order+stable_tie_break+stable_report_order+tolerance_1e-9_1e-6"
+    },
+    "runtime_target": {
+      "optional_policy": "manual-only stress tier",
+      "required_by_default": false,
+      "target_minutes": "45-90+"
+    },
+    "threshold_policy_enforcement": "local-only"
+  },
+  "environment": {
+    "data_dir": "/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-8-memory-retrieval-data-cfwxuaau",
+    "data_dir_strategy": "temporary isolated DATA_DIR",
+    "duration_seconds": 19.8,
+    "embedding_model": "e5_small",
+    "mode": "benchmark",
+    "raw": {
+      "embedding_readiness": {
+        "elapsed_s": 18.037,
+        "poll_attempts": 10,
+        "poll_snapshots": [
+          {
+            "embedding_phase": "Cleaning stale cache...",
+            "embedding_progress_percent": null,
+            "embedding_status": "loading",
+            "parse_errors": [],
+            "reason_code": null,
+            "status": "loading"
+          },
+          {
+            "embedding_phase": "Fetching tokenizer...",
+            "embedding_progress_percent": null,
+            "embedding_status": "loading",
+            "parse_errors": [],
+            "reason_code": null,
+            "status": "loading"
+          },
+          {
+            "embedding_phase": "Downloading model weights...",
+            "embedding_progress_percent": 0.0,
+            "embedding_status": "loading",
+            "parse_errors": [],
+            "reason_code": null,
+            "status": "loading"
+          },
+          {
+            "embedding_phase": "Downloading model weights...",
+            "embedding_progress_percent": 12.351316452026367,
+            "embedding_status": "loading",
+            "parse_errors": [],
+            "reason_code": null,
+            "status": "loading"
+          },
+          {
+            "embedding_phase": "Downloading model weights...",
+            "embedding_progress_percent": 35.31001663208008,
+            "embedding_status": "loading",
+            "parse_errors": [],
+            "reason_code": null,
+            "status": "loading"
+          },
+          {
+            "embedding_phase": "Downloading model weights...",
+            "embedding_progress_percent": 56.63936233520508,
+            "embedding_status": "loading",
+            "parse_errors": [],
+            "reason_code": null,
+            "status": "loading"
+          },
+          {
+            "embedding_phase": "Downloading model weights...",
+            "embedding_progress_percent": 75.16981506347656,
+            "embedding_status": "loading",
+            "parse_errors": [],
+            "reason_code": null,
+            "status": "loading"
+          },
+          {
+            "embedding_phase": "Downloading model weights...",
+            "embedding_progress_percent": 90.4383773803711,
+            "embedding_status": "loading",
+            "parse_errors": [],
+            "reason_code": null,
+            "status": "loading"
+          },
+          {
+            "embedding_phase": "Loading model into memory...",
+            "embedding_progress_percent": null,
+            "embedding_status": "loading",
+            "parse_errors": [],
+            "reason_code": null,
+            "status": "loading"
+          },
+          {
+            "embedding_phase": null,
+            "embedding_progress_percent": null,
+            "embedding_status": "ready",
+            "parse_errors": [],
+            "reason_code": null,
+            "status": "healthy"
+          }
+        ],
+        "reason": "embedding_ready",
+        "reason_codes": [],
+        "status": "ready",
+        "status_errors": []
+      },
+      "fixture_validation": {
+        "fixture_manifest": "evals/fixtures/memory_corpus_stress_manifest.json",
+        "golden_manifest": "evals/golden/memory_retrieval_queries_stress_manifest.json",
+        "status": "validated"
+      },
+      "query_diagnostics": {
+        "call_error_count": 0,
+        "degraded_or_partial_count": 0,
+        "parse_issue_count": 0,
+        "reason": "stress_manifest_only"
+      },
+      "query_validation": {
+        "fixture_tier": "stress",
+        "observed_query_types": [],
+        "query_count": 0
+      },
+      "seed_progress": {
+        "fixture_tier": "stress",
+        "reason": "stress_manifest_only",
+        "status": "deferred"
+      },
+      "startup_status": {
+        "embedding": {
+          "cached": false,
+          "dimensions": 384,
+          "elapsed_seconds": 0,
+          "eta_seconds": null,
+          "model": "e5_small_384",
+          "phase": "Cleaning stale cache...",
+          "status": "loading"
+        },
+        "memories_count": 0,
+        "status": "loading",
+        "version": "0.8.2"
+      }
+    },
+    "root": "/Users/xiayiming1/Documents/Workspace/memory-mcp-1file",
+    "server_command": [
+      "/Users/xiayiming1/Documents/Workspace/memory-mcp-1file/target/fast/memory-mcp",
+      "--stdio"
+    ],
+    "started_at_utc": "2026-04-28T11:55:52.300623+00:00",
+    "stderr_tail": [
+      "[memory-mcp] Auto-configured block cache: 46 MB (available RAM: 231 MB)",
+      "\u001b[2m2026-04-28T11:55:52.312503Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2mmemory_mcp\u001b[0m\u001b[2m:\u001b[0m memory-mcp starting \u001b[3mversion\u001b[0m\u001b[2m=\u001b[0m\"0.8.2\" \u001b[3mpid\u001b[0m\u001b[2m=\u001b[0m39549 \u001b[3mppid\u001b[0m\u001b[2m=\u001b[0m39544 \u001b[3mmode\u001b[0m\u001b[2m=\u001b[0m\"stdio\" \u001b[3mmodel\u001b[0m\u001b[2m=\u001b[0me5_small \u001b[3mdata_dir\u001b[0m\u001b[2m=\u001b[0m/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-8-memory-retrieval-data-cfwxuaau",
+      "\u001b[2m2026-04-28T11:55:52.312796Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2msurrealdb::core::kvs::ds\u001b[0m\u001b[2m:\u001b[0m Starting kvs store at absolute path surrealkv:/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-8-memory-retrieval-data-cfwxuaau/db",
+      "\u001b[2m2026-04-28T11:55:52.312981Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2msurrealdb::core::kvs::surrealkv\u001b[0m\u001b[2m:\u001b[0m Enabling value log separation: true",
+      "\u001b[2m2026-04-28T11:55:52.325799Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2msurrealdb::core::kvs::surrealkv\u001b[0m\u001b[2m:\u001b[0m Setting value log max file size: 268435456",
+      "\u001b[2m2026-04-28T11:55:52.325815Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2msurrealdb::core::kvs::surrealkv\u001b[0m\u001b[2m:\u001b[0m Setting value log threshold: 4096",
+      "\u001b[2m2026-04-28T11:55:52.325816Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2msurrealdb::core::kvs::surrealkv\u001b[0m\u001b[2m:\u001b[0m Versioning enabled: false with retention period: 0ns",
+      "\u001b[2m2026-04-28T11:55:52.325817Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2msurrealdb::core::kvs::surrealkv\u001b[0m\u001b[2m:\u001b[0m Versioning with versioned_index: false",
+      "\u001b[2m2026-04-28T11:55:52.325821Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2msurrealdb::core::kvs::surrealkv\u001b[0m\u001b[2m:\u001b[0m Setting block cache capacity: 48234496",
+      "\u001b[2m2026-04-28T11:55:52.325828Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2msurrealdb::core::kvs::surrealkv\u001b[0m\u001b[2m:\u001b[0m Setting block size: 65536",
+      "\u001b[2m2026-04-28T11:55:52.326749Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2msurrealkv::lsm\u001b[0m\u001b[2m:\u001b[0m === Starting LSM tree initialization ===",
+      "\u001b[2m2026-04-28T11:55:52.326757Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2msurrealkv::lsm\u001b[0m\u001b[2m:\u001b[0m Database path: \"/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-8-memory-retrieval-data-cfwxuaau/db\"",
+      "\u001b[2m2026-04-28T11:55:52.346687Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2msurrealkv::lsm\u001b[0m\u001b[2m:\u001b[0m Manifest state: log_number=0, last_sequence=0",
+      "\u001b[2m2026-04-28T11:55:52.346698Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2msurrealkv::wal::recovery\u001b[0m\u001b[2m:\u001b[0m Starting WAL recovery from directory: \"/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-8-memory-retrieval-data-cfwxuaau/db/wal\"",
+      "\u001b[2m2026-04-28T11:55:52.346783Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2msurrealkv::wal::recovery\u001b[0m\u001b[2m:\u001b[0m Replaying WAL segments #00000000000000000000 to #00000000000000000000",
+      "\u001b[2m2026-04-28T11:55:52.357334Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2msurrealkv::wal::recovery\u001b[0m\u001b[2m:\u001b[0m WAL recovery complete: 0 batches across 0 segments, 0 memtables created, max_seq_num=None",
+      "\u001b[2m2026-04-28T11:55:52.357641Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2msurrealkv::lsm\u001b[0m\u001b[2m:\u001b[0m === LSM tree initialization complete ===",
+      "\u001b[2m2026-04-28T11:55:52.371197Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2msurrealdb::core::kvs::surrealkv\u001b[0m\u001b[2m:\u001b[0m Sync mode: every transaction commit",
+      "\u001b[2m2026-04-28T11:55:52.371213Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2msurrealdb::core::kvs::surrealkv\u001b[0m\u001b[2m:\u001b[0m Grouped commit: enabled (timeout=5000000ns, wait_threshold=12, max_batch_size=4096)",
+      "\u001b[2m2026-04-28T11:55:52.371234Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2msurrealdb::core::kvs::ds\u001b[0m\u001b[2m:\u001b[0m Started surrealkv kvs store",
+      "\u001b[2m2026-04-28T11:55:53.738206Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2mmemory_mcp::storage::surrealdb\u001b[0m\u001b[2m:\u001b[0m Dimension check passed \u001b[3mmodel\u001b[0m\u001b[2m=\u001b[0m384 \u001b[3mdb\u001b[0m\u001b[2m=\u001b[0m384",
+      "\u001b[2m2026-04-28T11:55:53.738217Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2mmemory_mcp\u001b[0m\u001b[2m:\u001b[0m Embedding engine configured \u001b[3moutput_dim\u001b[0m\u001b[2m=\u001b[0m384 \u001b[3mmodel\u001b[0m\u001b[2m=\u001b[0me5_small",
+      "\u001b[2m2026-04-28T11:55:53.791010Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2mmemory_mcp::embedding::worker\u001b[0m\u001b[2m:\u001b[0m Embedding worker started, waiting for requests",
+      "\u001b[2m2026-04-28T11:55:53.791016Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2mmemory_mcp::forgetting::capacity\u001b[0m\u001b[2m:\u001b[0m Capacity controller started \u001b[3mcheck_interval_secs\u001b[0m\u001b[2m=\u001b[0m3600 \u001b[3msoft_limit\u001b[0m\u001b[2m=\u001b[0m10000 \u001b[3mcleanup_target_ratio\u001b[0m\u001b[2m=\u001b[0m0.800000011920929",
+      "\u001b[2m2026-04-28T11:55:53.791068Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2mmemory_mcp::embedding::service\u001b[0m\u001b[2m:\u001b[0m Loading embedding model: E5Small",
+      "\u001b[2m2026-04-28T11:55:53.791889Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2mrmcp::handler::server\u001b[0m\u001b[2m:\u001b[0m client initialized",
+      "\u001b[2m2026-04-28T11:55:53.791901Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[1mserve_inner\u001b[0m\u001b[2m:\u001b[0m \u001b[2mrmcp::service\u001b[0m\u001b[2m:\u001b[0m Service initialized as server \u001b[3mpeer_info\u001b[0m\u001b[2m=\u001b[0mSome(InitializeRequestParams { meta: None, protocol_version: ProtocolVersion(\"2024-11-05\"), capabilities: ClientCapabilities { experimental: None, extensions: None, roots: None, sampling: None, elicitation: None, tasks: None }, client_info: Implementation { name: \"memory-retrieval-benchmark\", title: None, version: \"0.1.0\", description: None, icons: None, website_url: None } })",
+      "\u001b[2m2026-04-28T11:55:53.791914Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2mmemory_mcp\u001b[0m\u001b[2m:\u001b[0m Server started in stdio mode, waiting for client disconnect or signals...",
+      "\u001b[2m2026-04-28T11:55:53.792452Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2mmemory_mcp::forgetting::capacity\u001b[0m\u001b[2m:\u001b[0m Capacity OK: 0 memories \u001b[3mcount\u001b[0m\u001b[2m=\u001b[0m0",
+      "\u001b[2m2026-04-28T11:55:57.585817Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2mmemory_mcp::embedding::service\u001b[0m\u001b[2m:\u001b[0m Downloading model weights from HuggingFace Hub...",
+      "\u001b[2m2026-04-28T11:56:09.858713Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2mmemory_mcp::embedding::service\u001b[0m\u001b[2m:\u001b[0m Embedding model ready \u001b[3melapsed_sec\u001b[0m\u001b[2m=\u001b[0m\"16.1\""
+    ]
+  },
+  "failure_buckets": {},
+  "fixture_tier": "stress",
+  "generated_at_utc": "2026-04-28T11:56:12.104830Z",
+  "manifest": {
+    "baseline_refresh": {
+      "baseline_version": "v2-initial",
+      "canonical_target_requested": false,
+      "canonical_target_written": false,
+      "command": "python3 evals/memory_retrieval_benchmark.py --tier stress --output-json .sisyphus/evidence/benchmark-v2/task-8/memory-stress.json --output-md .sisyphus/evidence/benchmark-v2/task-8/memory-stress.md",
+      "fixture_tier": "stress",
+      "git_commit": "99ac9f7f3d83e89ef434df3c14bf70488dea95aa",
+      "model": "e5_small",
+      "output_json": ".sisyphus/evidence/benchmark-v2/task-8/memory-stress.json",
+      "output_md": ".sisyphus/evidence/benchmark-v2/task-8/memory-stress.md",
+      "refresh_mode": false,
+      "refresh_reason": null,
+      "refresh_requested": false,
+      "refresh_timestamp_utc": null,
+      "schema_version": "2.0"
+    },
+    "baseline_version": "v2-initial",
+    "command_selected": [
+      "/Users/xiayiming1/Documents/Workspace/memory-mcp-1file/target/fast/memory-mcp",
+      "--stdio"
+    ],
+    "data_dir_strategy": "temporary isolated DATA_DIR",
+    "determinism_policy": {
+      "name": "stable_fixture_order+stable_tie_break+stable_report_order+tolerance_1e-9_1e-6"
+    },
+    "fixture_counts": {
+      "golden_queries": 0,
+      "graph_entities": 5,
+      "graph_relations": 8,
+      "memories": 0
+    },
+    "fixture_paths": {
+      "golden_queries_manifest": "evals/golden/memory_retrieval_queries_stress_manifest.json",
+      "memory_corpus_manifest": "evals/fixtures/memory_corpus_stress_manifest.json",
+      "memory_graph": "evals/fixtures/memory_graph.json"
+    },
+    "fixture_tier": "stress",
+    "query_types": [],
+    "required_query_types": [
+      "get_valid_filtered",
+      "get_valid_temporal",
+      "negative_no_match",
+      "recall_fusion",
+      "search_bm25",
+      "search_vector"
+    ],
+    "runtime_target": {
+      "optional_policy": "manual-only stress tier",
+      "required_by_default": false,
+      "target_minutes": "45-90+"
+    },
+    "schema_version": "2.0",
+    "seed_order": [
+      "knowledge_graph",
+      "store_memory"
+    ],
+    "threshold_policy": {
+      "enforcement": "local-only",
+      "name": "local-v2-threshold-policy"
+    },
+    "tool_set": [
+      "knowledge_graph",
+      "store_memory",
+      "recall",
+      "search_memory",
+      "get_valid"
+    ]
+  },
+  "metric_summary": {
+    "blocker_count": 0,
+    "hit_rate": 0.0,
+    "max_latency_ms": 0.0,
+    "mean_latency_ms": 0.0,
+    "mrr": 0.0,
+    "ndcg_at_10": 0.0,
+    "ndcg_at_5": 0.0,
+    "p95_latency_ms": 0.0,
+    "positive_hit_rate": null,
+    "positive_mean_mrr": null,
+    "positive_mean_ndcg_at_5": null,
+    "positive_mean_precision_at_5": null,
+    "positive_mean_recall_at_5": null,
+    "positive_query_count": 0,
+    "precision_at_10": 0.0,
+    "precision_at_5": 0.0,
+    "query_count": 0,
+    "recall_at_10": 0.0,
+    "recall_at_5": 0.0,
+    "runtime_minutes": 0.329812
+  },
+  "per_query": [],
+  "readiness_summary": {
+    "readiness_fallback": {
+      "elapsed_s": null,
+      "explanation": "No settle_readiness result was recorded for this run.",
+      "impact": "informational",
+      "status": "unavailable"
+    },
+    "taxonomy": {
+      "reason_code_classification": {},
+      "reason_codes": []
+    },
+    "threshold_status_reason": "threshold evaluation deferred because no queries were executed"
+  },
+  "schema_version": "2.0",
+  "stderr_tail": [
+    "[memory-mcp] Auto-configured block cache: 46 MB (available RAM: 231 MB)",
+    "\u001b[2m2026-04-28T11:55:52.312503Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2mmemory_mcp\u001b[0m\u001b[2m:\u001b[0m memory-mcp starting \u001b[3mversion\u001b[0m\u001b[2m=\u001b[0m\"0.8.2\" \u001b[3mpid\u001b[0m\u001b[2m=\u001b[0m39549 \u001b[3mppid\u001b[0m\u001b[2m=\u001b[0m39544 \u001b[3mmode\u001b[0m\u001b[2m=\u001b[0m\"stdio\" \u001b[3mmodel\u001b[0m\u001b[2m=\u001b[0me5_small \u001b[3mdata_dir\u001b[0m\u001b[2m=\u001b[0m/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-8-memory-retrieval-data-cfwxuaau",
+    "\u001b[2m2026-04-28T11:55:52.312796Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2msurrealdb::core::kvs::ds\u001b[0m\u001b[2m:\u001b[0m Starting kvs store at absolute path surrealkv:/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-8-memory-retrieval-data-cfwxuaau/db",
+    "\u001b[2m2026-04-28T11:55:52.312981Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2msurrealdb::core::kvs::surrealkv\u001b[0m\u001b[2m:\u001b[0m Enabling value log separation: true",
+    "\u001b[2m2026-04-28T11:55:52.325799Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2msurrealdb::core::kvs::surrealkv\u001b[0m\u001b[2m:\u001b[0m Setting value log max file size: 268435456",
+    "\u001b[2m2026-04-28T11:55:52.325815Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2msurrealdb::core::kvs::surrealkv\u001b[0m\u001b[2m:\u001b[0m Setting value log threshold: 4096",
+    "\u001b[2m2026-04-28T11:55:52.325816Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2msurrealdb::core::kvs::surrealkv\u001b[0m\u001b[2m:\u001b[0m Versioning enabled: false with retention period: 0ns",
+    "\u001b[2m2026-04-28T11:55:52.325817Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2msurrealdb::core::kvs::surrealkv\u001b[0m\u001b[2m:\u001b[0m Versioning with versioned_index: false",
+    "\u001b[2m2026-04-28T11:55:52.325821Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2msurrealdb::core::kvs::surrealkv\u001b[0m\u001b[2m:\u001b[0m Setting block cache capacity: 48234496",
+    "\u001b[2m2026-04-28T11:55:52.325828Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2msurrealdb::core::kvs::surrealkv\u001b[0m\u001b[2m:\u001b[0m Setting block size: 65536",
+    "\u001b[2m2026-04-28T11:55:52.326749Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2msurrealkv::lsm\u001b[0m\u001b[2m:\u001b[0m === Starting LSM tree initialization ===",
+    "\u001b[2m2026-04-28T11:55:52.326757Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2msurrealkv::lsm\u001b[0m\u001b[2m:\u001b[0m Database path: \"/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-8-memory-retrieval-data-cfwxuaau/db\"",
+    "\u001b[2m2026-04-28T11:55:52.346687Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2msurrealkv::lsm\u001b[0m\u001b[2m:\u001b[0m Manifest state: log_number=0, last_sequence=0",
+    "\u001b[2m2026-04-28T11:55:52.346698Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2msurrealkv::wal::recovery\u001b[0m\u001b[2m:\u001b[0m Starting WAL recovery from directory: \"/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-8-memory-retrieval-data-cfwxuaau/db/wal\"",
+    "\u001b[2m2026-04-28T11:55:52.346783Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2msurrealkv::wal::recovery\u001b[0m\u001b[2m:\u001b[0m Replaying WAL segments #00000000000000000000 to #00000000000000000000",
+    "\u001b[2m2026-04-28T11:55:52.357334Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2msurrealkv::wal::recovery\u001b[0m\u001b[2m:\u001b[0m WAL recovery complete: 0 batches across 0 segments, 0 memtables created, max_seq_num=None",
+    "\u001b[2m2026-04-28T11:55:52.357641Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2msurrealkv::lsm\u001b[0m\u001b[2m:\u001b[0m === LSM tree initialization complete ===",
+    "\u001b[2m2026-04-28T11:55:52.371197Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2msurrealdb::core::kvs::surrealkv\u001b[0m\u001b[2m:\u001b[0m Sync mode: every transaction commit",
+    "\u001b[2m2026-04-28T11:55:52.371213Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2msurrealdb::core::kvs::surrealkv\u001b[0m\u001b[2m:\u001b[0m Grouped commit: enabled (timeout=5000000ns, wait_threshold=12, max_batch_size=4096)",
+    "\u001b[2m2026-04-28T11:55:52.371234Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2msurrealdb::core::kvs::ds\u001b[0m\u001b[2m:\u001b[0m Started surrealkv kvs store",
+    "\u001b[2m2026-04-28T11:55:53.738206Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2mmemory_mcp::storage::surrealdb\u001b[0m\u001b[2m:\u001b[0m Dimension check passed \u001b[3mmodel\u001b[0m\u001b[2m=\u001b[0m384 \u001b[3mdb\u001b[0m\u001b[2m=\u001b[0m384",
+    "\u001b[2m2026-04-28T11:55:53.738217Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2mmemory_mcp\u001b[0m\u001b[2m:\u001b[0m Embedding engine configured \u001b[3moutput_dim\u001b[0m\u001b[2m=\u001b[0m384 \u001b[3mmodel\u001b[0m\u001b[2m=\u001b[0me5_small",
+    "\u001b[2m2026-04-28T11:55:53.791010Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2mmemory_mcp::embedding::worker\u001b[0m\u001b[2m:\u001b[0m Embedding worker started, waiting for requests",
+    "\u001b[2m2026-04-28T11:55:53.791016Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2mmemory_mcp::forgetting::capacity\u001b[0m\u001b[2m:\u001b[0m Capacity controller started \u001b[3mcheck_interval_secs\u001b[0m\u001b[2m=\u001b[0m3600 \u001b[3msoft_limit\u001b[0m\u001b[2m=\u001b[0m10000 \u001b[3mcleanup_target_ratio\u001b[0m\u001b[2m=\u001b[0m0.800000011920929",
+    "\u001b[2m2026-04-28T11:55:53.791068Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2mmemory_mcp::embedding::service\u001b[0m\u001b[2m:\u001b[0m Loading embedding model: E5Small",
+    "\u001b[2m2026-04-28T11:55:53.791889Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2mrmcp::handler::server\u001b[0m\u001b[2m:\u001b[0m client initialized",
+    "\u001b[2m2026-04-28T11:55:53.791901Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[1mserve_inner\u001b[0m\u001b[2m:\u001b[0m \u001b[2mrmcp::service\u001b[0m\u001b[2m:\u001b[0m Service initialized as server \u001b[3mpeer_info\u001b[0m\u001b[2m=\u001b[0mSome(InitializeRequestParams { meta: None, protocol_version: ProtocolVersion(\"2024-11-05\"), capabilities: ClientCapabilities { experimental: None, extensions: None, roots: None, sampling: None, elicitation: None, tasks: None }, client_info: Implementation { name: \"memory-retrieval-benchmark\", title: None, version: \"0.1.0\", description: None, icons: None, website_url: None } })",
+    "\u001b[2m2026-04-28T11:55:53.791914Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2mmemory_mcp\u001b[0m\u001b[2m:\u001b[0m Server started in stdio mode, waiting for client disconnect or signals...",
+    "\u001b[2m2026-04-28T11:55:53.792452Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2mmemory_mcp::forgetting::capacity\u001b[0m\u001b[2m:\u001b[0m Capacity OK: 0 memories \u001b[3mcount\u001b[0m\u001b[2m=\u001b[0m0",
+    "\u001b[2m2026-04-28T11:55:57.585817Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2mmemory_mcp::embedding::service\u001b[0m\u001b[2m:\u001b[0m Downloading model weights from HuggingFace Hub...",
+    "\u001b[2m2026-04-28T11:56:09.858713Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2mmemory_mcp::embedding::service\u001b[0m\u001b[2m:\u001b[0m Embedding model ready \u001b[3melapsed_sec\u001b[0m\u001b[2m=\u001b[0m\"16.1\""
+  ],
+  "threshold_policy": "local-v2-threshold-policy",
+  "threshold_status": "deferred",
+  "warnings": [
+    "stress tier is manifest-only; runtime seeding/query execution deferred"
+  ]
+}

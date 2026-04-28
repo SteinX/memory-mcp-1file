@@ -1,0 +1,116 @@
+{
+  "baseline_pair": {
+    "after": "/Users/xiayiming1/Documents/Workspace/memory-mcp-1file/.sisyphus/evidence/evals/code-retrieval-baseline.json",
+    "after_available": true,
+    "before": "/Users/xiayiming1/Documents/Workspace/memory-mcp-1file/.sisyphus/evidence/task-2-recall-code-baseline.json",
+    "before_available": true
+  },
+  "benchmark_name": "code_retrieval_baseline",
+  "comparison": {
+    "changed": [
+      "blocker_count",
+      "max_latency_ms",
+      "mean_latency_ms"
+    ],
+    "improved": [
+      "blocker_count",
+      "max_latency_ms",
+      "mean_latency_ms"
+    ],
+    "metric_status": {
+      "blocker_count": "improved",
+      "hit_rate": "missing_before",
+      "max_latency_ms": "improved",
+      "mean_latency_ms": "improved",
+      "mrr": "missing_before",
+      "p95_latency_ms": "missing_before",
+      "precision_at_10": "missing_before",
+      "precision_at_5": "missing_before"
+    },
+    "missing": {
+      "after": [],
+      "before": [
+        "hit_rate",
+        "mrr",
+        "p95_latency_ms",
+        "precision_at_10",
+        "precision_at_5"
+      ]
+    },
+    "regressed": [],
+    "unchanged": []
+  },
+  "generated_at_utc": "2026-04-28T05:05:43.265357Z",
+  "metrics": {
+    "blocker_count": {
+      "after": 0,
+      "before": 1,
+      "delta": -1.0
+    },
+    "blockers": {
+      "after": [],
+      "before": [
+        "\u2014: index readiness timeout"
+      ],
+      "delta": {
+        "added": [],
+        "count_delta": -1,
+        "removed": [
+          "\u2014: index readiness timeout"
+        ]
+      }
+    },
+    "hit_rate": {
+      "after": 0.8666666666666667,
+      "before": null,
+      "delta": null
+    },
+    "max_latency_ms": {
+      "after": 39.88,
+      "before": 3961.1,
+      "delta": -3921.22
+    },
+    "mean_latency_ms": {
+      "after": 31.868,
+      "before": 1866.9466666666667,
+      "delta": -1835.0786666666668
+    },
+    "mrr": {
+      "after": 0.8333333333333334,
+      "before": null,
+      "delta": null
+    },
+    "p95_latency_ms": {
+      "after": 39.88,
+      "before": null,
+      "delta": null
+    },
+    "precision_at_10": {
+      "after": 0.64,
+      "before": null,
+      "delta": null
+    },
+    "precision_at_5": {
+      "after": 0.7733333333333334,
+      "before": null,
+      "delta": null
+    },
+    "reason_codes": {
+      "after": [
+        "partial"
+      ],
+      "before": [],
+      "delta": {
+        "added": [
+          "partial"
+        ],
+        "count_delta": 1,
+        "removed": []
+      }
+    }
+  },
+  "notes": [
+    "Diff artifacts are evidence/reporting only.",
+    "These deltas are informational and are not used as CI regression gates."
+  ]
+}

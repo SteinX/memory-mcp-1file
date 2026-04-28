@@ -1,0 +1,41 @@
+{
+  "missing_final_bundle_artifacts": [],
+  "consistency": {
+    "memory-small.json": {
+      "same_schema_version": true,
+      "same_fixture_tier": true,
+      "same_baseline_version": true,
+      "same_threshold_policy": true,
+      "same_threshold_status": true,
+      "f3_blocker_count": null,
+      "bundle_blocker_count": null
+    },
+    "code-small.json": {
+      "same_schema_version": true,
+      "same_fixture_tier": true,
+      "same_baseline_version": true,
+      "same_threshold_policy": true,
+      "same_threshold_status": true,
+      "f3_blocker_count": null,
+      "bundle_blocker_count": null
+    },
+    "memory-medium.json": {
+      "same_schema_version": true,
+      "same_fixture_tier": true,
+      "same_baseline_version": true,
+      "same_threshold_policy": true,
+      "same_threshold_status": true,
+      "f3_blocker_count": null,
+      "bundle_blocker_count": null
+    },
+    "code-medium.json": {
+      "same_schema_version": true,
+      "same_fixture_tier": true,
+      "same_baseline_version": true,
+      "same_threshold_policy": true,
+      "same_threshold_status": true,
+      "f3_blocker_count": null,
+      "bundle_blocker_count": null
+    }
+  }
+}

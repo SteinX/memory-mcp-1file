@@ -1,0 +1,45 @@
+Task: T1 Define V2 schemas, tier contract, and determinism policy
+Date: 2026-04-28
+
+Pre-edit required grep:
+Command:
+grep pattern equivalent over evals/*.py, evals/*.md, evals/*.json:
+schema_version|fixture_tier|baseline_version|threshold_policy|\bversion\b|runtime|\btier\b
+
+Relevant pre-edit findings:
+- evals/README.md:95 mapped legacy `version` to V2 `schema_version`.
+- evals/README.md:96 mapped tiered V2 memory query files to `small`, `medium`, and `stress` fixture tiers.
+- evals/README.md:102-106 contained the T0 runtime budget table.
+- evals/memory_retrieval_benchmark.py:110-132 still validates legacy `version` fields.
+- evals/fixtures/memory_corpus.json and evals/fixtures/memory_corpus_mini_long_memory.json contain per-record `tier` labels (`gold`, `mini`), distinct from V2 `fixture_tier`.
+
+Post-edit required contract-field grep:
+Command:
+grep pattern equivalent over evals/README.md:
+schema_version|fixture_tier|baseline_version|threshold_policy|determinism_policy|runtime_target|Metric tolerance|Fixture tiers
+
+Output:
+evals/README.md:95: | Legacy golden-query top-level `version` field, such as `evals/golden/memory_retrieval_queries.json` with `"version": 1` | V2 `schema_version` field on fixture, golden query, baseline, and report artifacts | Later V2 schema work must read or migrate `version` as legacy input and emit `schema_version` in V2 artifacts. T0 does not rewrite the JSON file. |
+evals/README.md:118: | `schema_version` | fixtures, golden queries, baselines, reports | String or integer identifying the V2 artifact schema. Legacy `version` is accepted only through the T0 compatibility bridge; V2 writers must emit `schema_version`. |
+evals/README.md:119: | `fixture_tier` | fixtures, golden queries, baselines, reports | One of `small`, `medium`, or `stress`. The field identifies fixture/query scale and runtime expectations, not the legacy per-memory item `tier` labels such as `gold` or `mini`. |
+evals/README.md:120: | `baseline_version` | baselines, reports | Stable baseline identifier used for comparisons. The value must change only through an explicit baseline refresh workflow, never as a side effect of a normal benchmark run. |
+evals/README.md:121: | `threshold_policy` | baselines, reports | Name or object describing the local interpretation policy used for `pass`, `warn`, `blocker`, or `deferred` statuses. T1 only reserves the field; T3 defines exact formulas. |
+evals/README.md:122: | `runtime_target` | fixtures, golden queries, baselines, reports | Object containing expected runtime metadata: `target_minutes`, `required_by_default`, `optional_policy`, and optionally `measured_seconds` for run outputs. |
+evals/README.md:123: | `determinism_policy` | fixtures, golden queries, reports | Object or string naming the deterministic ordering and tolerance rules below so later reports are reproducible and reviewable. |
+evals/README.md:125: #### Fixture tiers
+evals/README.md:127: | `fixture_tier` | Purpose | Rough size range | Required / optional policy | Runtime metadata expectation |
+evals/README.md:129: | `small` | Safe default for local smoke/regression evidence and V1-compatible baseline continuity. | Tens of fixture records and about 10-25 golden queries per harness. | Required by default; must remain the default tier for routine local validation. | Must include `runtime_target.target_minutes` around `5-10`, `required_by_default: true`, and measured duration when a run artifact is produced. |
+evals/README.md:130: | `medium` | Expanded scenario coverage for label quality, namespace/temporal boundaries, code-symbol relationships, and regression investigation. | Dozens to low hundreds of fixture records and about 25-75 golden queries per harness. | Validation is required; full benchmark execution is explicit and may be skipped only with a runtime-budget note in evidence. | Must include `runtime_target.target_minutes` around `15-30`, `required_by_default: false`, and an explicit validation-or-run status. |
+evals/README.md:131: | `stress` | Optional scale and soak coverage for runtime behavior, ranking stability, and large-corpus edge cases. | Hundreds to thousands of fixture records and 75+ golden queries or generated manifests. | Optional/manual only; never default and safe to skip when evidence records the runtime reason. | Must include `runtime_target.target_minutes` around `45-90+`, `required_by_default: false`, and `optional_policy` explaining manual execution. |
+evals/README.md:138: - Metric tolerance for V2 comparisons is `1e-9` for exact metric math and `1e-6` for serialized floating-point/report comparisons. Runtime and latency fields are diagnostic and must not be used as deterministic pass/fail values unless a later threshold policy explicitly opts in.
+evals/README.md:139: - Normal benchmark runs must not mutate baseline artifacts. Baseline refresh is explicit-only and must record `baseline_version`, `fixture_tier`, runtime metadata, command, model, and refresh reason once T2 implements it.
+
+Verification:
+Command:
+python3 -m evals.lib.metrics --self-test
+
+Output:
+self-test passed
+
+Diagnostics note:
+lsp_diagnostics was attempted for evals/README.md, but the workspace has no Markdown LSP configured. No code file was modified.

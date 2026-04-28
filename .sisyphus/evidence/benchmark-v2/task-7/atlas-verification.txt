@@ -1,0 +1,4 @@
+memory_missing_rationale_rejected=Memory query missing label_rationale object: medium_q_long_memory_aurora_retention_context
+memory_duplicate_ids_rejected=Medium long-memory fixture IDs must be unique; duplicate values: medium_mem_task_aurora_retention_snapshots (2x)
+code_missing_expected_path_rejected=Code query med_symbol_definition_rrf_merge in atlas-invalid expected path does not exist: src/does/not/exist.rs
+code_sentinel_nonempty_labels_rejected=Code query med_deleted_symbol_expectation_get_index_status in atlas-invalid is a negative/deleted/renamed sentinel and must keep empty expected_paths/expected_symbols

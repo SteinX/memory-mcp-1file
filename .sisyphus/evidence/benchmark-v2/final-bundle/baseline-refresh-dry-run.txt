@@ -1,0 +1,48 @@
+# Baseline refresh dry-run (non-canonical path)
+# UTC: 2026-04-28T12:35:37.062717Z
+
+$ python3 evals/memory_retrieval_benchmark.py --tier small --refresh-baseline --refresh-reason t12-final-bundle-dry-run-non-canonical --output-json .sisyphus/evidence/benchmark-v2/final-bundle/memory-refresh-dry-run.json --output-md .sisyphus/evidence/benchmark-v2/final-bundle/memory-refresh-dry-run.md
+{
+  "output_json": ".sisyphus/evidence/benchmark-v2/final-bundle/memory-refresh-dry-run.json",
+  "output_md": ".sisyphus/evidence/benchmark-v2/final-bundle/memory-refresh-dry-run.md",
+  "query_count": 7,
+  "ran_queries": 7,
+  "blocker_count": 0,
+  "observed_reason_codes": [],
+  "baseline_refresh": {
+    "schema_version": "2.0",
+    "fixture_tier": "small",
+    "baseline_version": "v2-initial",
+    "model": "e5_small",
+    "command": "python3 evals/memory_retrieval_benchmark.py --tier small --refresh-baseline --refresh-reason t12-final-bundle-dry-run-non-canonical --output-json .sisyphus/evidence/benchmark-v2/final-bundle/memory-refresh-dry-run.json --output-md .sisyphus/evidence/benchmark-v2/final-bundle/memory-refresh-dry-run.md",
+    "refresh_reason": "t12-final-bundle-dry-run-non-canonical",
+    "refresh_mode": true,
+    "refresh_requested": true,
+    "canonical_target_requested": false,
+    "canonical_target_written": false,
+    "output_json": ".sisyphus/evidence/benchmark-v2/final-bundle/memory-refresh-dry-run.json",
+    "output_md": ".sisyphus/evidence/benchmark-v2/final-bundle/memory-refresh-dry-run.md",
+    "refresh_timestamp_utc": "2026-04-28T12:35:37.034930Z",
+    "git_commit": "99ac9f7f3d83e89ef434df3c14bf70488dea95aa"
+  }
+}
+
+[exit_code] 0
+
+[before]
+{
+  "canonical_json_exists": true,
+  "canonical_md_exists": true,
+  "canonical_json_sha256": "d96d8832dd2ba13b77dedd31e8149bbae44f631c75ee9e6fd2891450491a58dc",
+  "canonical_md_sha256": "8078c48ae13f86dd94d1f0bfc16bf6adfc6f8f02c8c8f4966d130fefd27a580d"
+}
+
+[after]
+{
+  "canonical_json_exists": true,
+  "canonical_md_exists": true,
+  "canonical_json_sha256": "d96d8832dd2ba13b77dedd31e8149bbae44f631c75ee9e6fd2891450491a58dc",
+  "canonical_md_sha256": "8078c48ae13f86dd94d1f0bfc16bf6adfc6f8f02c8c8f4966d130fefd27a580d"
+}
+
+[canonical_mutated] False

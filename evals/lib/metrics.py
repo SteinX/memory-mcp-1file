@@ -293,10 +293,106 @@ def write_json_report(
     stderr_tail: Sequence[Any] | None = None,
     environment: Mapping[str, Any] | None = None,
 ) -> None:
+    manifest_mapping = manifest if isinstance(manifest, Mapping) else {}
+    threshold_policy_raw = manifest_mapping.get("threshold_policy")
+    threshold_policy = None
+    if isinstance(threshold_policy_raw, str):
+        threshold_policy = threshold_policy_raw
+    elif isinstance(threshold_policy_raw, Mapping):
+        threshold_policy = str(threshold_policy_raw.get("name") or "") or None
+
+    threshold_eval = aggregate_metrics_value.get("threshold_evaluation") if isinstance(aggregate_metrics_value, Mapping) else None
+    threshold_status = "deferred"
+    threshold_status_reason = "threshold evaluation not provided by benchmark harness"
+    if isinstance(threshold_eval, Mapping):
+        status_value = threshold_eval.get("status")
+        if isinstance(status_value, str) and status_value:
+            threshold_status = status_value
+        reason_value = threshold_eval.get("reason")
+        if isinstance(reason_value, str) and reason_value:
+            threshold_status_reason = reason_value
+
+    failure_buckets: dict[str, int] = {}
+    for row in per_query:
+        if not isinstance(row, Mapping):
+            continue
+        failure_type = row.get("failure_type")
+        if not isinstance(failure_type, str) or not failure_type:
+            continue
+        failure_buckets[failure_type] = int(failure_buckets.get(failure_type, 0)) + 1
+
+    reason_codes = aggregate_metrics_value.get("observed_summary_partial_reason_codes") if isinstance(aggregate_metrics_value, Mapping) else []
+    if not isinstance(reason_codes, list):
+        reason_codes = []
+    reason_code_classification = aggregate_metrics_value.get("reason_code_classification") if isinstance(aggregate_metrics_value, Mapping) else {}
+    if not isinstance(reason_code_classification, Mapping):
+        reason_code_classification = {}
+    readiness_fallback = aggregate_metrics_value.get("readiness_fallback") if isinstance(aggregate_metrics_value, Mapping) else None
+    if not isinstance(readiness_fallback, Mapping):
+        readiness_fallback = None
+
+    baseline_diff_summary = aggregate_metrics_value.get("baseline_diff_summary") if isinstance(aggregate_metrics_value, Mapping) else None
+    if not isinstance(baseline_diff_summary, Mapping):
+        baseline_diff_summary = {
+            "status": "deferred",
+            "reason": "baseline diff summary is produced by explicit baseline-diff workflow",
+        }
+
+    metric_summary_keys = (
+        "query_count",
+        "hit_rate",
+        "mrr",
+        "precision_at_5",
+        "precision_at_10",
+        "recall_at_5",
+        "recall_at_10",
+        "ndcg_at_5",
+        "ndcg_at_10",
+        "mean_latency_ms",
+        "max_latency_ms",
+        "p95_latency_ms",
+        "blocker_count",
+        "positive_query_count",
+        "positive_hit_rate",
+        "positive_mean_mrr",
+        "positive_mean_recall_at_5",
+        "positive_mean_ndcg_at_5",
+        "positive_mean_precision_at_5",
+        "runtime_minutes",
+    )
+    metric_summary = {
+        key: aggregate_metrics_value.get(key)
+        for key in metric_summary_keys
+        if key in aggregate_metrics_value
+    }
+
+    deterministic_local_metadata = {
+        "threshold_policy_enforcement": "local-only",
+        "determinism_policy": manifest_mapping.get("determinism_policy"),
+        "runtime_target": manifest_mapping.get("runtime_target"),
+    }
+
     payload = {
         "generated_at_utc": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         "benchmark_name": benchmark_name,
         "manifest": manifest,
+        "schema_version": manifest_mapping.get("schema_version"),
+        "fixture_tier": manifest_mapping.get("fixture_tier"),
+        "baseline_version": manifest_mapping.get("baseline_version"),
+        "threshold_policy": threshold_policy,
+        "threshold_status": threshold_status,
+        "readiness_summary": {
+            "taxonomy": {
+                "reason_codes": sorted({str(code) for code in reason_codes if isinstance(code, str) and code}),
+                "reason_code_classification": dict(reason_code_classification),
+            },
+            "readiness_fallback": dict(readiness_fallback) if readiness_fallback else None,
+            "threshold_status_reason": threshold_status_reason,
+        },
+        "failure_buckets": dict(sorted(failure_buckets.items())),
+        "baseline_diff_summary": dict(baseline_diff_summary),
+        "metric_summary": metric_summary,
+        "deterministic_local_metadata": deterministic_local_metadata,
         "aggregate_metrics": dict(aggregate_metrics_value),
         "per_query": list(per_query),
         "warnings": list(warnings or []),
@@ -334,6 +430,101 @@ def write_markdown_report(
     blockers: Sequence[Any] | None = None,
 ) -> None:
     lines: list[str] = [f"# {title}"]
+    manifest_mapping = manifest if isinstance(manifest, Mapping) else {}
+    threshold_policy_raw = manifest_mapping.get("threshold_policy")
+    threshold_policy = None
+    if isinstance(threshold_policy_raw, str):
+        threshold_policy = threshold_policy_raw
+    elif isinstance(threshold_policy_raw, Mapping):
+        threshold_policy = str(threshold_policy_raw.get("name") or "") or None
+
+    threshold_eval = aggregate_metrics_value.get("threshold_evaluation") if isinstance(aggregate_metrics_value, Mapping) else None
+    threshold_status = "deferred"
+    threshold_status_reason = "threshold evaluation not provided by benchmark harness"
+    if isinstance(threshold_eval, Mapping):
+        status_value = threshold_eval.get("status")
+        if isinstance(status_value, str) and status_value:
+            threshold_status = status_value
+        reason_value = threshold_eval.get("reason")
+        if isinstance(reason_value, str) and reason_value:
+            threshold_status_reason = reason_value
+
+    failure_buckets: dict[str, int] = {}
+    for row in per_query:
+        if not isinstance(row, Mapping):
+            continue
+        failure_type = row.get("failure_type")
+        if not isinstance(failure_type, str) or not failure_type:
+            continue
+        failure_buckets[failure_type] = int(failure_buckets.get(failure_type, 0)) + 1
+
+    baseline_diff_summary = aggregate_metrics_value.get("baseline_diff_summary") if isinstance(aggregate_metrics_value, Mapping) else None
+    if not isinstance(baseline_diff_summary, Mapping):
+        baseline_diff_summary = {
+            "status": "deferred",
+            "reason": "baseline diff summary is produced by explicit baseline-diff workflow",
+        }
+
+    lines.extend(["", "## Benchmark V2 summary", "", "| Field | Value |", "|---|---|"])
+    lines.append(f"| schema_version | `{_format_value(manifest_mapping.get('schema_version'))}` |")
+    lines.append(f"| fixture_tier | `{_format_value(manifest_mapping.get('fixture_tier'))}` |")
+    lines.append(f"| baseline_version | `{_format_value(manifest_mapping.get('baseline_version'))}` |")
+    lines.append(f"| threshold_policy | `{_format_value(threshold_policy)}` |")
+    lines.append(f"| threshold_status | `{_format_value(threshold_status)}` |")
+    lines.append(f"| threshold_status_reason | `{_format_value(threshold_status_reason)}` |")
+
+    lines.extend(["", "### Readiness summary", ""])
+    reason_codes = aggregate_metrics_value.get("observed_summary_partial_reason_codes")
+    lines.append(f"- reason_codes: `{_format_value(reason_codes)}`")
+    reason_code_classification = aggregate_metrics_value.get("reason_code_classification")
+    lines.append(f"- reason_code_classification: `{_format_value(reason_code_classification)}`")
+    readiness_fallback = aggregate_metrics_value.get("readiness_fallback")
+    lines.append(f"- readiness_fallback: `{_format_value(readiness_fallback)}`")
+
+    lines.extend(["", "### Failure buckets", "", "| Failure type | Count |", "|---|---:|"])
+    if failure_buckets:
+        for failure_type in sorted(failure_buckets):
+            lines.append(f"| {failure_type} | {_format_value(failure_buckets[failure_type])} |")
+    else:
+        lines.append("| none | 0 |")
+
+    lines.extend(["", "### Baseline diff summary", ""])
+    lines.append(f"- status: `{_format_value(baseline_diff_summary.get('status'))}`")
+    lines.append(f"- reason: `{_format_value(baseline_diff_summary.get('reason'))}`")
+    if baseline_diff_summary.get("comparison") is not None:
+        lines.append(f"- comparison: `{_format_value(baseline_diff_summary.get('comparison'))}`")
+
+    lines.extend(["", "### Metric summary", "", "| Metric | Value |", "|---|---:|"])
+    for key in (
+        "query_count",
+        "hit_rate",
+        "mrr",
+        "precision_at_5",
+        "precision_at_10",
+        "recall_at_5",
+        "recall_at_10",
+        "ndcg_at_5",
+        "ndcg_at_10",
+        "mean_latency_ms",
+        "max_latency_ms",
+        "p95_latency_ms",
+        "blocker_count",
+        "positive_query_count",
+        "positive_hit_rate",
+        "positive_mean_mrr",
+        "positive_mean_recall_at_5",
+        "positive_mean_ndcg_at_5",
+        "positive_mean_precision_at_5",
+        "runtime_minutes",
+    ):
+        if key in aggregate_metrics_value:
+            lines.append(f"| {key} | {_format_value(aggregate_metrics_value.get(key))} |")
+
+    lines.extend(["", "### Deterministic / local-only metadata", ""])
+    lines.append("- threshold_policy_enforcement: `local-only`")
+    lines.append(f"- determinism_policy: `{_format_value(manifest_mapping.get('determinism_policy'))}`")
+    lines.append(f"- runtime_target: `{_format_value(manifest_mapping.get('runtime_target'))}`")
+
     command_used = None
     if manifest and isinstance(manifest.get("command_selected"), list) and manifest.get("command_selected"):
         command_used = " ".join(str(part) for part in manifest["command_selected"])
@@ -438,6 +629,8 @@ def write_markdown_report(
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 EVAL_EVIDENCE_DIR = REPO_ROOT / ".sisyphus" / "evidence" / "evals"
+V2_EVIDENCE_DIR = REPO_ROOT / ".sisyphus" / "evidence" / "benchmark-v2"
+V2_BASELINE_DIFF_DIR = V2_EVIDENCE_DIR / "baseline-diff"
 LEGACY_CODE_BASELINE_JSON = REPO_ROOT / ".sisyphus" / "evidence" / "task-2-recall-code-baseline.json"
 
 
@@ -470,6 +663,25 @@ def _numeric_delta(before: Any, after: Any) -> float | None:
     return None
 
 
+_HIGHER_IS_BETTER_METRICS = {
+    "hit_rate",
+    "mrr",
+    "precision_at_5",
+    "precision_at_10",
+    "recall_at_5",
+    "recall_at_10",
+    "ndcg_at_5",
+    "ndcg_at_10",
+}
+
+_LOWER_IS_BETTER_METRICS = {
+    "mean_latency_ms",
+    "max_latency_ms",
+    "p95_latency_ms",
+    "blocker_count",
+}
+
+
 def _metric_delta(payload_before: Mapping[str, Any] | None, payload_after: Mapping[str, Any] | None, key: str) -> dict[str, Any]:
     before = _aggregate_value(payload_before, key)
     after = _aggregate_value(payload_after, key)
@@ -477,6 +689,83 @@ def _metric_delta(payload_before: Mapping[str, Any] | None, payload_after: Mappi
         "before": before,
         "after": after,
         "delta": _numeric_delta(before, after),
+    }
+
+
+def _classify_metric_change(metric_key: str, triplet: Mapping[str, Any]) -> str:
+    before = triplet.get("before")
+    after = triplet.get("after")
+    delta = triplet.get("delta")
+    if before is None and after is None:
+        return "missing"
+    if before is None:
+        return "missing_before"
+    if after is None:
+        return "missing_after"
+    if not isinstance(delta, (int, float)):
+        return "changed"
+    if abs(float(delta)) <= 1e-12:
+        return "unchanged"
+    if metric_key in _HIGHER_IS_BETTER_METRICS:
+        return "improved" if float(delta) > 0 else "regressed"
+    if metric_key in _LOWER_IS_BETTER_METRICS:
+        return "improved" if float(delta) < 0 else "regressed"
+    return "changed"
+
+
+def _baseline_diff_summary(metrics: Mapping[str, Any]) -> dict[str, Any]:
+    tracked_metrics = (
+        "hit_rate",
+        "mrr",
+        "precision_at_5",
+        "precision_at_10",
+        "recall_at_5",
+        "recall_at_10",
+        "ndcg_at_5",
+        "ndcg_at_10",
+        "mean_latency_ms",
+        "max_latency_ms",
+        "p95_latency_ms",
+        "blocker_count",
+    )
+    status_by_metric: dict[str, str] = {}
+    improved: list[str] = []
+    regressed: list[str] = []
+    changed: list[str] = []
+    unchanged: list[str] = []
+    missing_before: list[str] = []
+    missing_after: list[str] = []
+    for metric_key in tracked_metrics:
+        triplet = metrics.get(metric_key)
+        if not isinstance(triplet, Mapping):
+            continue
+        status = _classify_metric_change(metric_key, triplet)
+        status_by_metric[metric_key] = status
+        if status == "improved":
+            improved.append(metric_key)
+            changed.append(metric_key)
+        elif status == "regressed":
+            regressed.append(metric_key)
+            changed.append(metric_key)
+        elif status == "changed":
+            changed.append(metric_key)
+        elif status == "unchanged":
+            unchanged.append(metric_key)
+        elif status == "missing_before":
+            missing_before.append(metric_key)
+        elif status == "missing_after":
+            missing_after.append(metric_key)
+
+    return {
+        "changed": sorted(changed),
+        "missing": {
+            "before": sorted(missing_before),
+            "after": sorted(missing_after),
+        },
+        "improved": sorted(improved),
+        "regressed": sorted(regressed),
+        "unchanged": sorted(unchanged),
+        "metric_status": status_by_metric,
     }
 
 
@@ -568,6 +857,8 @@ def _build_baseline_diff(
         },
     }
 
+    comparison = _baseline_diff_summary(metrics)
+
     return {
         "generated_at_utc": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         "benchmark_name": benchmark_name,
@@ -578,6 +869,7 @@ def _build_baseline_diff(
             "after_available": after_available,
         },
         "metrics": metrics,
+        "comparison": comparison,
         "notes": [
             "Diff artifacts are evidence/reporting only.",
             "These deltas are informational and are not used as CI regression gates.",
@@ -594,6 +886,7 @@ def write_baseline_diff_json(path: str | Path, diff_payload: Mapping[str, Any]) 
 def write_baseline_diff_markdown(path: str | Path, title: str, diff_payload: Mapping[str, Any]) -> None:
     baseline_pair = diff_payload.get("baseline_pair") if isinstance(diff_payload, Mapping) else {}
     metrics = diff_payload.get("metrics") if isinstance(diff_payload, Mapping) else {}
+    comparison = diff_payload.get("comparison") if isinstance(diff_payload, Mapping) else {}
     lines: list[str] = [f"# {title}"]
 
     lines.extend(
@@ -648,6 +941,15 @@ def write_baseline_diff_markdown(path: str | Path, title: str, diff_payload: Map
     lines.append(f"- before: `{_format_value((blockers or {}).get('before'))}`")
     lines.append(f"- after: `{_format_value((blockers or {}).get('after'))}`")
     lines.append(f"- delta: `{_format_value((blockers or {}).get('delta'))}`")
+
+    lines.extend(["", "## Baseline change summary", ""])
+    lines.append(f"- changed: `{_format_value((comparison or {}).get('changed'))}`")
+    missing = (comparison or {}).get("missing") if isinstance(comparison, Mapping) else {}
+    lines.append(f"- missing_before: `{_format_value((missing or {}).get('before'))}`")
+    lines.append(f"- missing_after: `{_format_value((missing or {}).get('after'))}`")
+    lines.append(f"- improved: `{_format_value((comparison or {}).get('improved'))}`")
+    lines.append(f"- regressed: `{_format_value((comparison or {}).get('regressed'))}`")
+    lines.append(f"- unchanged: `{_format_value((comparison or {}).get('unchanged'))}`")
 
     lines.extend(
         [
@@ -735,18 +1037,29 @@ def _self_test() -> None:
     assert negative_row["negative"] is True
 
     per_query = [
-        compute_query_metrics(["x", "y"], ["y"], latency_ms=10.0),
-        compute_query_metrics(["a", "b"], [], negative=True, query_type="negative_no_match", latency_ms=20.0),
+        {**compute_query_metrics(["x", "y"], ["y"], latency_ms=10.0), "failure_type": "none"},
+        {
+            **compute_query_metrics(["a", "b"], [], negative=True, query_type="negative_no_match", latency_ms=20.0),
+            "failure_type": "true_miss",
+        },
+        {
+            **compute_query_metrics([], ["z"], latency_ms=30.0),
+            "failure_type": "empty_results",
+        },
+        {
+            **compute_query_metrics([], [], negative=True, query_type="negative_no_match", latency_ms=40.0),
+            "failure_type": "expected_no_match",
+        },
     ]
     aggregate = aggregate_metrics(per_query)
-    assert aggregate["query_count"] == 2
-    assert aggregate["precision_at_5"] == 0.1
-    assert aggregate["recall_at_5"] == 0.5
-    assert round(aggregate["ndcg_at_5"], 12) == round((0.6309297535714575 + 0.0) / 2.0, 12)
-    assert aggregate["mrr"] == 0.25
-    assert aggregate["mean_latency_ms"] == 15.0
-    assert aggregate["max_latency_ms"] == 20.0
-    assert aggregate["p95_latency_ms"] == 20.0
+    assert aggregate["query_count"] == 4
+    assert aggregate["precision_at_5"] == 0.05
+    assert aggregate["recall_at_5"] == 0.25
+    assert round(aggregate["ndcg_at_5"], 12) == round((0.6309297535714575 + 0.0 + 0.0 + 0.0) / 4.0, 12)
+    assert aggregate["mrr"] == 0.125
+    assert aggregate["mean_latency_ms"] == 25.0
+    assert aggregate["max_latency_ms"] == 40.0
+    assert aggregate["p95_latency_ms"] == 40.0
     assert aggregate["mean_expected_rank"] == 2.0
 
     sample_manifest = {"command_selected": ["memory-mcp", "--stdio"]}
@@ -770,6 +1083,18 @@ def _self_test() -> None:
     assert report["stderr_tail"] == []
     assert report["manifest"] == sample_manifest
     assert report["environment"] == sample_environment
+    assert "threshold_status" in report
+    assert "readiness_summary" in report
+    assert "failure_buckets" in report
+    assert report["failure_buckets"] == {
+        "empty_results": 1,
+        "expected_no_match": 1,
+        "none": 1,
+        "true_miss": 1,
+    }
+    assert "baseline_diff_summary" in report
+    assert "metric_summary" in report
+    assert "deterministic_local_metadata" in report
 
     markdown_path = payload_path.with_suffix(".md")
     write_markdown_report(
@@ -786,6 +1111,10 @@ def _self_test() -> None:
     markdown = markdown_path.read_text(encoding="utf-8")
     assert "## Run context" in markdown
     assert "Command used:" in markdown
+    assert "## Benchmark V2 summary" in markdown
+    assert "### Failure buckets" in markdown
+    assert "| expected_no_match | 1 |" in markdown
+    assert "| true_miss | 1 |" in markdown
 
     diff_payload = _build_baseline_diff(
         benchmark_name="self_test",
@@ -795,6 +1124,8 @@ def _self_test() -> None:
     assert diff_payload["baseline_pair"]["before_available"] is False
     assert diff_payload["baseline_pair"]["after_available"] is True
     assert "hit_rate" in diff_payload["metrics"]
+    assert "comparison" in diff_payload
+    assert {"changed", "missing", "improved", "regressed", "unchanged"}.issubset(set(diff_payload["comparison"]))
 
     diff_json = payload_path.with_name("metrics-self-test-diff.json")
     diff_md = payload_path.with_name("metrics-self-test-diff.md")
@@ -811,12 +1142,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--baseline-diff", action="store_true", help="Generate baseline diff JSON/Markdown artifacts for memory and code benchmarks.")
     parser.add_argument("--memory-before", type=Path, default=None, help="Path to memory benchmark baseline BEFORE JSON.")
     parser.add_argument("--memory-after", type=Path, default=EVAL_EVIDENCE_DIR / "memory-retrieval-baseline.json", help="Path to memory benchmark baseline AFTER JSON.")
-    parser.add_argument("--memory-diff-json", type=Path, default=EVAL_EVIDENCE_DIR / "memory-retrieval-baseline-diff.json", help="Output path for memory baseline diff JSON.")
-    parser.add_argument("--memory-diff-md", type=Path, default=EVAL_EVIDENCE_DIR / "memory-retrieval-baseline-diff.md", help="Output path for memory baseline diff Markdown.")
+    parser.add_argument("--memory-diff-json", type=Path, default=V2_BASELINE_DIFF_DIR / "memory-retrieval-baseline-diff.json", help="Output path for memory baseline diff JSON.")
+    parser.add_argument("--memory-diff-md", type=Path, default=V2_BASELINE_DIFF_DIR / "memory-retrieval-baseline-diff.md", help="Output path for memory baseline diff Markdown.")
     parser.add_argument("--code-before", type=Path, default=LEGACY_CODE_BASELINE_JSON, help="Path to code benchmark baseline BEFORE JSON.")
     parser.add_argument("--code-after", type=Path, default=EVAL_EVIDENCE_DIR / "code-retrieval-baseline.json", help="Path to code benchmark baseline AFTER JSON.")
-    parser.add_argument("--code-diff-json", type=Path, default=EVAL_EVIDENCE_DIR / "code-retrieval-baseline-diff.json", help="Output path for code baseline diff JSON.")
-    parser.add_argument("--code-diff-md", type=Path, default=EVAL_EVIDENCE_DIR / "code-retrieval-baseline-diff.md", help="Output path for code baseline diff Markdown.")
+    parser.add_argument("--code-diff-json", type=Path, default=V2_BASELINE_DIFF_DIR / "code-retrieval-baseline-diff.json", help="Output path for code baseline diff JSON.")
+    parser.add_argument("--code-diff-md", type=Path, default=V2_BASELINE_DIFF_DIR / "code-retrieval-baseline-diff.md", help="Output path for code baseline diff Markdown.")
     args = parser.parse_args(list(argv) if argv is not None else None)
     if args.self_test:
         _self_test()

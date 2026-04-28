@@ -1,0 +1,43 @@
+Task: T2 baseline refresh policy
+Scenario: Explicit refresh records required metadata against a temporary output path
+Timestamp (UTC): 2026-04-28T05:02:43Z
+
+Command:
+  python3 evals/memory_retrieval_benchmark.py \
+    --refresh-baseline \
+    --refresh-reason benchmark-v2-contract-test \
+    --baseline-version v2-contract-test \
+    --fixture-tier small \
+    --output-json .sisyphus/evidence/benchmark-v2/task-2-refresh-temp.json \
+    --output-md .sisyphus/evidence/benchmark-v2/task-2-refresh-temp.md
+
+Canonical baseline non-mutation check:
+  canonical_path=.sisyphus/evidence/evals/memory-retrieval-baseline.json
+  sha256_before=d96d8832dd2ba13b77dedd31e8149bbae44f631c75ee9e6fd2891450491a58dc
+  sha256_after=d96d8832dd2ba13b77dedd31e8149bbae44f631c75ee9e6fd2891450491a58dc
+  canonical_unchanged=true
+
+Refresh metadata observed in generated temp report:
+  schema_version=2.0
+  baseline_version=v2-contract-test
+  fixture_tier=small
+  model=e5_small
+  command=python3 evals/memory_retrieval_benchmark.py --refresh-baseline --refresh-reason benchmark-v2-contract-test --baseline-version v2-contract-test --fixture-tier small --output-json /Users/xiayiming1/Documents/Workspace/memory-mcp-1file/.sisyphus/evidence/benchmark-v2/task-2-refresh-temp.json --output-md /Users/xiayiming1/Documents/Workspace/memory-mcp-1file/.sisyphus/evidence/benchmark-v2/task-2-refresh-temp.md
+  refresh_reason=benchmark-v2-contract-test
+  refresh_mode=true
+  refresh_requested=true
+  canonical_target_requested=false
+  canonical_target_written=false
+  refresh_timestamp_utc=2026-04-28T05:02:43.948024Z
+  git_commit=99ac9f7f3d83e89ef434df3c14bf70488dea95aa
+
+Diff contract check after regeneration (`python3 -m evals.lib.metrics --baseline-diff`):
+  memory_diff_has_comparison=true
+  code_diff_has_comparison=true
+  comparison_keys=[changed, missing, improved, regressed, unchanged, metric_status]
+
+Run result summary:
+  exit_code=0
+
+Verdict:
+  PASS - explicit refresh metadata recorded with required fields and canonical baseline remained unchanged during temp-path refresh.

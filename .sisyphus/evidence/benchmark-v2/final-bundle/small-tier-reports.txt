@@ -1,0 +1,45 @@
+# Benchmark V2 T12 small-tier runs
+# UTC: 2026-04-28T12:26:02.758014Z
+
+$ python3 evals/memory_retrieval_benchmark.py --tier small --output-json .sisyphus/evidence/benchmark-v2/final-bundle/memory-small.json --output-md .sisyphus/evidence/benchmark-v2/final-bundle/memory-small.md
+{
+  "output_json": ".sisyphus/evidence/benchmark-v2/final-bundle/memory-small.json",
+  "output_md": ".sisyphus/evidence/benchmark-v2/final-bundle/memory-small.md",
+  "query_count": 7,
+  "ran_queries": 7,
+  "blocker_count": 0,
+  "observed_reason_codes": [],
+  "baseline_refresh": {
+    "schema_version": "2.0",
+    "fixture_tier": "small",
+    "baseline_version": "v2-initial",
+    "model": "e5_small",
+    "command": "python3 evals/memory_retrieval_benchmark.py --tier small --output-json .sisyphus/evidence/benchmark-v2/final-bundle/memory-small.json --output-md .sisyphus/evidence/benchmark-v2/final-bundle/memory-small.md",
+    "refresh_reason": null,
+    "refresh_mode": false,
+    "refresh_requested": false,
+    "canonical_target_requested": false,
+    "canonical_target_written": false,
+    "output_json": ".sisyphus/evidence/benchmark-v2/final-bundle/memory-small.json",
+    "output_md": ".sisyphus/evidence/benchmark-v2/final-bundle/memory-small.md",
+    "refresh_timestamp_utc": null,
+    "git_commit": "99ac9f7f3d83e89ef434df3c14bf70488dea95aa"
+  }
+}
+
+[exit_code] 0
+
+$ python3 evals/code_retrieval_benchmark.py --tier small --output-json .sisyphus/evidence/benchmark-v2/final-bundle/code-small.json --output-md .sisyphus/evidence/benchmark-v2/final-bundle/code-small.md
+{
+  "output_json": ".sisyphus/evidence/benchmark-v2/final-bundle/code-small.json",
+  "output_md": ".sisyphus/evidence/benchmark-v2/final-bundle/code-small.md",
+  "query_count": 15,
+  "ran_queries": 15,
+  "blocker_count": 0,
+  "observed_reason_codes": [
+    "partial"
+  ]
+}
+
+[exit_code] 0
+

@@ -1,0 +1,6 @@
+# T0 no behavior change evidence
+
+## git diff --name-only
+evals/README.md
+
+## forbidden-path diff check

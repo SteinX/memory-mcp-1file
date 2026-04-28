@@ -1,0 +1,10 @@
+{
+  "output_json": ".sisyphus/evidence/benchmark-v2/final-wave/f3/code-small.json",
+  "output_md": ".sisyphus/evidence/benchmark-v2/final-wave/f3/code-small.md",
+  "query_count": 15,
+  "ran_queries": 15,
+  "blocker_count": 0,
+  "observed_reason_codes": [
+    "partial"
+  ]
+}

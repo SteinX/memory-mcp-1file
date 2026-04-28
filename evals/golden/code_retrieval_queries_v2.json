@@ -1,0 +1,560 @@
+{
+  "schema_version": "2.0",
+  "baseline_version": "v2-initial",
+  "threshold_policy": {
+    "name": "local-v2-threshold-policy",
+    "enforcement": "local-only"
+  },
+  "runtime_target": {
+    "small": {
+      "target_minutes": "5-10",
+      "required_by_default": true,
+      "optional_policy": "small tier default"
+    },
+    "medium": {
+      "target_minutes": "15-30",
+      "required_by_default": false,
+      "optional_policy": "explicit medium validation run"
+    },
+    "stress": {
+      "target_minutes": "45-90+",
+      "required_by_default": false,
+      "optional_policy": "manual-only stress execution"
+    }
+  },
+  "determinism_policy": {
+    "name": "stable_fixture_order+stable_tie_break+stable_report_order+tolerance_1e-9_1e-6"
+  },
+  "legacy_bridge": {
+    "legacy_query_source": ".sisyphus/evidence/task-2-recall-code-baseline.json",
+    "usage": "legacy input only",
+    "notes": "Legacy query_set remains bridge/backfill input; canonical V2 ownership is this evals/golden file."
+  },
+  "tiers": {
+    "small": {
+      "fixture_tier": "small",
+      "description": "Canonical small-tier V2 code retrieval queries migrated from task-2 baseline.",
+      "queries": [
+        {
+          "query_id": "nl_rrf_merge",
+          "query_type": "natural_language",
+          "mode": "hybrid",
+          "limit": 10,
+          "query": "find the RRF merge function",
+          "expected_paths": [
+            "src/graph/rrf.rs"
+          ],
+          "expected_symbols": [
+            "rrf_merge"
+          ],
+          "rationale": "Direct symbol-definition retrieval for the RRF merge kernel should anchor on src/graph/rrf.rs."
+        },
+        {
+          "query_id": "nl_ppr_kernel",
+          "query_type": "natural_language",
+          "mode": "hybrid",
+          "limit": 10,
+          "query": "where is personalized page rank run for graph traversal",
+          "expected_paths": [
+            "src/graph/ppr.rs"
+          ],
+          "expected_symbols": [
+            "run_ppr",
+            "personalized_page_rank"
+          ],
+          "rationale": "Caller/callee-adjacent ranking should return the PPR implementation file containing both run_ppr and personalized_page_rank."
+        },
+        {
+          "query_id": "nl_code_search_contract",
+          "query_type": "natural_language",
+          "mode": "hybrid",
+          "limit": 10,
+          "query": "code search contract metadata lifecycle status",
+          "expected_paths": [
+            "src/server/logic/code/search.rs"
+          ],
+          "expected_symbols": [
+            "code_search_contract_json",
+            "lifecycle_view_from_status"
+          ],
+          "rationale": "Contract-shaping behavior lives in code search logic, so this query should target src/server/logic/code/search.rs."
+        },
+        {
+          "query_id": "nl_recall_code_hybrid",
+          "query_type": "natural_language",
+          "mode": "hybrid",
+          "limit": 10,
+          "query": "hybrid code search vector BM25 symbol graph PageRank fusion",
+          "expected_paths": [
+            "src/server/logic/code/search.rs",
+            "src/graph/rrf.rs",
+            "src/graph/ppr.rs"
+          ],
+          "expected_symbols": [
+            "recall_code"
+          ],
+          "rationale": "Hybrid orchestration should rank recall_code logic plus its graph-fusion kernels; drift is visible if graph files disappear from expected context."
+        },
+        {
+          "query_id": "nl_index_spawn_blocking",
+          "query_type": "natural_language",
+          "mode": "hybrid",
+          "limit": 10,
+          "query": "index project scans directory using spawn blocking and batches chunks",
+          "expected_paths": [
+            "src/codebase/indexer.rs"
+          ],
+          "expected_symbols": [
+            "index_project",
+            "do_index_project"
+          ],
+          "rationale": "Index lifecycle and spawn_blocking workflow are implemented in src/codebase/indexer.rs."
+        },
+        {
+          "query_id": "nl_handler_mode_dispatch",
+          "query_type": "natural_language",
+          "mode": "hybrid",
+          "limit": 10,
+          "query": "handler dispatches recall_code vector mode to search_code",
+          "expected_paths": [
+            "src/server/handler.rs"
+          ],
+          "expected_symbols": [
+            "recall_code",
+            "search_code"
+          ],
+          "rationale": "Tool-mode dispatch logic is in MCP handler code; this scenario catches regressions in vector-vs-hybrid routing."
+        },
+        {
+          "query_id": "nl_symbol_exact_channel",
+          "query_type": "natural_language",
+          "mode": "hybrid",
+          "limit": 10,
+          "query": "exact symbol channel maps matched symbols back to chunks",
+          "expected_paths": [
+            "src/server/logic/code/search.rs"
+          ],
+          "expected_symbols": [
+            "symbol_exactness_score",
+            "symbol_chunk_overlap_bonus"
+          ],
+          "rationale": "Exact symbol-to-chunk mapping should resolve to the scoring functions in code search logic."
+        },
+        {
+          "query_id": "nl_hub_dampening",
+          "query_type": "natural_language",
+          "mode": "hybrid",
+          "limit": 10,
+          "query": "hub dampening for personalized pagerank graph scores",
+          "expected_paths": [
+            "src/graph/ppr.rs"
+          ],
+          "expected_symbols": [
+            "apply_hub_dampening"
+          ],
+          "rationale": "Graph dampening behavior is a direct symbol-definition case in src/graph/ppr.rs."
+        },
+        {
+          "query_id": "code_rrf_merge_symbol",
+          "query_type": "codeish_symbol",
+          "mode": "hybrid",
+          "limit": 10,
+          "query": "rrf_merge(vector_results, bm25_results, ppr_results)",
+          "expected_paths": [
+            "src/graph/rrf.rs"
+          ],
+          "expected_symbols": [
+            "rrf_merge"
+          ],
+          "rationale": "Code-ish signature query should bind to the exact rrf_merge symbol definition."
+        },
+        {
+          "query_id": "code_run_ppr",
+          "query_type": "codeish_symbol",
+          "mode": "hybrid",
+          "limit": 10,
+          "query": "run_ppr(&graph, &seed_nodes)",
+          "expected_paths": [
+            "src/graph/ppr.rs"
+          ],
+          "expected_symbols": [
+            "run_ppr"
+          ],
+          "rationale": "Code-ish symbol lookup should return run_ppr implementation in ppr graph module."
+        },
+        {
+          "query_id": "code_personalized_page_rank",
+          "query_type": "codeish_symbol",
+          "mode": "hybrid",
+          "limit": 10,
+          "query": "personalized_page_rank graph seed_nodes damping tolerance",
+          "expected_paths": [
+            "src/graph/ppr.rs"
+          ],
+          "expected_symbols": [
+            "personalized_page_rank"
+          ],
+          "rationale": "Personalized PageRank algorithm query maps to ppr.rs symbol definition and parameters."
+        },
+        {
+          "query_id": "code_recall_code_fn",
+          "query_type": "codeish_symbol",
+          "mode": "hybrid",
+          "limit": 10,
+          "query": "pub async fn recall_code",
+          "expected_paths": [
+            "src/server/logic/code/search.rs",
+            "src/server/handler.rs"
+          ],
+          "expected_symbols": [
+            "recall_code"
+          ],
+          "rationale": "Drift-prone ambiguity check: recall_code exists in both handler wrapper and logic implementation, so both paths are valid."
+        },
+        {
+          "query_id": "code_index_project_fn",
+          "query_type": "codeish_symbol",
+          "mode": "hybrid",
+          "limit": 10,
+          "query": "pub async fn index_project(state Arc AppState project_path Path)",
+          "expected_paths": [
+            "src/codebase/indexer.rs"
+          ],
+          "expected_symbols": [
+            "index_project"
+          ],
+          "rationale": "Symbol-definition lookup for index_project should resolve to codebase indexer implementation."
+        },
+        {
+          "query_id": "negative_kubernetes_billing",
+          "query_type": "negative_no_match",
+          "mode": "hybrid",
+          "limit": 10,
+          "query": "find the Kubernetes YAML deployment for billing service",
+          "expected_paths": [],
+          "expected_symbols": [],
+          "rationale": "Fixture has no Kubernetes manifests, so this negative query should remain empty."
+        },
+        {
+          "query_id": "negative_react_checkout",
+          "query_type": "negative_no_match",
+          "mode": "hybrid",
+          "limit": 10,
+          "query": "React checkout button component with Stripe payment intent",
+          "expected_paths": [],
+          "expected_symbols": [],
+          "rationale": "Fixture has no React/Stripe code; this negative query is a lexical-noise guardrail."
+        }
+      ]
+    },
+    "medium": {
+      "fixture_tier": "medium",
+      "description": "Expanded code retrieval coverage for symbol definitions, caller/callee behavior, path-aware lookup, drift-prone renamed/deleted symbols, and mode disagreement.",
+      "queries": [
+        {
+          "query_id": "med_symbol_definition_rrf_merge",
+          "query_type": "codeish_symbol",
+          "mode": "hybrid",
+          "limit": 10,
+          "query": "pub fn rrf_merge",
+          "expected_paths": [
+            "src/graph/rrf.rs"
+          ],
+          "expected_symbols": [
+            "rrf_merge"
+          ],
+          "rationale": "Medium-tier symbol-definition anchor ensures rrf_merge remains discoverable despite neighboring graph functions."
+        },
+        {
+          "query_id": "med_symbol_definition_apply_hub_dampening",
+          "query_type": "codeish_symbol",
+          "mode": "hybrid",
+          "limit": 10,
+          "query": "apply_hub_dampening(scores, degrees)",
+          "expected_paths": [
+            "src/graph/ppr.rs"
+          ],
+          "expected_symbols": [
+            "apply_hub_dampening"
+          ],
+          "rationale": "Function-signature retrieval should isolate hub dampening implementation from other PPR helpers."
+        },
+        {
+          "query_id": "med_caller_handler_to_search_logic",
+          "query_type": "natural_language",
+          "mode": "hybrid",
+          "limit": 10,
+          "query": "where does handler recall_code call into search_code for vector mode",
+          "expected_paths": [
+            "src/server/handler.rs",
+            "src/server/logic/code/search.rs"
+          ],
+          "expected_symbols": [
+            "recall_code",
+            "search_code"
+          ],
+          "rationale": "Caller/callee relationship should surface both dispatch site (handler) and callee implementation (search logic)."
+        },
+        {
+          "query_id": "med_callee_recall_code_graph_kernels",
+          "query_type": "natural_language",
+          "mode": "hybrid",
+          "limit": 10,
+          "query": "recall_code uses run_ppr and rrf_merge graph kernels",
+          "expected_paths": [
+            "src/server/logic/code/search.rs",
+            "src/graph/ppr.rs",
+            "src/graph/rrf.rs"
+          ],
+          "expected_symbols": [
+            "recall_code",
+            "run_ppr",
+            "rrf_merge"
+          ],
+          "rationale": "Callee expansion from recall_code should include both graph-kernel dependencies used in hybrid ranking."
+        },
+        {
+          "query_id": "med_file_path_search_logic",
+          "query_type": "file_path",
+          "mode": "hybrid",
+          "limit": 10,
+          "query": "src/server/logic/code/search.rs",
+          "expected_paths": [
+            "src/server/logic/code/search.rs"
+          ],
+          "expected_symbols": [
+            "recall_code",
+            "search_code"
+          ],
+          "rationale": "File-path query should prioritize chunks from the exact path, validating path-aware retrieval behavior."
+        },
+        {
+          "query_id": "med_file_path_indexer",
+          "query_type": "file_path",
+          "mode": "hybrid",
+          "limit": 10,
+          "query": "src/codebase/indexer.rs",
+          "expected_paths": [
+            "src/codebase/indexer.rs"
+          ],
+          "expected_symbols": [
+            "index_project",
+            "do_index_project"
+          ],
+          "rationale": "Path-qualified query guards against cross-file leakage when indexer and search logic share indexing vocabulary."
+        },
+        {
+          "query_id": "med_similar_function_interference_recall_code",
+          "query_type": "similar_function_interference",
+          "mode": "hybrid",
+          "limit": 10,
+          "query": "pub async fn recall_code",
+          "expected_paths": [
+            "src/server/logic/code/search.rs",
+            "src/server/handler.rs"
+          ],
+          "expected_symbols": [
+            "recall_code"
+          ],
+          "rationale": "Similar-function interference case: two recall_code symbols should both be treated as valid to expose ranking drift over time."
+        },
+        {
+          "query_id": "med_similar_function_interference_index_project",
+          "query_type": "similar_function_interference",
+          "mode": "hybrid",
+          "limit": 10,
+          "query": "index project status update indexing started",
+          "expected_paths": [
+            "src/codebase/indexer.rs"
+          ],
+          "expected_symbols": [
+            "index_project",
+            "do_index_project"
+          ],
+          "rationale": "Interference check ensures indexer lifecycle functions outrank unrelated status mentions in other files."
+        },
+        {
+          "query_id": "med_deleted_symbol_expectation_get_index_status",
+          "query_type": "deleted_symbol_expectation",
+          "mode": "hybrid",
+          "limit": 10,
+          "query": "get_index_status",
+          "expected_paths": [],
+          "expected_symbols": [],
+          "rationale": "Drift-prone deleted-symbol sentinel: benchmark fixture no longer defines get_index_status in copied files, so non-empty hits indicate stale lexical bleed-through."
+        },
+        {
+          "query_id": "med_renamed_symbol_expectation_search_code_legacy",
+          "query_type": "renamed_symbol_expectation",
+          "mode": "hybrid",
+          "limit": 10,
+          "query": "search_code_contract_json",
+          "expected_paths": [],
+          "expected_symbols": [],
+          "rationale": "Renamed-symbol sentinel: legacy name search_code_contract_json should be absent after adoption of code_search_contract_json."
+        },
+        {
+          "query_id": "med_hybrid_vector_disagreement_hybrid_fusion",
+          "query_type": "hybrid_vector_disagreement",
+          "mode": "hybrid",
+          "limit": 10,
+          "query": "hybrid code search vector bm25 ppr rrf fusion",
+          "expected_paths": [
+            "src/server/logic/code/search.rs",
+            "src/graph/rrf.rs",
+            "src/graph/ppr.rs"
+          ],
+          "expected_symbols": [
+            "recall_code",
+            "rrf_merge",
+            "run_ppr"
+          ],
+          "rationale": "Hybrid mode should favor orchestration + graph kernels as a multi-file fusion context rather than single lexical best match."
+        },
+        {
+          "query_id": "med_hybrid_vector_disagreement_vector_dispatch",
+          "query_type": "hybrid_vector_disagreement",
+          "mode": "vector",
+          "limit": 10,
+          "query": "hybrid code search vector bm25 ppr rrf fusion",
+          "expected_paths": [
+            "src/server/logic/code/search.rs"
+          ],
+          "expected_symbols": [
+            "search_code"
+          ],
+          "rationale": "Vector-mode disagreement pair: when recall_code is forced to vector dispatch, expected focus narrows to search_code implementation rather than full hybrid graph context."
+        },
+        {
+          "query_id": "med_symbol_definition_code_search_contract_json",
+          "query_type": "codeish_symbol",
+          "mode": "hybrid",
+          "limit": 10,
+          "query": "fn code_search_contract_json(project_id, status)",
+          "expected_paths": [
+            "src/server/logic/code/search.rs"
+          ],
+          "expected_symbols": [
+            "code_search_contract_json"
+          ],
+          "rationale": "Symbol-definition guardrail for contract-shaping function catches accidental renames or relocation."
+        },
+        {
+          "query_id": "med_deleted_symbol_expectation_projection_cursor",
+          "query_type": "deleted_symbol_expectation",
+          "mode": "hybrid",
+          "limit": 10,
+          "query": "projection_cursor",
+          "expected_paths": [],
+          "expected_symbols": [],
+          "rationale": "Deleted/obsolete token sentinel for projection_cursor detects fixture drift if old projection naming leaks back into copied sources."
+        }
+      ]
+    },
+    "stress": {
+      "fixture_tier": "stress",
+      "enabled_by_default": false,
+      "description": "Manual-only stress tier query manifest for broad coverage and drift probes. Not used by default benchmark runs.",
+      "manifest": {
+        "execution_policy": "manual",
+        "required_by_default": false,
+        "notes": "Stress tier exists for optional large-run validation and should never become default in local smoke runs.",
+        "scenario_buckets": [
+          "symbol_definition",
+          "caller_callee",
+          "file_path",
+          "interference",
+          "deleted_renamed_expectations",
+          "mode_disagreement"
+        ]
+      },
+      "queries": [
+        {
+          "query_id": "stress_symbol_definition_personalized_page_rank",
+          "query_type": "codeish_symbol",
+          "mode": "hybrid",
+          "limit": 20,
+          "query": "pub fn personalized_page_rank",
+          "expected_paths": [
+            "src/graph/ppr.rs"
+          ],
+          "expected_symbols": [
+            "personalized_page_rank"
+          ],
+          "rationale": "Stress symbol-definition baseline for graph kernel retrieval under expanded top-k pressure."
+        },
+        {
+          "query_id": "stress_caller_callee_rrf_from_recall_code",
+          "query_type": "caller_callee",
+          "mode": "hybrid",
+          "limit": 20,
+          "query": "recall_code merges vector bm25 ppr with rrf_merge",
+          "expected_paths": [
+            "src/server/logic/code/search.rs",
+            "src/graph/rrf.rs"
+          ],
+          "expected_symbols": [
+            "recall_code",
+            "rrf_merge"
+          ],
+          "rationale": "Caller/callee stress scenario checks that recall orchestration and rrf merge callee remain jointly visible at higher limit."
+        },
+        {
+          "query_id": "stress_file_path_handler",
+          "query_type": "file_path",
+          "mode": "hybrid",
+          "limit": 20,
+          "query": "src/server/handler.rs recall_code",
+          "expected_paths": [
+            "src/server/handler.rs"
+          ],
+          "expected_symbols": [
+            "recall_code"
+          ],
+          "rationale": "Path-biased stress query validates that handler dispatch chunks remain retrievable amid denser candidate pools."
+        },
+        {
+          "query_id": "stress_interference_recall_code_name_collision",
+          "query_type": "similar_function_interference",
+          "mode": "hybrid",
+          "limit": 20,
+          "query": "recall_code function definition",
+          "expected_paths": [
+            "src/server/logic/code/search.rs",
+            "src/server/handler.rs"
+          ],
+          "expected_symbols": [
+            "recall_code"
+          ],
+          "rationale": "Name-collision stress case verifies both recall_code definitions persist in expected set as fixture evolves."
+        },
+        {
+          "query_id": "stress_renamed_expectation_contract_old_name",
+          "query_type": "renamed_symbol_expectation",
+          "mode": "hybrid",
+          "limit": 20,
+          "query": "search_code_contract_json",
+          "expected_paths": [],
+          "expected_symbols": [],
+          "rationale": "Renamed-symbol stress sentinel should remain empty; hits indicate old naming resurfaced."
+        },
+        {
+          "query_id": "stress_mode_disagreement_vector_vs_hybrid",
+          "query_type": "hybrid_vector_disagreement",
+          "mode": "vector",
+          "limit": 20,
+          "query": "recall_code vector mode dispatch",
+          "expected_paths": [
+            "src/server/logic/code/search.rs",
+            "src/server/handler.rs"
+          ],
+          "expected_symbols": [
+            "search_code",
+            "recall_code"
+          ],
+          "rationale": "Stress disagreement probe uses vector mode to emphasize dispatch and lexical retrieval behavior relative to hybrid multi-channel ranking."
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,6 @@
+# Forbidden scope diff check
+# UTC: 2026-04-28T12:35:47.403549Z
+
+$ git diff --name-only -- src/** .github/workflows/** README.md Cargo.toml Cargo.lock package.json pyproject.toml requirements.txt
+
+[exit_code] 0

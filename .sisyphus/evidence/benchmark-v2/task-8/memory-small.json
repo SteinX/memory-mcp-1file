@@ -1,0 +1,2078 @@
+{
+  "aggregate_metrics": {
+    "baseline_query_count": 7,
+    "blocker_count": 0,
+    "hit_rate": 0.8571428571428571,
+    "latency_summary": {
+      "count": 7,
+      "max_latency_ms": 30.894040999996264,
+      "mean_latency_ms": 11.44029771428531,
+      "p95_latency_ms": 30.894040999996264
+    },
+    "max_latency_ms": 30.894040999996264,
+    "mean_expected_rank": 1.0,
+    "mean_latency_ms": 11.44029771428531,
+    "mrr": 0.8571428571428571,
+    "ndcg_at_10": 0.8271980685070722,
+    "ndcg_at_5": 0.8018781703950655,
+    "observed_summary_partial_reason_codes": [],
+    "p95_latency_ms": 30.894040999996264,
+    "positive_hit_rate": 1.0,
+    "positive_mean_mrr": 1.0,
+    "positive_mean_ndcg_at_5": 0.9355245321275764,
+    "positive_mean_precision_at_10": 0.18333333333333335,
+    "positive_mean_precision_at_5": 0.3333333333333333,
+    "positive_mean_recall_at_5": 0.9166666666666666,
+    "positive_query_count": 6,
+    "precision_at_10": 0.15714285714285717,
+    "precision_at_5": 0.2857142857142857,
+    "query_count": 7,
+    "readiness_fallback": {
+      "classification": "degraded",
+      "elapsed_s": 7.013,
+      "explanation": "Readiness used fallback settling because no direct ready signal was available; results can still be valid but should be reviewed with elapsed time.",
+      "fallback_sleep_s": 3.0,
+      "fallback_used": true,
+      "impact": "degraded",
+      "poll_attempts": 3,
+      "readiness_signal": "none",
+      "reason": "no_direct_readiness_signal",
+      "status": "fallback_after_no_signal"
+    },
+    "reason_code_classification": {},
+    "recall_at_10": 0.8571428571428571,
+    "recall_at_5": 0.7857142857142857,
+    "runtime_minutes": 1.048707,
+    "seed_completed": true,
+    "threshold_evaluation": {
+      "enforcement": "local-only",
+      "evaluated_metrics": 8,
+      "failure_counts": {
+        "blocker": 0,
+        "warn": 0
+      },
+      "failures": [],
+      "fixture_tier": "small",
+      "policy_name": "local-v2-threshold-policy",
+      "reason": "all required threshold checks passed",
+      "status": "pass"
+    }
+  },
+  "baseline_diff_summary": {
+    "reason": "baseline diff summary is produced by explicit baseline-diff workflow",
+    "status": "deferred"
+  },
+  "baseline_version": "v2-initial",
+  "benchmark_name": "memory_retrieval_baseline",
+  "blockers": [],
+  "deterministic_local_metadata": {
+    "determinism_policy": {
+      "name": "stable_fixture_order+stable_tie_break+stable_report_order+tolerance_1e-9_1e-6"
+    },
+    "runtime_target": {
+      "optional_policy": "small tier default",
+      "required_by_default": true,
+      "target_minutes": "5-10"
+    },
+    "threshold_policy_enforcement": "local-only"
+  },
+  "environment": {
+    "data_dir": "/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-8-memory-retrieval-data-zz1nlj3u",
+    "data_dir_strategy": "temporary isolated DATA_DIR",
+    "duration_seconds": 62.94,
+    "embedding_model": "e5_small",
+    "mode": "benchmark",
+    "raw": {
+      "embedding_readiness": {
+        "elapsed_s": 54.121,
+        "poll_attempts": 28,
+        "poll_snapshots": [
+          {
+            "embedding_phase": "Fetching config...",
+            "embedding_progress_percent": null,
+            "embedding_status": "loading",
+            "parse_errors": [],
+            "reason_code": null,
+            "status": "loading"
+          },
+          {
+            "embedding_phase": "Fetching tokenizer...",
+            "embedding_progress_percent": null,
+            "embedding_status": "loading",
+            "parse_errors": [],
+            "reason_code": null,
+            "status": "loading"
+          },
+          {
+            "embedding_phase": "Fetching tokenizer...",
+            "embedding_progress_percent": null,
+            "embedding_status": "loading",
+            "parse_errors": [],
+            "reason_code": null,
+            "status": "loading"
+          },
+          {
+            "embedding_phase": "Fetching tokenizer...",
+            "embedding_progress_percent": null,
+            "embedding_status": "loading",
+            "parse_errors": [],
+            "reason_code": null,
+            "status": "loading"
+          },
+          {
+            "embedding_phase": "Downloading model weights...",
+            "embedding_progress_percent": 0.21420928835868835,
+            "embedding_status": "loading",
+            "parse_errors": [],
+            "reason_code": null,
+            "status": "loading"
+          },
+          {
+            "embedding_phase": "Downloading model weights...",
+            "embedding_progress_percent": 4.4779767990112305,
+            "embedding_status": "loading",
+            "parse_errors": [],
+            "reason_code": null,
+            "status": "loading"
+          },
+          {
+            "embedding_phase": "Downloading model weights...",
+            "embedding_progress_percent": 8.404834747314453,
+            "embedding_status": "loading",
+            "parse_errors": [],
+            "reason_code": null,
+            "status": "loading"
+          },
+          {
+            "embedding_phase": "Downloading model weights...",
+            "embedding_progress_percent": 12.596039772033691,
+            "embedding_status": "loading",
+            "parse_errors": [],
+            "reason_code": null,
+            "status": "loading"
+          },
+          {
+            "embedding_phase": "Downloading model weights...",
+            "embedding_progress_percent": 16.30004119873047,
+            "embedding_status": "loading",
+            "parse_errors": [],
+            "reason_code": null,
+            "status": "loading"
+          },
+          {
+            "embedding_phase": "Downloading model weights...",
+            "embedding_progress_percent": 22.098464965820312,
+            "embedding_status": "loading",
+            "parse_errors": [],
+            "reason_code": null,
+            "status": "loading"
+          },
+          {
+            "embedding_phase": "Downloading model weights...",
+            "embedding_progress_percent": 27.736034393310547,
+            "embedding_status": "loading",
+            "parse_errors": [],
+            "reason_code": null,
+            "status": "loading"
+          },
+          {
+            "embedding_phase": "Downloading model weights...",
+            "embedding_progress_percent": 32.95015335083008,
+            "embedding_status": "loading",
+            "parse_errors": [],
+            "reason_code": null,
+            "status": "loading"
+          },
+          {
+            "embedding_phase": "Downloading model weights...",
+            "embedding_progress_percent": 37.561737060546875,
+            "embedding_status": "loading",
+            "parse_errors": [],
+            "reason_code": null,
+            "status": "loading"
+          },
+          {
+            "embedding_phase": "Downloading model weights...",
+            "embedding_progress_percent": 44.272762298583984,
+            "embedding_status": "loading",
+            "parse_errors": [],
+            "reason_code": null,
+            "status": "loading"
+          },
+          {
+            "embedding_phase": "Downloading model weights...",
+            "embedding_progress_percent": 49.914608001708984,
+            "embedding_status": "loading",
+            "parse_errors": [],
+            "reason_code": null,
+            "status": "loading"
+          },
+          {
+            "embedding_phase": "Downloading model weights...",
+            "embedding_progress_percent": 55.174041748046875,
+            "embedding_status": "loading",
+            "parse_errors": [],
+            "reason_code": null,
+            "status": "loading"
+          },
+          {
+            "embedding_phase": "Downloading model weights...",
+            "embedding_progress_percent": 59.76994705200195,
+            "embedding_status": "loading",
+            "parse_errors": [],
+            "reason_code": null,
+            "status": "loading"
+          },
+          {
+            "embedding_phase": "Downloading model weights...",
+            "embedding_progress_percent": 64.32302856445312,
+            "embedding_status": "loading",
+            "parse_errors": [],
+            "reason_code": null,
+            "status": "loading"
+          },
+          {
+            "embedding_phase": "Downloading model weights...",
+            "embedding_progress_percent": 68.14155578613281,
+            "embedding_status": "loading",
+            "parse_errors": [],
+            "reason_code": null,
+            "status": "loading"
+          },
+          {
+            "embedding_phase": "Downloading model weights...",
+            "embedding_progress_percent": 72.67326354980469,
+            "embedding_status": "loading",
+            "parse_errors": [],
+            "reason_code": null,
+            "status": "loading"
+          },
+          {
+            "embedding_phase": "Downloading model weights...",
+            "embedding_progress_percent": 77.02207946777344,
+            "embedding_status": "loading",
+            "parse_errors": [],
+            "reason_code": null,
+            "status": "loading"
+          },
+          {
+            "embedding_phase": "Downloading model weights...",
+            "embedding_progress_percent": 79.86515045166016,
+            "embedding_status": "loading",
+            "parse_errors": [],
+            "reason_code": null,
+            "status": "loading"
+          },
+          {
+            "embedding_phase": "Downloading model weights...",
+            "embedding_progress_percent": 83.77130889892578,
+            "embedding_status": "loading",
+            "parse_errors": [],
+            "reason_code": null,
+            "status": "loading"
+          },
+          {
+            "embedding_phase": "Downloading model weights...",
+            "embedding_progress_percent": 88.90066528320312,
+            "embedding_status": "loading",
+            "parse_errors": [],
+            "reason_code": null,
+            "status": "loading"
+          },
+          {
+            "embedding_phase": "Downloading model weights...",
+            "embedding_progress_percent": 93.2869873046875,
+            "embedding_status": "loading",
+            "parse_errors": [],
+            "reason_code": null,
+            "status": "loading"
+          },
+          {
+            "embedding_phase": "Downloading model weights...",
+            "embedding_progress_percent": 97.2839584350586,
+            "embedding_status": "loading",
+            "parse_errors": [],
+            "reason_code": null,
+            "status": "loading"
+          },
+          {
+            "embedding_phase": "Loading model into memory...",
+            "embedding_progress_percent": null,
+            "embedding_status": "loading",
+            "parse_errors": [],
+            "reason_code": null,
+            "status": "loading"
+          },
+          {
+            "embedding_phase": null,
+            "embedding_progress_percent": null,
+            "embedding_status": "ready",
+            "parse_errors": [],
+            "reason_code": null,
+            "status": "healthy"
+          }
+        ],
+        "reason": "embedding_ready",
+        "reason_codes": [],
+        "status": "ready",
+        "status_errors": []
+      },
+      "fixture_validation": {
+        "caps": {
+          "memory_count_max": 30,
+          "query_count_max": 20
+        },
+        "coverage": {
+          "namespace": true,
+          "negative": true,
+          "person_project_topic": true,
+          "temporal": true
+        },
+        "explicit_alias_count": 0,
+        "fixture_paths": {
+          "golden_queries": "evals/golden/memory_retrieval_queries_mini_long_memory.json",
+          "memory_corpus": "evals/fixtures/memory_corpus_mini_long_memory.json"
+        },
+        "memory_count": 10,
+        "memory_unique_ids": 10,
+        "query_count": 7
+      },
+      "query_diagnostics": {
+        "call_error_count": 0,
+        "degraded_or_partial_count": 0,
+        "parse_issue_count": 0
+      },
+      "query_validation": {
+        "fixture_tier": "small",
+        "observed_query_types": [
+          "get_valid_filtered",
+          "get_valid_temporal",
+          "negative_no_match",
+          "recall_fusion",
+          "search_bm25",
+          "search_vector"
+        ],
+        "query_count": 7
+      },
+      "seed_progress": {
+        "blockers": [],
+        "finished_at": "2026-04-28T11:55:19Z",
+        "fixture_paths": {
+          "golden_queries": "/Users/xiayiming1/Documents/Workspace/memory-mcp-1file/evals/golden/memory_retrieval_queries_mini_long_memory.json",
+          "memory_corpus": "/Users/xiayiming1/Documents/Workspace/memory-mcp-1file/evals/fixtures/memory_corpus_mini_long_memory.json",
+          "memory_graph": "/Users/xiayiming1/Documents/Workspace/memory-mcp-1file/evals/fixtures/memory_graph.json"
+        },
+        "graph": {
+          "calls": [
+            {
+              "entity_id": "a9418dbe0db067936a4c",
+              "kind": "entity",
+              "name": "memory-retrieval-benchmark",
+              "parse_errors": []
+            },
+            {
+              "entity_id": "843522ea6b102687ab5f",
+              "kind": "entity",
+              "name": "auth service",
+              "parse_errors": []
+            },
+            {
+              "entity_id": "6e469aab47cddc1581ae",
+              "kind": "entity",
+              "name": "billing service",
+              "parse_errors": []
+            },
+            {
+              "entity_id": "4ecd0a0605fc5038e157",
+              "kind": "entity",
+              "name": "recall engine",
+              "parse_errors": []
+            },
+            {
+              "entity_id": "7405c93cdaa1de55c334",
+              "kind": "entity",
+              "name": "fixture corpus",
+              "parse_errors": []
+            },
+            {
+              "from_entity": "ent_benchmark_suite",
+              "kind": "relation",
+              "parse_errors": [],
+              "relation_id": "ab9e3563f0a7cffa6634",
+              "relation_type": "uses",
+              "to_entity": "ent_fixture_corpus"
+            },
+            {
+              "from_entity": "ent_benchmark_suite",
+              "kind": "relation",
+              "parse_errors": [],
+              "relation_id": "fedebf840e4ec36fe613",
+              "relation_type": "exercises",
+              "to_entity": "ent_recall_engine"
+            },
+            {
+              "from_entity": "ent_auth_service",
+              "kind": "relation",
+              "parse_errors": [],
+              "relation_id": "da12a1bbad4b9794b394",
+              "relation_type": "feeds",
+              "to_entity": "ent_recall_engine"
+            },
+            {
+              "from_entity": "ent_billing_service",
+              "kind": "relation",
+              "parse_errors": [],
+              "relation_id": "d110d33cf326aae21279",
+              "relation_type": "feeds",
+              "to_entity": "ent_recall_engine"
+            },
+            {
+              "from_entity": "ent_recall_engine",
+              "kind": "relation",
+              "parse_errors": [],
+              "relation_id": "1a0003840853dd3729c3",
+              "relation_type": "queries",
+              "to_entity": "ent_fixture_corpus"
+            },
+            {
+              "from_entity": "ent_fixture_corpus",
+              "kind": "relation",
+              "parse_errors": [],
+              "relation_id": "6a95ee8f56017c399a29",
+              "relation_type": "covers",
+              "to_entity": "ent_auth_service"
+            },
+            {
+              "from_entity": "ent_fixture_corpus",
+              "kind": "relation",
+              "parse_errors": [],
+              "relation_id": "6c4dde3625f7265fd1f1",
+              "relation_type": "covers",
+              "to_entity": "ent_billing_service"
+            },
+            {
+              "from_entity": "ent_auth_service",
+              "kind": "relation",
+              "parse_errors": [],
+              "relation_id": "e1dce5494c2132ec787d",
+              "relation_type": "shares_namespace",
+              "to_entity": "ent_billing_service"
+            }
+          ],
+          "entity_count": 5,
+          "entity_ids": [
+            "a9418dbe0db067936a4c",
+            "843522ea6b102687ab5f",
+            "6e469aab47cddc1581ae",
+            "4ecd0a0605fc5038e157",
+            "7405c93cdaa1de55c334"
+          ],
+          "relation_count": 8,
+          "relation_ids": [
+            "ab9e3563f0a7cffa6634",
+            "fedebf840e4ec36fe613",
+            "da12a1bbad4b9794b394",
+            "d110d33cf326aae21279",
+            "1a0003840853dd3729c3",
+            "6a95ee8f56017c399a29",
+            "6c4dde3625f7265fd1f1",
+            "e1dce5494c2132ec787d"
+          ]
+        },
+        "memory": {
+          "calls": [
+            {
+              "agent_id": "atlas",
+              "fixture_id": "mini_mem_task_checkout_retry",
+              "memory_id": "45153fd0366dc421bba5",
+              "memory_type": "episodic",
+              "namespace": "evals/mempalace-mini/checkout",
+              "parse_errors": [],
+              "run_id": "mini-run-001",
+              "user_id": "eval-user"
+            },
+            {
+              "agent_id": "atlas",
+              "fixture_id": "mini_mem_decision_checkout_backoff",
+              "memory_id": "e6a75891e45d42453c3d",
+              "memory_type": "semantic",
+              "namespace": "evals/mempalace-mini/checkout",
+              "parse_errors": [],
+              "run_id": "mini-run-001",
+              "user_id": "eval-user"
+            },
+            {
+              "agent_id": "atlas",
+              "fixture_id": "mini_mem_research_refund_notifications",
+              "memory_id": "73c85e08368b1e84f4f5",
+              "memory_type": "semantic",
+              "namespace": "evals/mempalace-mini/refunds",
+              "parse_errors": [],
+              "run_id": "mini-run-002",
+              "user_id": "eval-user"
+            },
+            {
+              "agent_id": "atlas",
+              "fixture_id": "mini_mem_context_refund_runbook",
+              "memory_id": "daa2289d1b4d26e23867",
+              "memory_type": "semantic",
+              "namespace": "evals/mempalace-mini/refunds",
+              "parse_errors": [],
+              "run_id": "mini-run-002",
+              "user_id": "eval-user"
+            },
+            {
+              "agent_id": "atlas",
+              "fixture_id": "mini_mem_project_helios_triage",
+              "memory_id": "d9b239c15ec23fc263e2",
+              "memory_type": "semantic",
+              "namespace": "evals/mempalace-mini/mobile",
+              "parse_errors": [],
+              "run_id": "mini-run-003",
+              "user_id": "eval-user"
+            },
+            {
+              "agent_id": "atlas",
+              "fixture_id": "mini_mem_task_helios_crash_review",
+              "memory_id": "9dc56b979149c7ce989d",
+              "memory_type": "episodic",
+              "namespace": "evals/mempalace-mini/mobile",
+              "parse_errors": [],
+              "run_id": "mini-run-003",
+              "user_id": "eval-user"
+            },
+            {
+              "agent_id": "atlas",
+              "fixture_id": "mini_mem_task_parser_fallback_temp",
+              "memory_id": "44b57a67a540dc08b9d6",
+              "memory_type": "episodic",
+              "namespace": "evals/mempalace-mini/platform",
+              "parse_errors": [],
+              "run_id": "mini-run-004",
+              "user_id": "eval-user"
+            },
+            {
+              "agent_id": "atlas",
+              "fixture_id": "mini_mem_decision_parser_fallback_removed",
+              "memory_id": "2a99c011e7899db89319",
+              "memory_type": "semantic",
+              "namespace": "evals/mempalace-mini/platform",
+              "parse_errors": [],
+              "run_id": "mini-run-004",
+              "user_id": "eval-user"
+            },
+            {
+              "agent_id": "atlas",
+              "fixture_id": "mini_mem_user_pref_release_notes",
+              "memory_id": "369bf56ae5cba0baabe1",
+              "memory_type": "semantic",
+              "namespace": "evals/mempalace-mini/process",
+              "parse_errors": [],
+              "run_id": "mini-run-005",
+              "user_id": "eval-user"
+            },
+            {
+              "agent_id": "atlas",
+              "fixture_id": "mini_mem_context_process_namespace",
+              "memory_id": "9cb37dea32d27bd1a22a",
+              "memory_type": "semantic",
+              "namespace": "evals/mempalace-mini/process",
+              "parse_errors": [],
+              "run_id": "mini-run-005",
+              "user_id": "eval-user"
+            }
+          ],
+          "fixture_to_server_id_map": {
+            "mini_mem_context_process_namespace": "9cb37dea32d27bd1a22a",
+            "mini_mem_context_refund_runbook": "daa2289d1b4d26e23867",
+            "mini_mem_decision_checkout_backoff": "e6a75891e45d42453c3d",
+            "mini_mem_decision_parser_fallback_removed": "2a99c011e7899db89319",
+            "mini_mem_project_helios_triage": "d9b239c15ec23fc263e2",
+            "mini_mem_research_refund_notifications": "73c85e08368b1e84f4f5",
+            "mini_mem_task_checkout_retry": "45153fd0366dc421bba5",
+            "mini_mem_task_helios_crash_review": "9dc56b979149c7ce989d",
+            "mini_mem_task_parser_fallback_temp": "44b57a67a540dc08b9d6",
+            "mini_mem_user_pref_release_notes": "369bf56ae5cba0baabe1"
+          },
+          "memory_count": 10,
+          "memory_ids": [
+            "45153fd0366dc421bba5",
+            "e6a75891e45d42453c3d",
+            "73c85e08368b1e84f4f5",
+            "daa2289d1b4d26e23867",
+            "d9b239c15ec23fc263e2",
+            "9dc56b979149c7ce989d",
+            "44b57a67a540dc08b9d6",
+            "2a99c011e7899db89319",
+            "369bf56ae5cba0baabe1",
+            "9cb37dea32d27bd1a22a"
+          ]
+        },
+        "phases": [
+          {
+            "finished_at": "2026-04-28T11:55:11Z",
+            "phase": "load_and_validate_fixtures",
+            "started_at": "2026-04-28T11:55:11Z",
+            "status": "completed",
+            "validation": {
+              "caps": {
+                "memory_count_max": 30,
+                "query_count_max": 20
+              },
+              "coverage": {
+                "namespace": true,
+                "negative": true,
+                "person_project_topic": true,
+                "temporal": true
+              },
+              "explicit_alias_count": 0,
+              "fixture_paths": {
+                "golden_queries": "evals/golden/memory_retrieval_queries_mini_long_memory.json",
+                "memory_corpus": "evals/fixtures/memory_corpus_mini_long_memory.json"
+              },
+              "memory_count": 10,
+              "memory_unique_ids": 10,
+              "query_count": 7
+            }
+          },
+          {
+            "entity_count": 5,
+            "finished_at": "2026-04-28T11:55:12Z",
+            "phase": "seed_graph",
+            "relation_count": 8,
+            "started_at": "2026-04-28T11:55:11Z",
+            "status": "completed"
+          },
+          {
+            "finished_at": "2026-04-28T11:55:12Z",
+            "memory_count": 10,
+            "phase": "seed_memories",
+            "started_at": "2026-04-28T11:55:12Z",
+            "status": "completed"
+          },
+          {
+            "elapsed_s": 7.013,
+            "finished_at": "2026-04-28T11:55:19Z",
+            "phase": "settle_readiness",
+            "settle_status": "fallback_after_no_signal",
+            "started_at": "2026-04-28T11:55:12Z",
+            "status": "completed"
+          }
+        ],
+        "query_count": 7,
+        "seed_order": [
+          "knowledge_graph",
+          "store_memory"
+        ],
+        "settle": {
+          "elapsed_s": 7.013,
+          "fallback_sleep_s": 3.0,
+          "poll_attempts": 3,
+          "poll_snapshots": [
+            {
+              "attempt": 1,
+              "parse_errors": [],
+              "ready": null,
+              "signal_source": "none",
+              "status": "healthy"
+            },
+            {
+              "attempt": 2,
+              "parse_errors": [],
+              "ready": null,
+              "signal_source": "none",
+              "status": "healthy"
+            },
+            {
+              "attempt": 3,
+              "parse_errors": [],
+              "ready": null,
+              "signal_source": "none",
+              "status": "healthy"
+            }
+          ],
+          "readiness_signal": "none",
+          "reason": "no_direct_readiness_signal",
+          "status": "fallback_after_no_signal",
+          "status_errors": []
+        },
+        "started_at": "2026-04-28T11:55:11Z",
+        "status": "completed"
+      },
+      "startup_status": {
+        "embedding": {
+          "cached": false,
+          "dimensions": 384,
+          "elapsed_seconds": 0,
+          "eta_seconds": null,
+          "model": "e5_small_384",
+          "phase": "Fetching config...",
+          "status": "loading"
+        },
+        "memories_count": 0,
+        "status": "loading",
+        "version": "0.8.2"
+      }
+    },
+    "root": "/Users/xiayiming1/Documents/Workspace/memory-mcp-1file",
+    "server_command": [
+      "/Users/xiayiming1/Documents/Workspace/memory-mcp-1file/target/fast/memory-mcp",
+      "--stdio"
+    ],
+    "started_at_utc": "2026-04-28T11:54:16.926324+00:00",
+    "stderr_tail": [
+      "[memory-mcp] Auto-configured block cache: 18 MB (available RAM: 90 MB)",
+      "\u001b[2m2026-04-28T11:54:16.962912Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2mmemory_mcp\u001b[0m\u001b[2m:\u001b[0m memory-mcp starting \u001b[3mversion\u001b[0m\u001b[2m=\u001b[0m\"0.8.2\" \u001b[3mpid\u001b[0m\u001b[2m=\u001b[0m36632 \u001b[3mppid\u001b[0m\u001b[2m=\u001b[0m36628 \u001b[3mmode\u001b[0m\u001b[2m=\u001b[0m\"stdio\" \u001b[3mmodel\u001b[0m\u001b[2m=\u001b[0me5_small \u001b[3mdata_dir\u001b[0m\u001b[2m=\u001b[0m/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-8-memory-retrieval-data-zz1nlj3u",
+      "\u001b[2m2026-04-28T11:54:16.968853Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2msurrealdb::core::kvs::ds\u001b[0m\u001b[2m:\u001b[0m Starting kvs store at absolute path surrealkv:/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-8-memory-retrieval-data-zz1nlj3u/db",
+      "\u001b[2m2026-04-28T11:54:16.971921Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2msurrealdb::core::kvs::surrealkv\u001b[0m\u001b[2m:\u001b[0m Enabling value log separation: true",
+      "\u001b[2m2026-04-28T11:54:16.981216Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2msurrealdb::core::kvs::surrealkv\u001b[0m\u001b[2m:\u001b[0m Setting value log max file size: 268435456",
+      "\u001b[2m2026-04-28T11:54:16.981224Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2msurrealdb::core::kvs::surrealkv\u001b[0m\u001b[2m:\u001b[0m Setting value log threshold: 4096",
+      "\u001b[2m2026-04-28T11:54:16.981225Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2msurrealdb::core::kvs::surrealkv\u001b[0m\u001b[2m:\u001b[0m Versioning enabled: false with retention period: 0ns",
+      "\u001b[2m2026-04-28T11:54:16.981226Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2msurrealdb::core::kvs::surrealkv\u001b[0m\u001b[2m:\u001b[0m Versioning with versioned_index: false",
+      "\u001b[2m2026-04-28T11:54:16.981383Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2msurrealdb::core::kvs::surrealkv\u001b[0m\u001b[2m:\u001b[0m Setting block cache capacity: 18874368",
+      "\u001b[2m2026-04-28T11:54:16.981600Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2msurrealdb::core::kvs::surrealkv\u001b[0m\u001b[2m:\u001b[0m Setting block size: 65536",
+      "\u001b[2m2026-04-28T11:54:16.982329Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2msurrealkv::lsm\u001b[0m\u001b[2m:\u001b[0m === Starting LSM tree initialization ===",
+      "\u001b[2m2026-04-28T11:54:16.982540Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2msurrealkv::lsm\u001b[0m\u001b[2m:\u001b[0m Database path: \"/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-8-memory-retrieval-data-zz1nlj3u/db\"",
+      "\u001b[2m2026-04-28T11:54:17.005908Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2msurrealkv::lsm\u001b[0m\u001b[2m:\u001b[0m Manifest state: log_number=0, last_sequence=0",
+      "\u001b[2m2026-04-28T11:54:17.005917Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2msurrealkv::wal::recovery\u001b[0m\u001b[2m:\u001b[0m Starting WAL recovery from directory: \"/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-8-memory-retrieval-data-zz1nlj3u/db/wal\"",
+      "\u001b[2m2026-04-28T11:54:17.006000Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2msurrealkv::wal::recovery\u001b[0m\u001b[2m:\u001b[0m Replaying WAL segments #00000000000000000000 to #00000000000000000000",
+      "\u001b[2m2026-04-28T11:54:17.026271Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2msurrealkv::wal::recovery\u001b[0m\u001b[2m:\u001b[0m WAL recovery complete: 0 batches across 0 segments, 0 memtables created, max_seq_num=None",
+      "\u001b[2m2026-04-28T11:54:17.026721Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2msurrealkv::lsm\u001b[0m\u001b[2m:\u001b[0m === LSM tree initialization complete ===",
+      "\u001b[2m2026-04-28T11:54:17.038902Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2msurrealdb::core::kvs::surrealkv\u001b[0m\u001b[2m:\u001b[0m Sync mode: every transaction commit",
+      "\u001b[2m2026-04-28T11:54:17.039207Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2msurrealdb::core::kvs::surrealkv\u001b[0m\u001b[2m:\u001b[0m Grouped commit: enabled (timeout=5000000ns, wait_threshold=12, max_batch_size=4096)",
+      "\u001b[2m2026-04-28T11:54:17.039460Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2msurrealdb::core::kvs::ds\u001b[0m\u001b[2m:\u001b[0m Started surrealkv kvs store",
+      "\u001b[2m2026-04-28T11:54:17.746253Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2mmemory_mcp::storage::surrealdb\u001b[0m\u001b[2m:\u001b[0m Dimension check passed \u001b[3mmodel\u001b[0m\u001b[2m=\u001b[0m384 \u001b[3mdb\u001b[0m\u001b[2m=\u001b[0m384",
+      "\u001b[2m2026-04-28T11:54:17.746265Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2mmemory_mcp\u001b[0m\u001b[2m:\u001b[0m Embedding engine configured \u001b[3moutput_dim\u001b[0m\u001b[2m=\u001b[0m384 \u001b[3mmodel\u001b[0m\u001b[2m=\u001b[0me5_small",
+      "\u001b[2m2026-04-28T11:54:17.775406Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2mmemory_mcp::forgetting::capacity\u001b[0m\u001b[2m:\u001b[0m Capacity controller started \u001b[3mcheck_interval_secs\u001b[0m\u001b[2m=\u001b[0m3600 \u001b[3msoft_limit\u001b[0m\u001b[2m=\u001b[0m10000 \u001b[3mcleanup_target_ratio\u001b[0m\u001b[2m=\u001b[0m0.800000011920929",
+      "\u001b[2m2026-04-28T11:54:17.775525Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2mmemory_mcp::embedding::worker\u001b[0m\u001b[2m:\u001b[0m Embedding worker started, waiting for requests",
+      "\u001b[2m2026-04-28T11:54:17.775646Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2mmemory_mcp::embedding::service\u001b[0m\u001b[2m:\u001b[0m Loading embedding model: E5Small",
+      "\u001b[2m2026-04-28T11:54:17.777284Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2mrmcp::handler::server\u001b[0m\u001b[2m:\u001b[0m client initialized",
+      "\u001b[2m2026-04-28T11:54:17.777296Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[1mserve_inner\u001b[0m\u001b[2m:\u001b[0m \u001b[2mrmcp::service\u001b[0m\u001b[2m:\u001b[0m Service initialized as server \u001b[3mpeer_info\u001b[0m\u001b[2m=\u001b[0mSome(InitializeRequestParams { meta: None, protocol_version: ProtocolVersion(\"2024-11-05\"), capabilities: ClientCapabilities { experimental: None, extensions: None, roots: None, sampling: None, elicitation: None, tasks: None }, client_info: Implementation { name: \"memory-retrieval-benchmark\", title: None, version: \"0.1.0\", description: None, icons: None, website_url: None } })",
+      "\u001b[2m2026-04-28T11:54:17.777317Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2mmemory_mcp\u001b[0m\u001b[2m:\u001b[0m Server started in stdio mode, waiting for client disconnect or signals...",
+      "\u001b[2m2026-04-28T11:54:17.779780Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2mmemory_mcp::forgetting::capacity\u001b[0m\u001b[2m:\u001b[0m Capacity OK: 0 memories \u001b[3mcount\u001b[0m\u001b[2m=\u001b[0m0",
+      "\u001b[2m2026-04-28T11:54:24.650206Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2mmemory_mcp::embedding::service\u001b[0m\u001b[2m:\u001b[0m Downloading model weights from HuggingFace Hub...",
+      "\u001b[2m2026-04-28T11:55:10.473969Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2mmemory_mcp::embedding::service\u001b[0m\u001b[2m:\u001b[0m Embedding model ready \u001b[3melapsed_sec\u001b[0m\u001b[2m=\u001b[0m\"52.7\""
+    ]
+  },
+  "failure_buckets": {
+    "none": 6,
+    "wrong_rank": 1
+  },
+  "fixture_tier": "small",
+  "generated_at_utc": "2026-04-28T11:55:19.867544Z",
+  "manifest": {
+    "baseline_refresh": {
+      "baseline_version": "v2-initial",
+      "canonical_target_requested": false,
+      "canonical_target_written": false,
+      "command": "python3 evals/memory_retrieval_benchmark.py --tier small --output-json .sisyphus/evidence/benchmark-v2/task-8/memory-small.json --output-md .sisyphus/evidence/benchmark-v2/task-8/memory-small.md",
+      "fixture_tier": "small",
+      "git_commit": "99ac9f7f3d83e89ef434df3c14bf70488dea95aa",
+      "model": "e5_small",
+      "output_json": ".sisyphus/evidence/benchmark-v2/task-8/memory-small.json",
+      "output_md": ".sisyphus/evidence/benchmark-v2/task-8/memory-small.md",
+      "refresh_mode": false,
+      "refresh_reason": null,
+      "refresh_requested": false,
+      "refresh_timestamp_utc": null,
+      "schema_version": "2.0"
+    },
+    "baseline_version": "v2-initial",
+    "command_selected": [
+      "/Users/xiayiming1/Documents/Workspace/memory-mcp-1file/target/fast/memory-mcp",
+      "--stdio"
+    ],
+    "data_dir_strategy": "temporary isolated DATA_DIR",
+    "determinism_policy": {
+      "name": "stable_fixture_order+stable_tie_break+stable_report_order+tolerance_1e-9_1e-6"
+    },
+    "fixture_counts": {
+      "golden_queries": 7,
+      "graph_entities": 5,
+      "graph_relations": 8,
+      "memories": 10
+    },
+    "fixture_paths": {
+      "golden_queries": "evals/golden/memory_retrieval_queries_mini_long_memory.json",
+      "memory_corpus": "evals/fixtures/memory_corpus_mini_long_memory.json",
+      "memory_graph": "evals/fixtures/memory_graph.json"
+    },
+    "fixture_tier": "small",
+    "query_types": [
+      "get_valid_filtered",
+      "get_valid_temporal",
+      "negative_no_match",
+      "recall_fusion",
+      "search_bm25",
+      "search_vector"
+    ],
+    "required_query_types": [
+      "get_valid_filtered",
+      "get_valid_temporal",
+      "negative_no_match",
+      "recall_fusion",
+      "search_bm25",
+      "search_vector"
+    ],
+    "runtime_target": {
+      "optional_policy": "small tier default",
+      "required_by_default": true,
+      "target_minutes": "5-10"
+    },
+    "schema_version": "2.0",
+    "seed_order": [
+      "knowledge_graph",
+      "store_memory"
+    ],
+    "threshold_policy": {
+      "enforcement": "local-only",
+      "name": "local-v2-threshold-policy"
+    },
+    "tool_set": [
+      "knowledge_graph",
+      "store_memory",
+      "recall",
+      "search_memory",
+      "get_valid"
+    ]
+  },
+  "metric_summary": {
+    "blocker_count": 0,
+    "hit_rate": 0.8571428571428571,
+    "max_latency_ms": 30.894040999996264,
+    "mean_latency_ms": 11.44029771428531,
+    "mrr": 0.8571428571428571,
+    "ndcg_at_10": 0.8271980685070722,
+    "ndcg_at_5": 0.8018781703950655,
+    "p95_latency_ms": 30.894040999996264,
+    "positive_hit_rate": 1.0,
+    "positive_mean_mrr": 1.0,
+    "positive_mean_ndcg_at_5": 0.9355245321275764,
+    "positive_mean_precision_at_5": 0.3333333333333333,
+    "positive_mean_recall_at_5": 0.9166666666666666,
+    "positive_query_count": 6,
+    "precision_at_10": 0.15714285714285717,
+    "precision_at_5": 0.2857142857142857,
+    "query_count": 7,
+    "recall_at_10": 0.8571428571428571,
+    "recall_at_5": 0.7857142857142857,
+    "runtime_minutes": 1.048707
+  },
+  "per_query": [
+    {
+      "contract": {
+        "compatibility": {
+          "clients_must_ignore_unknown_enum_values": true,
+          "clients_must_ignore_unknown_fields": true,
+          "db_shape_is_not_public_contract": true,
+          "mode": "additive_first"
+        },
+        "generated_at": "2026-04-28T11:55:19.567195Z",
+        "generation_basis": {
+          "semantic_generation": 0,
+          "structural_generation": 0
+        },
+        "identity": {
+          "edge_id_semantics": "no_public_edge_ids",
+          "edge_ids_are_local_only": true,
+          "node_id_semantics": "stable_public_memory_id",
+          "node_ids_are_project_scoped": false,
+          "stable_edge_ids": false,
+          "stable_node_ids": true
+        },
+        "projection": {
+          "basis": "semantic_generation",
+          "generation": 0,
+          "materialization": {
+            "addressability_semantics": "no_stable_external_read_target_is_promised_until_materialization_strategy_changes",
+            "consistent_with_projection_state": true,
+            "current_generation": 0,
+            "identity_basis": "project_id + semantic_generation",
+            "is_addressable": false,
+            "locator_can_be_persisted_by_clients": false,
+            "locator_is_opaque": true,
+            "locator_scope": "none_when_not_materialized",
+            "locator_semantics": "absent_when_not_materialized; when present it identifies the externally consumable projection instance",
+            "locator_stability": "not_stable_until_materialization_strategy_changes",
+            "locator_survives_generation_change": false,
+            "persistence": "ephemeral_contract_only",
+            "persistence_semantics": "contract is exposed on status surfaces only; no persisted projection artifact is promised yet",
+            "refresh_basis": "semantic_generation",
+            "shape_version": 1,
+            "shape_version_semantics": "materialized_projection_payload_shape_version",
+            "strategy": "not_materialized"
+          },
+          "state": "missing"
+        },
+        "projection_state": "missing",
+        "schema_version": 1,
+        "surface_guidance": {
+          "forbidden_to_depend_fields": [],
+          "legacy_compatibility_fields": [
+            "count",
+            "filters",
+            "diagnostics",
+            "weights",
+            "query"
+          ],
+          "preferred_response_fields": [
+            "results",
+            "memories",
+            "contract",
+            "summary"
+          ]
+        }
+      },
+      "expected_count": 2,
+      "expected_fixture_ids": [
+        "mini_mem_task_checkout_retry",
+        "mini_mem_decision_checkout_backoff"
+      ],
+      "expected_ids": [
+        "mini_mem_task_checkout_retry",
+        "mini_mem_decision_checkout_backoff"
+      ],
+      "expected_rank": 1,
+      "expected_server_ids": [
+        "45153fd0366dc421bba5",
+        "e6a75891e45d42453c3d"
+      ],
+      "failure_type": "none",
+      "found_expected_fixture_ids": [
+        "mini_mem_decision_checkout_backoff",
+        "mini_mem_task_checkout_retry"
+      ],
+      "found_expected_ids": [
+        "e6a75891e45d42453c3d",
+        "45153fd0366dc421bba5"
+      ],
+      "found_expected_server_ids": [
+        "e6a75891e45d42453c3d",
+        "45153fd0366dc421bba5"
+      ],
+      "hit_count": 1,
+      "latency_ms": 30.894040999996264,
+      "missing_expected_fixture_ids": [],
+      "mrr": 1.0,
+      "ndcg_at_10": 0.7903864795495061,
+      "ndcg_at_5": 0.6131471927654584,
+      "negative": false,
+      "parse_errors": [],
+      "precision_at_10": 0.2,
+      "precision_at_5": 0.2,
+      "query": "Maya checkout retry jitter backoff",
+      "query_id": "mini_q_recall_checkout_retry_backoff",
+      "query_type": "recall_fusion",
+      "raw_top_k": [
+        {
+          "fixture_id": "mini_mem_decision_checkout_backoff",
+          "preview": "DECISION: Project checkout-reliability will use capped exponential backoff with a 90 second max window.",
+          "rank": 1,
+          "result_id": "e6a75891e45d42453c3d",
+          "score": 0.008976728655397892
+        },
+        {
+          "fixture_id": "mini_mem_user_pref_release_notes",
+          "preview": "USER: Maya prefers bullet-point release notes with one-line risks.",
+          "rank": 2,
+          "result_id": "369bf56ae5cba0baabe1",
+          "score": 0.00883256271481514
+        },
+        {
+          "fixture_id": "mini_mem_task_parser_fallback_temp",
+          "preview": "TASK: Temporary experiment for legacy parser fallback during migration week.",
+          "rank": 3,
+          "result_id": "44b57a67a540dc08b9d6",
+          "score": 0.0063491943292319775
+        },
+        {
+          "fixture_id": "mini_mem_decision_parser_fallback_removed",
+          "preview": "DECISION: After migration week, parser fallback was removed from the active path.",
+          "rank": 4,
+          "result_id": "2a99c011e7899db89319",
+          "score": 0.006249998230487108
+        },
+        {
+          "fixture_id": "mini_mem_research_refund_notifications",
+          "preview": "RESEARCH: Nora documented that support tickets cluster around delayed refund notifications in AtlasPay.",
+          "rank": 5,
+          "result_id": "73c85e08368b1e84f4f5",
+          "score": 0.0061538442969322205
+        },
+        {
+          "fixture_id": "mini_mem_task_helios_crash_review",
+          "preview": "TASK: Priya requested a Friday reminder to verify top-5 Helios crash signatures.",
+          "rank": 6,
+          "result_id": "9dc56b979149c7ce989d",
+          "score": 0.006060594692826271
+        },
+        {
+          "fixture_id": "mini_mem_context_refund_runbook",
+          "preview": "CONTEXT: Team AtlasPay stores refund webhook runbooks in the finance incident folder.",
+          "rank": 7,
+          "result_id": "daa2289d1b4d26e23867",
+          "score": 0.00597014743834734
+        },
+        {
+          "fixture_id": "mini_mem_project_helios_triage",
+          "preview": "PROJECT: Helios mobile release moved crash triage ownership to Priya for sprint 9.",
+          "rank": 8,
+          "result_id": "d9b239c15ec23fc263e2",
+          "score": 0.005882351193577051
+        },
+        {
+          "fixture_id": "mini_mem_context_process_namespace",
+          "preview": "CONTEXT: Namespace evals/mempalace-mini/process stores team communication memories.",
+          "rank": 9,
+          "result_id": "9cb37dea32d27bd1a22a",
+          "score": 0.0057970997877418995
+        },
+        {
+          "fixture_id": "mini_mem_task_checkout_retry",
+          "preview": "TASK: During sprint planning, Maya requested idempotent write retries with jitter for checkout failures.",
+          "rank": 10,
+          "result_id": "45153fd0366dc421bba5",
+          "score": 0.0024590163957327604
+        }
+      ],
+      "reason_code_classification": null,
+      "recall_at_10": 1.0,
+      "recall_at_5": 0.5,
+      "result_count": 10,
+      "result_ids": [
+        "e6a75891e45d42453c3d",
+        "369bf56ae5cba0baabe1",
+        "44b57a67a540dc08b9d6",
+        "2a99c011e7899db89319",
+        "73c85e08368b1e84f4f5",
+        "9dc56b979149c7ce989d",
+        "daa2289d1b4d26e23867",
+        "d9b239c15ec23fc263e2",
+        "9cb37dea32d27bd1a22a",
+        "45153fd0366dc421bba5"
+      ],
+      "summary_partial_reason_code": null,
+      "tool": "recall",
+      "tool_arguments": {
+        "query": "Maya checkout retry jitter backoff"
+      },
+      "warnings": []
+    },
+    {
+      "contract": {
+        "compatibility": {
+          "clients_must_ignore_unknown_enum_values": true,
+          "clients_must_ignore_unknown_fields": true,
+          "db_shape_is_not_public_contract": true,
+          "mode": "additive_first"
+        },
+        "generated_at": "2026-04-28T11:55:19.569146Z",
+        "generation_basis": {
+          "semantic_generation": 0,
+          "structural_generation": 0
+        },
+        "identity": {
+          "edge_id_semantics": "no_public_edge_ids",
+          "edge_ids_are_local_only": true,
+          "node_id_semantics": "stable_public_memory_id",
+          "node_ids_are_project_scoped": false,
+          "stable_edge_ids": false,
+          "stable_node_ids": true
+        },
+        "projection": {
+          "basis": "semantic_generation",
+          "generation": 0,
+          "materialization": {
+            "addressability_semantics": "no_stable_external_read_target_is_promised_until_materialization_strategy_changes",
+            "consistent_with_projection_state": true,
+            "current_generation": 0,
+            "identity_basis": "project_id + semantic_generation",
+            "is_addressable": false,
+            "locator_can_be_persisted_by_clients": false,
+            "locator_is_opaque": true,
+            "locator_scope": "none_when_not_materialized",
+            "locator_semantics": "absent_when_not_materialized; when present it identifies the externally consumable projection instance",
+            "locator_stability": "not_stable_until_materialization_strategy_changes",
+            "locator_survives_generation_change": false,
+            "persistence": "ephemeral_contract_only",
+            "persistence_semantics": "contract is exposed on status surfaces only; no persisted projection artifact is promised yet",
+            "refresh_basis": "semantic_generation",
+            "shape_version": 1,
+            "shape_version_semantics": "materialized_projection_payload_shape_version",
+            "strategy": "not_materialized"
+          },
+          "state": "missing"
+        },
+        "projection_state": "missing",
+        "schema_version": 1,
+        "surface_guidance": {
+          "forbidden_to_depend_fields": [],
+          "legacy_compatibility_fields": [
+            "count",
+            "filters",
+            "diagnostics",
+            "weights",
+            "query"
+          ],
+          "preferred_response_fields": [
+            "results",
+            "memories",
+            "contract",
+            "summary"
+          ]
+        }
+      },
+      "expected_count": 2,
+      "expected_fixture_ids": [
+        "mini_mem_research_refund_notifications",
+        "mini_mem_context_refund_runbook"
+      ],
+      "expected_ids": [
+        "mini_mem_research_refund_notifications",
+        "mini_mem_context_refund_runbook"
+      ],
+      "expected_rank": 1,
+      "expected_server_ids": [
+        "73c85e08368b1e84f4f5",
+        "daa2289d1b4d26e23867"
+      ],
+      "failure_type": "none",
+      "found_expected_fixture_ids": [
+        "mini_mem_research_refund_notifications",
+        "mini_mem_context_refund_runbook"
+      ],
+      "found_expected_ids": [
+        "73c85e08368b1e84f4f5",
+        "daa2289d1b4d26e23867"
+      ],
+      "found_expected_server_ids": [
+        "73c85e08368b1e84f4f5",
+        "daa2289d1b4d26e23867"
+      ],
+      "hit_count": 1,
+      "latency_ms": 1.2955420000011486,
+      "missing_expected_fixture_ids": [],
+      "mrr": 1.0,
+      "ndcg_at_10": 1.0,
+      "ndcg_at_5": 1.0,
+      "negative": false,
+      "parse_errors": [],
+      "precision_at_10": 0.2,
+      "precision_at_5": 0.4,
+      "query": "refund notifications runbook AtlasPay",
+      "query_id": "mini_q_search_bm25_refund_ops",
+      "query_type": "search_bm25",
+      "raw_top_k": [
+        {
+          "fixture_id": "mini_mem_research_refund_notifications",
+          "preview": "RESEARCH: Nora documented that support tickets cluster around delayed refund notifications in AtlasPay.",
+          "rank": 1,
+          "result_id": "73c85e08368b1e84f4f5",
+          "score": 1.0
+        },
+        {
+          "fixture_id": "mini_mem_context_refund_runbook",
+          "preview": "CONTEXT: Team AtlasPay stores refund webhook runbooks in the finance incident folder.",
+          "rank": 2,
+          "result_id": "daa2289d1b4d26e23867",
+          "score": 1.0
+        }
+      ],
+      "reason_code_classification": null,
+      "recall_at_10": 1.0,
+      "recall_at_5": 1.0,
+      "result_count": 2,
+      "result_ids": [
+        "73c85e08368b1e84f4f5",
+        "daa2289d1b4d26e23867"
+      ],
+      "summary_partial_reason_code": null,
+      "tool": "search_memory",
+      "tool_arguments": {
+        "mode": "bm25",
+        "query": "refund notifications runbook AtlasPay"
+      },
+      "warnings": []
+    },
+    {
+      "contract": {
+        "compatibility": {
+          "clients_must_ignore_unknown_enum_values": true,
+          "clients_must_ignore_unknown_fields": true,
+          "db_shape_is_not_public_contract": true,
+          "mode": "additive_first"
+        },
+        "generated_at": "2026-04-28T11:55:19.584401Z",
+        "generation_basis": {
+          "semantic_generation": 0,
+          "structural_generation": 0
+        },
+        "identity": {
+          "edge_id_semantics": "no_public_edge_ids",
+          "edge_ids_are_local_only": true,
+          "node_id_semantics": "stable_public_memory_id",
+          "node_ids_are_project_scoped": false,
+          "stable_edge_ids": false,
+          "stable_node_ids": true
+        },
+        "projection": {
+          "basis": "semantic_generation",
+          "generation": 0,
+          "materialization": {
+            "addressability_semantics": "no_stable_external_read_target_is_promised_until_materialization_strategy_changes",
+            "consistent_with_projection_state": true,
+            "current_generation": 0,
+            "identity_basis": "project_id + semantic_generation",
+            "is_addressable": false,
+            "locator_can_be_persisted_by_clients": false,
+            "locator_is_opaque": true,
+            "locator_scope": "none_when_not_materialized",
+            "locator_semantics": "absent_when_not_materialized; when present it identifies the externally consumable projection instance",
+            "locator_stability": "not_stable_until_materialization_strategy_changes",
+            "locator_survives_generation_change": false,
+            "persistence": "ephemeral_contract_only",
+            "persistence_semantics": "contract is exposed on status surfaces only; no persisted projection artifact is promised yet",
+            "refresh_basis": "semantic_generation",
+            "shape_version": 1,
+            "shape_version_semantics": "materialized_projection_payload_shape_version",
+            "strategy": "not_materialized"
+          },
+          "state": "missing"
+        },
+        "projection_state": "missing",
+        "schema_version": 1,
+        "surface_guidance": {
+          "forbidden_to_depend_fields": [],
+          "legacy_compatibility_fields": [
+            "count",
+            "filters",
+            "diagnostics",
+            "weights",
+            "query"
+          ],
+          "preferred_response_fields": [
+            "results",
+            "memories",
+            "contract",
+            "summary"
+          ]
+        }
+      },
+      "expected_count": 2,
+      "expected_fixture_ids": [
+        "mini_mem_project_helios_triage",
+        "mini_mem_task_helios_crash_review"
+      ],
+      "expected_ids": [
+        "mini_mem_project_helios_triage",
+        "mini_mem_task_helios_crash_review"
+      ],
+      "expected_rank": 1,
+      "expected_server_ids": [
+        "d9b239c15ec23fc263e2",
+        "9dc56b979149c7ce989d"
+      ],
+      "failure_type": "none",
+      "found_expected_fixture_ids": [
+        "mini_mem_task_helios_crash_review",
+        "mini_mem_project_helios_triage"
+      ],
+      "found_expected_ids": [
+        "9dc56b979149c7ce989d",
+        "d9b239c15ec23fc263e2"
+      ],
+      "found_expected_server_ids": [
+        "9dc56b979149c7ce989d",
+        "d9b239c15ec23fc263e2"
+      ],
+      "hit_count": 1,
+      "latency_ms": 15.473374999999123,
+      "missing_expected_fixture_ids": [],
+      "mrr": 1.0,
+      "ndcg_at_10": 1.0,
+      "ndcg_at_5": 1.0,
+      "negative": false,
+      "parse_errors": [],
+      "precision_at_10": 0.2,
+      "precision_at_5": 0.4,
+      "query": "Priya Helios crash triage reminder",
+      "query_id": "mini_q_search_vector_helios_stability",
+      "query_type": "search_vector",
+      "raw_top_k": [
+        {
+          "fixture_id": "mini_mem_task_helios_crash_review",
+          "preview": "TASK: Priya requested a Friday reminder to verify top-5 Helios crash signatures.",
+          "rank": 1,
+          "result_id": "9dc56b979149c7ce989d",
+          "score": 0.9251337647438049
+        },
+        {
+          "fixture_id": "mini_mem_project_helios_triage",
+          "preview": "PROJECT: Helios mobile release moved crash triage ownership to Priya for sprint 9.",
+          "rank": 2,
+          "result_id": "d9b239c15ec23fc263e2",
+          "score": 0.9159648418426514
+        },
+        {
+          "fixture_id": "mini_mem_task_parser_fallback_temp",
+          "preview": "TASK: Temporary experiment for legacy parser fallback during migration week.",
+          "rank": 3,
+          "result_id": "44b57a67a540dc08b9d6",
+          "score": 0.8217223286628723
+        },
+        {
+          "fixture_id": "mini_mem_context_process_namespace",
+          "preview": "CONTEXT: Namespace evals/mempalace-mini/process stores team communication memories.",
+          "rank": 4,
+          "result_id": "9cb37dea32d27bd1a22a",
+          "score": 0.821444034576416
+        },
+        {
+          "fixture_id": "mini_mem_research_refund_notifications",
+          "preview": "RESEARCH: Nora documented that support tickets cluster around delayed refund notifications in AtlasPay.",
+          "rank": 5,
+          "result_id": "73c85e08368b1e84f4f5",
+          "score": 0.8100289106369019
+        },
+        {
+          "fixture_id": "mini_mem_context_refund_runbook",
+          "preview": "CONTEXT: Team AtlasPay stores refund webhook runbooks in the finance incident folder.",
+          "rank": 6,
+          "result_id": "daa2289d1b4d26e23867",
+          "score": 0.8036540746688843
+        },
+        {
+          "fixture_id": "mini_mem_user_pref_release_notes",
+          "preview": "USER: Maya prefers bullet-point release notes with one-line risks.",
+          "rank": 7,
+          "result_id": "369bf56ae5cba0baabe1",
+          "score": 0.7975687384605408
+        },
+        {
+          "fixture_id": "mini_mem_decision_parser_fallback_removed",
+          "preview": "DECISION: After migration week, parser fallback was removed from the active path.",
+          "rank": 8,
+          "result_id": "2a99c011e7899db89319",
+          "score": 0.796938955783844
+        },
+        {
+          "fixture_id": "mini_mem_decision_checkout_backoff",
+          "preview": "DECISION: Project checkout-reliability will use capped exponential backoff with a 90 second max window.",
+          "rank": 9,
+          "result_id": "e6a75891e45d42453c3d",
+          "score": 0.795414924621582
+        }
+      ],
+      "reason_code_classification": null,
+      "recall_at_10": 1.0,
+      "recall_at_5": 1.0,
+      "result_count": 9,
+      "result_ids": [
+        "9dc56b979149c7ce989d",
+        "d9b239c15ec23fc263e2",
+        "44b57a67a540dc08b9d6",
+        "9cb37dea32d27bd1a22a",
+        "73c85e08368b1e84f4f5",
+        "daa2289d1b4d26e23867",
+        "369bf56ae5cba0baabe1",
+        "2a99c011e7899db89319",
+        "e6a75891e45d42453c3d"
+      ],
+      "summary_partial_reason_code": null,
+      "tool": "search_memory",
+      "tool_arguments": {
+        "mode": "vector",
+        "query": "Priya Helios crash triage reminder"
+      },
+      "warnings": []
+    },
+    {
+      "contract": {
+        "compatibility": {
+          "clients_must_ignore_unknown_enum_values": true,
+          "clients_must_ignore_unknown_fields": true,
+          "db_shape_is_not_public_contract": true,
+          "mode": "additive_first"
+        },
+        "generated_at": "2026-04-28T11:55:19.585683Z",
+        "generation_basis": {
+          "semantic_generation": 0,
+          "structural_generation": 0
+        },
+        "identity": {
+          "edge_id_semantics": "no_public_edge_ids",
+          "edge_ids_are_local_only": true,
+          "node_id_semantics": "stable_public_memory_id",
+          "node_ids_are_project_scoped": false,
+          "stable_edge_ids": false,
+          "stable_node_ids": true
+        },
+        "projection": {
+          "basis": "semantic_generation",
+          "generation": 0,
+          "materialization": {
+            "addressability_semantics": "no_stable_external_read_target_is_promised_until_materialization_strategy_changes",
+            "consistent_with_projection_state": true,
+            "current_generation": 0,
+            "identity_basis": "project_id + semantic_generation",
+            "is_addressable": false,
+            "locator_can_be_persisted_by_clients": false,
+            "locator_is_opaque": true,
+            "locator_scope": "none_when_not_materialized",
+            "locator_semantics": "absent_when_not_materialized; when present it identifies the externally consumable projection instance",
+            "locator_stability": "not_stable_until_materialization_strategy_changes",
+            "locator_survives_generation_change": false,
+            "persistence": "ephemeral_contract_only",
+            "persistence_semantics": "contract is exposed on status surfaces only; no persisted projection artifact is promised yet",
+            "refresh_basis": "semantic_generation",
+            "shape_version": 1,
+            "shape_version_semantics": "materialized_projection_payload_shape_version",
+            "strategy": "not_materialized"
+          },
+          "state": "missing"
+        },
+        "projection_state": "missing",
+        "schema_version": 1,
+        "surface_guidance": {
+          "forbidden_to_depend_fields": [],
+          "legacy_compatibility_fields": [
+            "count",
+            "total",
+            "filters",
+            "metadata_filter_diagnostics"
+          ],
+          "preferred_response_fields": [
+            "memory",
+            "memories",
+            "contract",
+            "summary"
+          ]
+        }
+      },
+      "expected_count": 2,
+      "expected_fixture_ids": [
+        "mini_mem_task_checkout_retry",
+        "mini_mem_decision_checkout_backoff"
+      ],
+      "expected_ids": [
+        "mini_mem_task_checkout_retry",
+        "mini_mem_decision_checkout_backoff"
+      ],
+      "expected_rank": 1,
+      "expected_server_ids": [
+        "45153fd0366dc421bba5",
+        "e6a75891e45d42453c3d"
+      ],
+      "failure_type": "none",
+      "found_expected_fixture_ids": [
+        "mini_mem_decision_checkout_backoff",
+        "mini_mem_task_checkout_retry"
+      ],
+      "found_expected_ids": [
+        "e6a75891e45d42453c3d",
+        "45153fd0366dc421bba5"
+      ],
+      "found_expected_server_ids": [
+        "e6a75891e45d42453c3d",
+        "45153fd0366dc421bba5"
+      ],
+      "hit_count": 1,
+      "latency_ms": 0.9140000000016357,
+      "missing_expected_fixture_ids": [],
+      "mrr": 1.0,
+      "ndcg_at_10": 1.0,
+      "ndcg_at_5": 1.0,
+      "negative": false,
+      "parse_errors": [],
+      "precision_at_10": 0.2,
+      "precision_at_5": 0.4,
+      "query": "checkout namespace memories valid in mid February",
+      "query_id": "mini_q_get_valid_checkout_namespace",
+      "query_type": "get_valid_filtered",
+      "raw_top_k": [
+        {
+          "fixture_id": "mini_mem_decision_checkout_backoff",
+          "preview": "DECISION: Project checkout-reliability will use capped exponential backoff with a 90 second max window.",
+          "rank": 1,
+          "result_id": "e6a75891e45d42453c3d"
+        },
+        {
+          "fixture_id": "mini_mem_task_checkout_retry",
+          "preview": "TASK: During sprint planning, Maya requested idempotent write retries with jitter for checkout failures.",
+          "rank": 2,
+          "result_id": "45153fd0366dc421bba5"
+        }
+      ],
+      "reason_code_classification": null,
+      "recall_at_10": 1.0,
+      "recall_at_5": 1.0,
+      "result_count": 2,
+      "result_ids": [
+        "e6a75891e45d42453c3d",
+        "45153fd0366dc421bba5"
+      ],
+      "summary_partial_reason_code": null,
+      "tool": "get_valid",
+      "tool_arguments": {
+        "namespace": "evals/mempalace-mini/checkout",
+        "valid_at": "2026-02-12T00:00:00Z"
+      },
+      "warnings": []
+    },
+    {
+      "contract": {
+        "compatibility": {
+          "clients_must_ignore_unknown_enum_values": true,
+          "clients_must_ignore_unknown_fields": true,
+          "db_shape_is_not_public_contract": true,
+          "mode": "additive_first"
+        },
+        "generated_at": "2026-04-28T11:55:19.586286Z",
+        "generation_basis": {
+          "semantic_generation": 0,
+          "structural_generation": 0
+        },
+        "identity": {
+          "edge_id_semantics": "no_public_edge_ids",
+          "edge_ids_are_local_only": true,
+          "node_id_semantics": "stable_public_memory_id",
+          "node_ids_are_project_scoped": false,
+          "stable_edge_ids": false,
+          "stable_node_ids": true
+        },
+        "projection": {
+          "basis": "semantic_generation",
+          "generation": 0,
+          "materialization": {
+            "addressability_semantics": "no_stable_external_read_target_is_promised_until_materialization_strategy_changes",
+            "consistent_with_projection_state": true,
+            "current_generation": 0,
+            "identity_basis": "project_id + semantic_generation",
+            "is_addressable": false,
+            "locator_can_be_persisted_by_clients": false,
+            "locator_is_opaque": true,
+            "locator_scope": "none_when_not_materialized",
+            "locator_semantics": "absent_when_not_materialized; when present it identifies the externally consumable projection instance",
+            "locator_stability": "not_stable_until_materialization_strategy_changes",
+            "locator_survives_generation_change": false,
+            "persistence": "ephemeral_contract_only",
+            "persistence_semantics": "contract is exposed on status surfaces only; no persisted projection artifact is promised yet",
+            "refresh_basis": "semantic_generation",
+            "shape_version": 1,
+            "shape_version_semantics": "materialized_projection_payload_shape_version",
+            "strategy": "not_materialized"
+          },
+          "state": "missing"
+        },
+        "projection_state": "missing",
+        "schema_version": 1,
+        "surface_guidance": {
+          "forbidden_to_depend_fields": [],
+          "legacy_compatibility_fields": [
+            "count",
+            "total",
+            "filters",
+            "metadata_filter_diagnostics"
+          ],
+          "preferred_response_fields": [
+            "memory",
+            "memories",
+            "contract",
+            "summary"
+          ]
+        }
+      },
+      "expected_count": 1,
+      "expected_fixture_ids": [
+        "mini_mem_decision_parser_fallback_removed"
+      ],
+      "expected_ids": [
+        "mini_mem_decision_parser_fallback_removed"
+      ],
+      "expected_rank": 1,
+      "expected_server_ids": [
+        "2a99c011e7899db89319"
+      ],
+      "failure_type": "none",
+      "found_expected_fixture_ids": [
+        "mini_mem_decision_parser_fallback_removed"
+      ],
+      "found_expected_ids": [
+        "2a99c011e7899db89319"
+      ],
+      "found_expected_server_ids": [
+        "2a99c011e7899db89319"
+      ],
+      "hit_count": 1,
+      "latency_ms": 0.55799999999806,
+      "missing_expected_fixture_ids": [],
+      "mrr": 1.0,
+      "ndcg_at_10": 1.0,
+      "ndcg_at_5": 1.0,
+      "negative": false,
+      "parse_errors": [],
+      "precision_at_10": 0.1,
+      "precision_at_5": 0.2,
+      "query": "platform parser fallback state after migration week",
+      "query_id": "mini_q_get_valid_temporal_post_migration",
+      "query_type": "get_valid_temporal",
+      "raw_top_k": [
+        {
+          "fixture_id": "mini_mem_decision_parser_fallback_removed",
+          "preview": "DECISION: After migration week, parser fallback was removed from the active path.",
+          "rank": 1,
+          "result_id": "2a99c011e7899db89319"
+        },
+        {
+          "fixture_id": "mini_mem_task_parser_fallback_temp",
+          "preview": "TASK: Temporary experiment for legacy parser fallback during migration week.",
+          "rank": 2,
+          "result_id": "44b57a67a540dc08b9d6"
+        }
+      ],
+      "reason_code_classification": null,
+      "recall_at_10": 1.0,
+      "recall_at_5": 1.0,
+      "result_count": 2,
+      "result_ids": [
+        "2a99c011e7899db89319",
+        "44b57a67a540dc08b9d6"
+      ],
+      "summary_partial_reason_code": null,
+      "tool": "get_valid",
+      "tool_arguments": {
+        "namespace": "evals/mempalace-mini/platform",
+        "valid_at": "2026-02-22T00:00:00Z"
+      },
+      "warnings": []
+    },
+    {
+      "contract": {
+        "compatibility": {
+          "clients_must_ignore_unknown_enum_values": true,
+          "clients_must_ignore_unknown_fields": true,
+          "db_shape_is_not_public_contract": true,
+          "mode": "additive_first"
+        },
+        "generated_at": "2026-04-28T11:55:19.600487Z",
+        "generation_basis": {
+          "semantic_generation": 0,
+          "structural_generation": 0
+        },
+        "identity": {
+          "edge_id_semantics": "no_public_edge_ids",
+          "edge_ids_are_local_only": true,
+          "node_id_semantics": "stable_public_memory_id",
+          "node_ids_are_project_scoped": false,
+          "stable_edge_ids": false,
+          "stable_node_ids": true
+        },
+        "projection": {
+          "basis": "semantic_generation",
+          "generation": 0,
+          "materialization": {
+            "addressability_semantics": "no_stable_external_read_target_is_promised_until_materialization_strategy_changes",
+            "consistent_with_projection_state": true,
+            "current_generation": 0,
+            "identity_basis": "project_id + semantic_generation",
+            "is_addressable": false,
+            "locator_can_be_persisted_by_clients": false,
+            "locator_is_opaque": true,
+            "locator_scope": "none_when_not_materialized",
+            "locator_semantics": "absent_when_not_materialized; when present it identifies the externally consumable projection instance",
+            "locator_stability": "not_stable_until_materialization_strategy_changes",
+            "locator_survives_generation_change": false,
+            "persistence": "ephemeral_contract_only",
+            "persistence_semantics": "contract is exposed on status surfaces only; no persisted projection artifact is promised yet",
+            "refresh_basis": "semantic_generation",
+            "shape_version": 1,
+            "shape_version_semantics": "materialized_projection_payload_shape_version",
+            "strategy": "not_materialized"
+          },
+          "state": "missing"
+        },
+        "projection_state": "missing",
+        "schema_version": 1,
+        "surface_guidance": {
+          "forbidden_to_depend_fields": [],
+          "legacy_compatibility_fields": [
+            "count",
+            "filters",
+            "diagnostics",
+            "weights",
+            "query"
+          ],
+          "preferred_response_fields": [
+            "results",
+            "memories",
+            "contract",
+            "summary"
+          ]
+        }
+      },
+      "expected_count": 2,
+      "expected_fixture_ids": [
+        "mini_mem_user_pref_release_notes",
+        "mini_mem_context_process_namespace"
+      ],
+      "expected_ids": [
+        "mini_mem_user_pref_release_notes",
+        "mini_mem_context_process_namespace"
+      ],
+      "expected_rank": 1,
+      "expected_server_ids": [
+        "369bf56ae5cba0baabe1",
+        "9cb37dea32d27bd1a22a"
+      ],
+      "failure_type": "none",
+      "found_expected_fixture_ids": [
+        "mini_mem_user_pref_release_notes",
+        "mini_mem_context_process_namespace"
+      ],
+      "found_expected_ids": [
+        "369bf56ae5cba0baabe1",
+        "9cb37dea32d27bd1a22a"
+      ],
+      "found_expected_server_ids": [
+        "369bf56ae5cba0baabe1",
+        "9cb37dea32d27bd1a22a"
+      ],
+      "hit_count": 1,
+      "latency_ms": 14.390167000001952,
+      "missing_expected_fixture_ids": [],
+      "mrr": 1.0,
+      "ndcg_at_10": 1.0,
+      "ndcg_at_5": 1.0,
+      "negative": false,
+      "parse_errors": [],
+      "precision_at_10": 0.2,
+      "precision_at_5": 0.4,
+      "query": "Maya release-process communication style notes",
+      "query_id": "mini_q_recall_person_project_topic",
+      "query_type": "recall_fusion",
+      "raw_top_k": [
+        {
+          "fixture_id": "mini_mem_user_pref_release_notes",
+          "preview": "USER: Maya prefers bullet-point release notes with one-line risks.",
+          "rank": 1,
+          "result_id": "369bf56ae5cba0baabe1",
+          "score": 0.009016390889883041
+        },
+        {
+          "fixture_id": "mini_mem_context_process_namespace",
+          "preview": "CONTEXT: Namespace evals/mempalace-mini/process stores team communication memories.",
+          "rank": 2,
+          "result_id": "9cb37dea32d27bd1a22a",
+          "score": 0.008870964869856834
+        },
+        {
+          "fixture_id": "mini_mem_project_helios_triage",
+          "preview": "PROJECT: Helios mobile release moved crash triage ownership to Priya for sprint 9.",
+          "rank": 3,
+          "result_id": "d9b239c15ec23fc263e2",
+          "score": 0.008730156347155571
+        },
+        {
+          "fixture_id": "mini_mem_task_helios_crash_review",
+          "preview": "TASK: Priya requested a Friday reminder to verify top-5 Helios crash signatures.",
+          "rank": 4,
+          "result_id": "9dc56b979149c7ce989d",
+          "score": 0.0062499879859387875
+        },
+        {
+          "fixture_id": "mini_mem_research_refund_notifications",
+          "preview": "RESEARCH: Nora documented that support tickets cluster around delayed refund notifications in AtlasPay.",
+          "rank": 5,
+          "result_id": "73c85e08368b1e84f4f5",
+          "score": 0.006153843831270933
+        },
+        {
+          "fixture_id": "mini_mem_task_parser_fallback_temp",
+          "preview": "TASK: Temporary experiment for legacy parser fallback during migration week.",
+          "rank": 6,
+          "result_id": "44b57a67a540dc08b9d6",
+          "score": 0.006060594692826271
+        },
+        {
+          "fixture_id": "mini_mem_decision_checkout_backoff",
+          "preview": "DECISION: Project checkout-reliability will use capped exponential backoff with a 90 second max window.",
+          "rank": 7,
+          "result_id": "e6a75891e45d42453c3d",
+          "score": 0.005970146972686052
+        },
+        {
+          "fixture_id": "mini_mem_decision_parser_fallback_removed",
+          "preview": "DECISION: After migration week, parser fallback was removed from the active path.",
+          "rank": 8,
+          "result_id": "2a99c011e7899db89319",
+          "score": 0.005882351193577051
+        },
+        {
+          "fixture_id": "mini_mem_context_refund_runbook",
+          "preview": "CONTEXT: Team AtlasPay stores refund webhook runbooks in the finance incident folder.",
+          "rank": 9,
+          "result_id": "daa2289d1b4d26e23867",
+          "score": 0.0057970997877418995
+        },
+        {
+          "fixture_id": "mini_mem_task_checkout_retry",
+          "preview": "TASK: During sprint planning, Maya requested idempotent write retries with jitter for checkout failures.",
+          "rank": 10,
+          "result_id": "45153fd0366dc421bba5",
+          "score": 0.0023437500931322575
+        }
+      ],
+      "reason_code_classification": null,
+      "recall_at_10": 1.0,
+      "recall_at_5": 1.0,
+      "result_count": 10,
+      "result_ids": [
+        "369bf56ae5cba0baabe1",
+        "9cb37dea32d27bd1a22a",
+        "d9b239c15ec23fc263e2",
+        "9dc56b979149c7ce989d",
+        "73c85e08368b1e84f4f5",
+        "44b57a67a540dc08b9d6",
+        "e6a75891e45d42453c3d",
+        "2a99c011e7899db89319",
+        "daa2289d1b4d26e23867",
+        "45153fd0366dc421bba5"
+      ],
+      "summary_partial_reason_code": null,
+      "tool": "recall",
+      "tool_arguments": {
+        "query": "Maya release-process communication style notes"
+      },
+      "warnings": []
+    },
+    {
+      "contract": {
+        "compatibility": {
+          "clients_must_ignore_unknown_enum_values": true,
+          "clients_must_ignore_unknown_fields": true,
+          "db_shape_is_not_public_contract": true,
+          "mode": "additive_first"
+        },
+        "generated_at": "2026-04-28T11:55:19.617117Z",
+        "generation_basis": {
+          "semantic_generation": 0,
+          "structural_generation": 0
+        },
+        "identity": {
+          "edge_id_semantics": "no_public_edge_ids",
+          "edge_ids_are_local_only": true,
+          "node_id_semantics": "stable_public_memory_id",
+          "node_ids_are_project_scoped": false,
+          "stable_edge_ids": false,
+          "stable_node_ids": true
+        },
+        "projection": {
+          "basis": "semantic_generation",
+          "generation": 0,
+          "materialization": {
+            "addressability_semantics": "no_stable_external_read_target_is_promised_until_materialization_strategy_changes",
+            "consistent_with_projection_state": true,
+            "current_generation": 0,
+            "identity_basis": "project_id + semantic_generation",
+            "is_addressable": false,
+            "locator_can_be_persisted_by_clients": false,
+            "locator_is_opaque": true,
+            "locator_scope": "none_when_not_materialized",
+            "locator_semantics": "absent_when_not_materialized; when present it identifies the externally consumable projection instance",
+            "locator_stability": "not_stable_until_materialization_strategy_changes",
+            "locator_survives_generation_change": false,
+            "persistence": "ephemeral_contract_only",
+            "persistence_semantics": "contract is exposed on status surfaces only; no persisted projection artifact is promised yet",
+            "refresh_basis": "semantic_generation",
+            "shape_version": 1,
+            "shape_version_semantics": "materialized_projection_payload_shape_version",
+            "strategy": "not_materialized"
+          },
+          "state": "missing"
+        },
+        "projection_state": "missing",
+        "schema_version": 1,
+        "surface_guidance": {
+          "forbidden_to_depend_fields": [],
+          "legacy_compatibility_fields": [
+            "count",
+            "filters",
+            "diagnostics",
+            "weights",
+            "query"
+          ],
+          "preferred_response_fields": [
+            "results",
+            "memories",
+            "contract",
+            "summary"
+          ]
+        }
+      },
+      "expected_count": 0,
+      "expected_fixture_ids": [],
+      "expected_ids": [],
+      "expected_rank": null,
+      "expected_server_ids": [],
+      "failure_type": "wrong_rank",
+      "found_expected_fixture_ids": [],
+      "found_expected_ids": [],
+      "found_expected_server_ids": [],
+      "hit_count": 0,
+      "latency_ms": 16.556958999998983,
+      "missing_expected_fixture_ids": [],
+      "mrr": 0.0,
+      "ndcg_at_10": 0.0,
+      "ndcg_at_5": 0.0,
+      "negative": true,
+      "parse_errors": [],
+      "precision_at_10": 0.0,
+      "precision_at_5": 0.0,
+      "query": "cerulean walrus moonbeam lattice",
+      "query_id": "mini_q_negative_no_match_nonsense",
+      "query_type": "negative_no_match",
+      "raw_top_k": [
+        {
+          "fixture_id": "mini_mem_context_process_namespace",
+          "preview": "CONTEXT: Namespace evals/mempalace-mini/process stores team communication memories.",
+          "rank": 1,
+          "result_id": "9cb37dea32d27bd1a22a",
+          "score": 0.006557375192642212
+        },
+        {
+          "fixture_id": "mini_mem_task_parser_fallback_temp",
+          "preview": "TASK: Temporary experiment for legacy parser fallback during migration week.",
+          "rank": 2,
+          "result_id": "44b57a67a540dc08b9d6",
+          "score": 0.006451600696891546
+        },
+        {
+          "fixture_id": "mini_mem_task_helios_crash_review",
+          "preview": "TASK: Priya requested a Friday reminder to verify top-5 Helios crash signatures.",
+          "rank": 3,
+          "result_id": "9dc56b979149c7ce989d",
+          "score": 0.00634919386357069
+        },
+        {
+          "fixture_id": "mini_mem_project_helios_triage",
+          "preview": "PROJECT: Helios mobile release moved crash triage ownership to Priya for sprint 9.",
+          "rank": 4,
+          "result_id": "d9b239c15ec23fc263e2",
+          "score": 0.006249998230487108
+        },
+        {
+          "fixture_id": "mini_mem_user_pref_release_notes",
+          "preview": "USER: Maya prefers bullet-point release notes with one-line risks.",
+          "rank": 5,
+          "result_id": "369bf56ae5cba0baabe1",
+          "score": 0.0061538442969322205
+        },
+        {
+          "fixture_id": "mini_mem_research_refund_notifications",
+          "preview": "RESEARCH: Nora documented that support tickets cluster around delayed refund notifications in AtlasPay.",
+          "rank": 6,
+          "result_id": "73c85e08368b1e84f4f5",
+          "score": 0.006060604006052017
+        },
+        {
+          "fixture_id": "mini_mem_decision_parser_fallback_removed",
+          "preview": "DECISION: After migration week, parser fallback was removed from the active path.",
+          "rank": 7,
+          "result_id": "2a99c011e7899db89319",
+          "score": 0.00597014743834734
+        },
+        {
+          "fixture_id": "mini_mem_decision_checkout_backoff",
+          "preview": "DECISION: Project checkout-reliability will use capped exponential backoff with a 90 second max window.",
+          "rank": 8,
+          "result_id": "e6a75891e45d42453c3d",
+          "score": 0.005882350727915764
+        },
+        {
+          "fixture_id": "mini_mem_context_refund_runbook",
+          "preview": "CONTEXT: Team AtlasPay stores refund webhook runbooks in the finance incident folder.",
+          "rank": 9,
+          "result_id": "daa2289d1b4d26e23867",
+          "score": 0.0057970997877418995
+        }
+      ],
+      "reason_code_classification": null,
+      "recall_at_10": 0.0,
+      "recall_at_5": 0.0,
+      "result_count": 9,
+      "result_ids": [
+        "9cb37dea32d27bd1a22a",
+        "44b57a67a540dc08b9d6",
+        "9dc56b979149c7ce989d",
+        "d9b239c15ec23fc263e2",
+        "369bf56ae5cba0baabe1",
+        "73c85e08368b1e84f4f5",
+        "2a99c011e7899db89319",
+        "e6a75891e45d42453c3d",
+        "daa2289d1b4d26e23867"
+      ],
+      "summary_partial_reason_code": null,
+      "tool": "recall",
+      "tool_arguments": {
+        "query": "cerulean walrus moonbeam lattice"
+      },
+      "warnings": []
+    }
+  ],
+  "readiness_summary": {
+    "readiness_fallback": {
+      "classification": "degraded",
+      "elapsed_s": 7.013,
+      "explanation": "Readiness used fallback settling because no direct ready signal was available; results can still be valid but should be reviewed with elapsed time.",
+      "fallback_sleep_s": 3.0,
+      "fallback_used": true,
+      "impact": "degraded",
+      "poll_attempts": 3,
+      "readiness_signal": "none",
+      "reason": "no_direct_readiness_signal",
+      "status": "fallback_after_no_signal"
+    },
+    "taxonomy": {
+      "reason_code_classification": {},
+      "reason_codes": []
+    },
+    "threshold_status_reason": "all required threshold checks passed"
+  },
+  "schema_version": "2.0",
+  "stderr_tail": [
+    "[memory-mcp] Auto-configured block cache: 18 MB (available RAM: 90 MB)",
+    "\u001b[2m2026-04-28T11:54:16.962912Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2mmemory_mcp\u001b[0m\u001b[2m:\u001b[0m memory-mcp starting \u001b[3mversion\u001b[0m\u001b[2m=\u001b[0m\"0.8.2\" \u001b[3mpid\u001b[0m\u001b[2m=\u001b[0m36632 \u001b[3mppid\u001b[0m\u001b[2m=\u001b[0m36628 \u001b[3mmode\u001b[0m\u001b[2m=\u001b[0m\"stdio\" \u001b[3mmodel\u001b[0m\u001b[2m=\u001b[0me5_small \u001b[3mdata_dir\u001b[0m\u001b[2m=\u001b[0m/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-8-memory-retrieval-data-zz1nlj3u",
+    "\u001b[2m2026-04-28T11:54:16.968853Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2msurrealdb::core::kvs::ds\u001b[0m\u001b[2m:\u001b[0m Starting kvs store at absolute path surrealkv:/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-8-memory-retrieval-data-zz1nlj3u/db",
+    "\u001b[2m2026-04-28T11:54:16.971921Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2msurrealdb::core::kvs::surrealkv\u001b[0m\u001b[2m:\u001b[0m Enabling value log separation: true",
+    "\u001b[2m2026-04-28T11:54:16.981216Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2msurrealdb::core::kvs::surrealkv\u001b[0m\u001b[2m:\u001b[0m Setting value log max file size: 268435456",
+    "\u001b[2m2026-04-28T11:54:16.981224Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2msurrealdb::core::kvs::surrealkv\u001b[0m\u001b[2m:\u001b[0m Setting value log threshold: 4096",
+    "\u001b[2m2026-04-28T11:54:16.981225Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2msurrealdb::core::kvs::surrealkv\u001b[0m\u001b[2m:\u001b[0m Versioning enabled: false with retention period: 0ns",
+    "\u001b[2m2026-04-28T11:54:16.981226Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2msurrealdb::core::kvs::surrealkv\u001b[0m\u001b[2m:\u001b[0m Versioning with versioned_index: false",
+    "\u001b[2m2026-04-28T11:54:16.981383Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2msurrealdb::core::kvs::surrealkv\u001b[0m\u001b[2m:\u001b[0m Setting block cache capacity: 18874368",
+    "\u001b[2m2026-04-28T11:54:16.981600Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2msurrealdb::core::kvs::surrealkv\u001b[0m\u001b[2m:\u001b[0m Setting block size: 65536",
+    "\u001b[2m2026-04-28T11:54:16.982329Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2msurrealkv::lsm\u001b[0m\u001b[2m:\u001b[0m === Starting LSM tree initialization ===",
+    "\u001b[2m2026-04-28T11:54:16.982540Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2msurrealkv::lsm\u001b[0m\u001b[2m:\u001b[0m Database path: \"/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-8-memory-retrieval-data-zz1nlj3u/db\"",
+    "\u001b[2m2026-04-28T11:54:17.005908Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2msurrealkv::lsm\u001b[0m\u001b[2m:\u001b[0m Manifest state: log_number=0, last_sequence=0",
+    "\u001b[2m2026-04-28T11:54:17.005917Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2msurrealkv::wal::recovery\u001b[0m\u001b[2m:\u001b[0m Starting WAL recovery from directory: \"/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-8-memory-retrieval-data-zz1nlj3u/db/wal\"",
+    "\u001b[2m2026-04-28T11:54:17.006000Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2msurrealkv::wal::recovery\u001b[0m\u001b[2m:\u001b[0m Replaying WAL segments #00000000000000000000 to #00000000000000000000",
+    "\u001b[2m2026-04-28T11:54:17.026271Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2msurrealkv::wal::recovery\u001b[0m\u001b[2m:\u001b[0m WAL recovery complete: 0 batches across 0 segments, 0 memtables created, max_seq_num=None",
+    "\u001b[2m2026-04-28T11:54:17.026721Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2msurrealkv::lsm\u001b[0m\u001b[2m:\u001b[0m === LSM tree initialization complete ===",
+    "\u001b[2m2026-04-28T11:54:17.038902Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2msurrealdb::core::kvs::surrealkv\u001b[0m\u001b[2m:\u001b[0m Sync mode: every transaction commit",
+    "\u001b[2m2026-04-28T11:54:17.039207Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2msurrealdb::core::kvs::surrealkv\u001b[0m\u001b[2m:\u001b[0m Grouped commit: enabled (timeout=5000000ns, wait_threshold=12, max_batch_size=4096)",
+    "\u001b[2m2026-04-28T11:54:17.039460Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2msurrealdb::core::kvs::ds\u001b[0m\u001b[2m:\u001b[0m Started surrealkv kvs store",
+    "\u001b[2m2026-04-28T11:54:17.746253Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2mmemory_mcp::storage::surrealdb\u001b[0m\u001b[2m:\u001b[0m Dimension check passed \u001b[3mmodel\u001b[0m\u001b[2m=\u001b[0m384 \u001b[3mdb\u001b[0m\u001b[2m=\u001b[0m384",
+    "\u001b[2m2026-04-28T11:54:17.746265Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2mmemory_mcp\u001b[0m\u001b[2m:\u001b[0m Embedding engine configured \u001b[3moutput_dim\u001b[0m\u001b[2m=\u001b[0m384 \u001b[3mmodel\u001b[0m\u001b[2m=\u001b[0me5_small",
+    "\u001b[2m2026-04-28T11:54:17.775406Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2mmemory_mcp::forgetting::capacity\u001b[0m\u001b[2m:\u001b[0m Capacity controller started \u001b[3mcheck_interval_secs\u001b[0m\u001b[2m=\u001b[0m3600 \u001b[3msoft_limit\u001b[0m\u001b[2m=\u001b[0m10000 \u001b[3mcleanup_target_ratio\u001b[0m\u001b[2m=\u001b[0m0.800000011920929",
+    "\u001b[2m2026-04-28T11:54:17.775525Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2mmemory_mcp::embedding::worker\u001b[0m\u001b[2m:\u001b[0m Embedding worker started, waiting for requests",
+    "\u001b[2m2026-04-28T11:54:17.775646Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2mmemory_mcp::embedding::service\u001b[0m\u001b[2m:\u001b[0m Loading embedding model: E5Small",
+    "\u001b[2m2026-04-28T11:54:17.777284Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2mrmcp::handler::server\u001b[0m\u001b[2m:\u001b[0m client initialized",
+    "\u001b[2m2026-04-28T11:54:17.777296Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[1mserve_inner\u001b[0m\u001b[2m:\u001b[0m \u001b[2mrmcp::service\u001b[0m\u001b[2m:\u001b[0m Service initialized as server \u001b[3mpeer_info\u001b[0m\u001b[2m=\u001b[0mSome(InitializeRequestParams { meta: None, protocol_version: ProtocolVersion(\"2024-11-05\"), capabilities: ClientCapabilities { experimental: None, extensions: None, roots: None, sampling: None, elicitation: None, tasks: None }, client_info: Implementation { name: \"memory-retrieval-benchmark\", title: None, version: \"0.1.0\", description: None, icons: None, website_url: None } })",
+    "\u001b[2m2026-04-28T11:54:17.777317Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2mmemory_mcp\u001b[0m\u001b[2m:\u001b[0m Server started in stdio mode, waiting for client disconnect or signals...",
+    "\u001b[2m2026-04-28T11:54:17.779780Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2mmemory_mcp::forgetting::capacity\u001b[0m\u001b[2m:\u001b[0m Capacity OK: 0 memories \u001b[3mcount\u001b[0m\u001b[2m=\u001b[0m0",
+    "\u001b[2m2026-04-28T11:54:24.650206Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2mmemory_mcp::embedding::service\u001b[0m\u001b[2m:\u001b[0m Downloading model weights from HuggingFace Hub...",
+    "\u001b[2m2026-04-28T11:55:10.473969Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2mmemory_mcp::embedding::service\u001b[0m\u001b[2m:\u001b[0m Embedding model ready \u001b[3melapsed_sec\u001b[0m\u001b[2m=\u001b[0m\"52.7\""
+  ],
+  "threshold_policy": "local-v2-threshold-policy",
+  "threshold_status": "pass",
+  "warnings": []
+}

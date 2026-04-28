@@ -1,0 +1,18 @@
+{
+  "fixture_tier": "stress",
+  "generation_plan": {
+    "enabled_by_default": false,
+    "estimated_memory_count": 1200,
+    "notes": "Manifest-only stress definition. No heavy fixture generated or executed by default.",
+    "scenario_blocks": [
+      "long_memory_recall",
+      "namespace_boundary",
+      "temporal_boundary",
+      "negative_no_match",
+      "partial_readiness",
+      "id_mismatch_alias",
+      "record_shaped_ids"
+    ]
+  },
+  "version": 1
+}

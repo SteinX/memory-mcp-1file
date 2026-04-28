@@ -1,0 +1,26 @@
+Task: T2 baseline refresh policy
+Scenario: Normal run does not refresh canonical baseline
+Timestamp (UTC): 2026-04-28T05:00:18Z
+
+Command:
+  python3 evals/memory_retrieval_benchmark.py
+
+Baseline artifact checked:
+  .sisyphus/evidence/evals/memory-retrieval-baseline.json
+
+Checksum verification:
+  sha256_before=d96d8832dd2ba13b77dedd31e8149bbae44f631c75ee9e6fd2891450491a58dc
+  sha256_after=d96d8832dd2ba13b77dedd31e8149bbae44f631c75ee9e6fd2891450491a58dc
+  checksum_unchanged=true
+
+Run result summary:
+  exit_code=0
+  refresh_mode=false
+  refresh_requested=false
+  canonical_target_requested=true
+  canonical_target_written=false
+  output_json=.sisyphus/evidence/benchmark-v2/runs/memory_retrieval_baseline-20260428T050018Z.json
+  output_md=.sisyphus/evidence/benchmark-v2/runs/memory_retrieval_baseline-20260428T050018Z.md
+
+Verdict:
+  PASS - default run did not mutate canonical baseline artifacts.

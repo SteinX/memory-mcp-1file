@@ -1,0 +1,15 @@
+{
+  "memory_count": 13,
+  "query_count": 7,
+  "scenario_categories": [
+    "id_mismatch_alias",
+    "long_memory_recall",
+    "namespace_boundary",
+    "negative_no_match",
+    "partial_readiness",
+    "record_shaped_ids",
+    "temporal_boundary"
+  ],
+  "stress_fixture_default": false,
+  "stress_query_default": false
+}

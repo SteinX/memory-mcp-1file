@@ -1,0 +1,24 @@
+{
+  "output_json": ".sisyphus/evidence/benchmark-v2/task-8/memory-stress.json",
+  "output_md": ".sisyphus/evidence/benchmark-v2/task-8/memory-stress.md",
+  "query_count": 0,
+  "ran_queries": 0,
+  "blocker_count": 0,
+  "observed_reason_codes": [],
+  "baseline_refresh": {
+    "schema_version": "2.0",
+    "fixture_tier": "stress",
+    "baseline_version": "v2-initial",
+    "model": "e5_small",
+    "command": "python3 evals/memory_retrieval_benchmark.py --tier stress --output-json .sisyphus/evidence/benchmark-v2/task-8/memory-stress.json --output-md .sisyphus/evidence/benchmark-v2/task-8/memory-stress.md",
+    "refresh_reason": null,
+    "refresh_mode": false,
+    "refresh_requested": false,
+    "canonical_target_requested": false,
+    "canonical_target_written": false,
+    "output_json": ".sisyphus/evidence/benchmark-v2/task-8/memory-stress.json",
+    "output_md": ".sisyphus/evidence/benchmark-v2/task-8/memory-stress.md",
+    "refresh_timestamp_utc": null,
+    "git_commit": "99ac9f7f3d83e89ef434df3c14bf70488dea95aa"
+  }
+}

@@ -1,0 +1,21 @@
+{
+  "command": "python3 evals/code_retrieval_benchmark.py",
+  "returncode": 0,
+  "before": {
+    "legacy_json_exists": true,
+    "legacy_md_exists": true,
+    "legacy_json_sha256_before": "87694528eb718036d4b492e5a4ed7fbc14dda09ff4485bac436de0c050a3b47c",
+    "legacy_md_sha256_before": "a6cbe9581278e3219b181fe80916e50d25745346386d370628184b8d82c177d6"
+  },
+  "after": {
+    "legacy_json_exists": true,
+    "legacy_md_exists": true,
+    "legacy_json_sha256_after": "87694528eb718036d4b492e5a4ed7fbc14dda09ff4485bac436de0c050a3b47c",
+    "legacy_md_sha256_after": "a6cbe9581278e3219b181fe80916e50d25745346386d370628184b8d82c177d6"
+  },
+  "canonical_mutated": false,
+  "reported_output_json": "/Users/xiayiming1/Documents/Workspace/memory-mcp-1file/.sisyphus/evidence/benchmark-v2/runs/code_retrieval_baseline-small-20260428T131326Z.json",
+  "reported_output_md": "/Users/xiayiming1/Documents/Workspace/memory-mcp-1file/.sisyphus/evidence/benchmark-v2/runs/code_retrieval_baseline-small-20260428T131326Z.md",
+  "stdout": "{\n  \"output_json\": \"/Users/xiayiming1/Documents/Workspace/memory-mcp-1file/.sisyphus/evidence/benchmark-v2/runs/code_retrieval_baseline-small-20260428T131326Z.json\",\n  \"output_md\": \"/Users/xiayiming1/Documents/Workspace/memory-mcp-1file/.sisyphus/evidence/benchmark-v2/runs/code_retrieval_baseline-small-20260428T131326Z.md\",\n  \"query_count\": 15,\n  \"ran_queries\": 15,\n  \"blocker_count\": 0,\n  \"observed_reason_codes\": [\n    \"partial\"\n  ]\n}\n",
+  "stderr": ""
+}

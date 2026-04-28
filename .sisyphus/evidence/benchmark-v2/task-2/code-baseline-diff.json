@@ -1,0 +1,102 @@
+{
+  "baseline_pair": {
+    "after": ".sisyphus/evidence/task-2-recall-code-baseline.json",
+    "after_available": true,
+    "before": ".sisyphus/evidence/task-2-recall-code-baseline.json",
+    "before_available": true
+  },
+  "benchmark_name": "code_retrieval_baseline",
+  "comparison": {
+    "changed": [],
+    "improved": [],
+    "metric_status": {
+      "blocker_count": "unchanged",
+      "hit_rate": "missing",
+      "max_latency_ms": "unchanged",
+      "mean_latency_ms": "unchanged",
+      "mrr": "missing",
+      "p95_latency_ms": "missing",
+      "precision_at_10": "missing",
+      "precision_at_5": "missing"
+    },
+    "missing": {
+      "after": [],
+      "before": []
+    },
+    "regressed": [],
+    "unchanged": [
+      "blocker_count",
+      "max_latency_ms",
+      "mean_latency_ms"
+    ]
+  },
+  "generated_at_utc": "2026-04-28T10:38:44.343847Z",
+  "metrics": {
+    "blocker_count": {
+      "after": 1,
+      "before": 1,
+      "delta": 0.0
+    },
+    "blockers": {
+      "after": [
+        "\u2014: index readiness timeout"
+      ],
+      "before": [
+        "\u2014: index readiness timeout"
+      ],
+      "delta": {
+        "added": [],
+        "count_delta": 0,
+        "removed": []
+      }
+    },
+    "hit_rate": {
+      "after": null,
+      "before": null,
+      "delta": null
+    },
+    "max_latency_ms": {
+      "after": 3961.1,
+      "before": 3961.1,
+      "delta": 0.0
+    },
+    "mean_latency_ms": {
+      "after": 1866.9466666666667,
+      "before": 1866.9466666666667,
+      "delta": 0.0
+    },
+    "mrr": {
+      "after": null,
+      "before": null,
+      "delta": null
+    },
+    "p95_latency_ms": {
+      "after": null,
+      "before": null,
+      "delta": null
+    },
+    "precision_at_10": {
+      "after": null,
+      "before": null,
+      "delta": null
+    },
+    "precision_at_5": {
+      "after": null,
+      "before": null,
+      "delta": null
+    },
+    "reason_codes": {
+      "after": [],
+      "before": [],
+      "delta": {
+        "added": [],
+        "count_delta": 0,
+        "removed": []
+      }
+    }
+  },
+  "notes": [
+    "Diff artifacts are evidence/reporting only.",
+    "These deltas are informational and are not used as CI regression gates."
+  ]
+}

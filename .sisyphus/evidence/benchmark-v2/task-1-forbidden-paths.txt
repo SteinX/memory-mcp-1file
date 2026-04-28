@@ -1,0 +1,11 @@
+Task: T1 forbidden production path diff check
+Date: 2026-04-28
+
+Command:
+GIT_MASTER=1 git diff --name-only -- 'src/**' '.github/workflows/**' 'README.md' 'Cargo.toml' 'Cargo.lock' 'package.json' 'pyproject.toml' 'requirements.txt'
+
+Output:
+(empty)
+
+Result:
+PASS - no forbidden production, CI, root README, or dependency-manifest paths were modified.

@@ -1,0 +1,22 @@
+{
+  "generated_at_utc": "2026-04-28T12:35:37.062717Z",
+  "command": "python3 evals/memory_retrieval_benchmark.py --tier small --refresh-baseline --refresh-reason t12-final-bundle-dry-run-non-canonical --output-json .sisyphus/evidence/benchmark-v2/final-bundle/memory-refresh-dry-run.json --output-md .sisyphus/evidence/benchmark-v2/final-bundle/memory-refresh-dry-run.md",
+  "exit_code": 0,
+  "before": {
+    "canonical_json_exists": true,
+    "canonical_md_exists": true,
+    "canonical_json_sha256": "d96d8832dd2ba13b77dedd31e8149bbae44f631c75ee9e6fd2891450491a58dc",
+    "canonical_md_sha256": "8078c48ae13f86dd94d1f0bfc16bf6adfc6f8f02c8c8f4966d130fefd27a580d"
+  },
+  "after": {
+    "canonical_json_exists": true,
+    "canonical_md_exists": true,
+    "canonical_json_sha256": "d96d8832dd2ba13b77dedd31e8149bbae44f631c75ee9e6fd2891450491a58dc",
+    "canonical_md_sha256": "8078c48ae13f86dd94d1f0bfc16bf6adfc6f8f02c8c8f4966d130fefd27a580d"
+  },
+  "canonical_mutated": false,
+  "non_canonical_outputs": [
+    ".sisyphus/evidence/benchmark-v2/final-bundle/memory-refresh-dry-run.json",
+    ".sisyphus/evidence/benchmark-v2/final-bundle/memory-refresh-dry-run.md"
+  ]
+}

@@ -1,0 +1,24 @@
+{
+  "output_json": ".sisyphus/evidence/benchmark-v2/final-wave/f3/memory-small.json",
+  "output_md": ".sisyphus/evidence/benchmark-v2/final-wave/f3/memory-small.md",
+  "query_count": 7,
+  "ran_queries": 7,
+  "blocker_count": 0,
+  "observed_reason_codes": [],
+  "baseline_refresh": {
+    "schema_version": "2.0",
+    "fixture_tier": "small",
+    "baseline_version": "v2-initial",
+    "model": "e5_small",
+    "command": "python3 evals/memory_retrieval_benchmark.py --tier small --output-json .sisyphus/evidence/benchmark-v2/final-wave/f3/memory-small.json --output-md .sisyphus/evidence/benchmark-v2/final-wave/f3/memory-small.md",
+    "refresh_reason": null,
+    "refresh_mode": false,
+    "refresh_requested": false,
+    "canonical_target_requested": false,
+    "canonical_target_written": false,
+    "output_json": ".sisyphus/evidence/benchmark-v2/final-wave/f3/memory-small.json",
+    "output_md": ".sisyphus/evidence/benchmark-v2/final-wave/f3/memory-small.md",
+    "refresh_timestamp_utc": null,
+    "git_commit": "99ac9f7f3d83e89ef434df3c14bf70488dea95aa"
+  }
+}

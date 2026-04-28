@@ -1,0 +1,330 @@
+{
+  "memories": [
+    {
+      "agent_id": "atlas",
+      "content": "TASK: During FY26 planning, Keiko requested monthly retention anomaly snapshots for the Aurora growth cohort.",
+      "id": "medium_mem_task_aurora_retention_snapshots",
+      "memory_type": "episodic",
+      "metadata": {
+        "benchmark": {
+          "suite": "memory-retrieval-benchmark",
+          "tier": "medium"
+        },
+        "person": "Keiko",
+        "project": "Aurora",
+        "tags": [
+          "retention",
+          "snapshot",
+          "growth"
+        ],
+        "topic": "long-memory-retention"
+      },
+      "namespace": "evals/mempalace-medium/aurora",
+      "run_id": "medium-run-001",
+      "user_id": "eval-user",
+      "valid_from": "2025-03-01T00:00:00Z",
+      "valid_until": null
+    },
+    {
+      "agent_id": "atlas",
+      "content": "DECISION: Aurora retention snapshots are archived in monthly partitions to preserve two-year trend continuity.",
+      "id": "medium_mem_decision_aurora_archive_partitions",
+      "memory_type": "semantic",
+      "metadata": {
+        "benchmark": {
+          "suite": "memory-retrieval-benchmark",
+          "tier": "medium"
+        },
+        "person": "Keiko",
+        "project": "Aurora",
+        "tags": [
+          "retention",
+          "archive",
+          "continuity"
+        ],
+        "topic": "long-memory-retention"
+      },
+      "namespace": "evals/mempalace-medium/aurora",
+      "run_id": "medium-run-001",
+      "user_id": "eval-user",
+      "valid_from": "2025-03-10T00:00:00Z",
+      "valid_until": null
+    },
+    {
+      "agent_id": "atlas",
+      "content": "RESEARCH: Legacy Aurora cohort notes mention churn around week-six onboarding for enterprise tenants.",
+      "id": "medium_mem_research_aurora_week_six_churn",
+      "memory_type": "semantic",
+      "metadata": {
+        "benchmark": {
+          "suite": "memory-retrieval-benchmark",
+          "tier": "medium"
+        },
+        "person": "Keiko",
+        "project": "Aurora",
+        "tags": [
+          "cohort",
+          "churn",
+          "week-six"
+        ],
+        "topic": "long-memory-retention"
+      },
+      "namespace": "evals/mempalace-medium/aurora",
+      "run_id": "medium-run-001",
+      "user_id": "eval-user",
+      "valid_from": "2025-04-15T00:00:00Z",
+      "valid_until": null
+    },
+    {
+      "agent_id": "atlas",
+      "content": "TASK: Vega reliability squad tracks checkout timeout regressions separately from Aurora growth analysis.",
+      "id": "medium_mem_task_vega_timeout_regressions",
+      "memory_type": "episodic",
+      "metadata": {
+        "benchmark": {
+          "suite": "memory-retrieval-benchmark",
+          "tier": "medium"
+        },
+        "person": "Dmitri",
+        "project": "Vega",
+        "tags": [
+          "checkout",
+          "timeout",
+          "reliability"
+        ],
+        "topic": "namespace-boundary"
+      },
+      "namespace": "evals/mempalace-medium/vega",
+      "run_id": "medium-run-002",
+      "user_id": "eval-user",
+      "valid_from": "2025-05-01T00:00:00Z",
+      "valid_until": null
+    },
+    {
+      "agent_id": "atlas",
+      "content": "DECISION: Vega rollback drills run every Tuesday and use a dedicated reliability namespace.",
+      "id": "medium_mem_decision_vega_rollback_namespace",
+      "memory_type": "semantic",
+      "metadata": {
+        "benchmark": {
+          "suite": "memory-retrieval-benchmark",
+          "tier": "medium"
+        },
+        "person": "Dmitri",
+        "project": "Vega",
+        "tags": [
+          "rollback",
+          "namespace",
+          "reliability"
+        ],
+        "topic": "namespace-boundary"
+      },
+      "namespace": "evals/mempalace-medium/vega",
+      "run_id": "medium-run-002",
+      "user_id": "eval-user",
+      "valid_from": "2025-05-03T00:00:00Z",
+      "valid_until": null
+    },
+    {
+      "agent_id": "atlas",
+      "content": "TASK: Temporary parser fallback for Lumen migration was enabled only during cutover week.",
+      "id": "medium_mem_task_lumen_parser_fallback_temp",
+      "memory_type": "episodic",
+      "metadata": {
+        "benchmark": {
+          "suite": "memory-retrieval-benchmark",
+          "tier": "medium"
+        },
+        "person": "Ishan",
+        "project": "Lumen",
+        "tags": [
+          "parser",
+          "fallback",
+          "migration"
+        ],
+        "topic": "temporal-boundary"
+      },
+      "namespace": "evals/mempalace-medium/platform",
+      "run_id": "medium-run-003",
+      "user_id": "eval-user",
+      "valid_from": "2026-01-10T00:00:00Z",
+      "valid_until": "2026-01-20T00:00:00Z"
+    },
+    {
+      "agent_id": "atlas",
+      "content": "DECISION: Lumen parser fallback was removed after migration cutover completion.",
+      "id": "medium_mem_decision_lumen_parser_fallback_removed",
+      "memory_type": "semantic",
+      "metadata": {
+        "benchmark": {
+          "suite": "memory-retrieval-benchmark",
+          "tier": "medium"
+        },
+        "person": "Ishan",
+        "project": "Lumen",
+        "tags": [
+          "parser",
+          "fallback",
+          "cleanup"
+        ],
+        "topic": "temporal-boundary"
+      },
+      "namespace": "evals/mempalace-medium/platform",
+      "run_id": "medium-run-003",
+      "user_id": "eval-user",
+      "valid_from": "2026-01-21T00:00:00Z",
+      "valid_until": null
+    },
+    {
+      "agent_id": "atlas",
+      "content": "DECISION: Hermes read-side status responses may be partial while embedding readiness converges.",
+      "id": "medium_mem_decision_hermes_partial_readiness",
+      "memory_type": "semantic",
+      "metadata": {
+        "benchmark": {
+          "suite": "memory-retrieval-benchmark",
+          "tier": "medium"
+        },
+        "person": "Rina",
+        "project": "Hermes",
+        "tags": [
+          "partial",
+          "readiness",
+          "diagnostics"
+        ],
+        "topic": "partial-readiness"
+      },
+      "namespace": "evals/mempalace-medium/hermes",
+      "run_id": "medium-run-004",
+      "user_id": "eval-user",
+      "valid_from": "2026-02-01T00:00:00Z",
+      "valid_until": null
+    },
+    {
+      "agent_id": "atlas",
+      "content": "RESEARCH: Hermes partial responses map to reason codes missing, stale, partial, degraded, invalid_locator, generation_mismatch, and unsupported.",
+      "id": "medium_mem_research_hermes_reason_codes",
+      "memory_type": "semantic",
+      "metadata": {
+        "benchmark": {
+          "suite": "memory-retrieval-benchmark",
+          "tier": "medium"
+        },
+        "person": "Rina",
+        "project": "Hermes",
+        "tags": [
+          "partial",
+          "reason-code",
+          "contract"
+        ],
+        "topic": "partial-readiness"
+      },
+      "namespace": "evals/mempalace-medium/hermes",
+      "run_id": "medium-run-004",
+      "user_id": "eval-user",
+      "valid_from": "2026-02-03T00:00:00Z",
+      "valid_until": null
+    },
+    {
+      "agent_id": "atlas",
+      "content": "TASK: Alias map links canonical fixture IDs with generated server IDs for deterministic evaluation remapping.",
+      "id": "medium_mem_task_id_alias_mapping",
+      "memory_type": "episodic",
+      "metadata": {
+        "benchmark": {
+          "suite": "memory-retrieval-benchmark",
+          "tier": "medium"
+        },
+        "person": "Nolan",
+        "project": "AtlasEval",
+        "tags": [
+          "id",
+          "alias",
+          "remap"
+        ],
+        "topic": "id-alias"
+      },
+      "namespace": "evals/mempalace-medium/evalid",
+      "run_id": "medium-run-005",
+      "user_id": "eval-user",
+      "valid_from": "2026-02-10T00:00:00Z",
+      "valid_until": null
+    },
+    {
+      "agent_id": "atlas",
+      "content": "DECISION: Fixture IDs remain canonical labels even when server-generated IDs differ at runtime.",
+      "id": "medium_mem_decision_fixture_id_canonical",
+      "memory_type": "semantic",
+      "metadata": {
+        "benchmark": {
+          "suite": "memory-retrieval-benchmark",
+          "tier": "medium"
+        },
+        "person": "Nolan",
+        "project": "AtlasEval",
+        "tags": [
+          "id",
+          "canonical",
+          "mapping"
+        ],
+        "topic": "id-alias"
+      },
+      "namespace": "evals/mempalace-medium/evalid",
+      "run_id": "medium-run-005",
+      "user_id": "eval-user",
+      "valid_from": "2026-02-12T00:00:00Z",
+      "valid_until": null
+    },
+    {
+      "agent_id": "atlas",
+      "content": "CONTEXT: Surreal-style record-shaped IDs may appear as object wrappers with nested String fields.",
+      "id": "medium_mem_context_record_shaped_ids",
+      "memory_type": "semantic",
+      "metadata": {
+        "benchmark": {
+          "suite": "memory-retrieval-benchmark",
+          "tier": "medium"
+        },
+        "person": "Nolan",
+        "project": "AtlasEval",
+        "tags": [
+          "record",
+          "id",
+          "normalization"
+        ],
+        "topic": "record-shaped-id"
+      },
+      "namespace": "evals/mempalace-medium/evalid",
+      "run_id": "medium-run-005",
+      "user_id": "eval-user",
+      "valid_from": "2026-02-14T00:00:00Z",
+      "valid_until": null
+    },
+    {
+      "agent_id": "atlas",
+      "content": "RESEARCH: Record-shaped ID normalization must extract stable String IDs from nested wrappers before ranking diagnostics.",
+      "id": "medium_mem_research_record_id_normalization",
+      "memory_type": "semantic",
+      "metadata": {
+        "benchmark": {
+          "suite": "memory-retrieval-benchmark",
+          "tier": "medium"
+        },
+        "person": "Nolan",
+        "project": "AtlasEval",
+        "tags": [
+          "record",
+          "String",
+          "diagnostics"
+        ],
+        "topic": "record-shaped-id"
+      },
+      "namespace": "evals/mempalace-medium/evalid",
+      "run_id": "medium-run-005",
+      "user_id": "eval-user",
+      "valid_from": "2026-02-16T00:00:00Z",
+      "valid_until": null
+    }
+  ],
+  "version": 1
+}

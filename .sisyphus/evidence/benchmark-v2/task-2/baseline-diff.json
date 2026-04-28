@@ -1,0 +1,111 @@
+{
+  "baseline_pair": {
+    "after": ".sisyphus/evidence/benchmark-v2/task-2/refresh.json",
+    "after_available": true,
+    "before": ".sisyphus/evidence/evals/memory-retrieval-baseline.json",
+    "before_available": true
+  },
+  "benchmark_name": "memory_retrieval_baseline",
+  "comparison": {
+    "changed": [
+      "max_latency_ms",
+      "mean_latency_ms",
+      "mrr",
+      "p95_latency_ms",
+      "precision_at_10",
+      "precision_at_5"
+    ],
+    "improved": [],
+    "metric_status": {
+      "blocker_count": "unchanged",
+      "hit_rate": "unchanged",
+      "max_latency_ms": "regressed",
+      "mean_latency_ms": "regressed",
+      "mrr": "regressed",
+      "p95_latency_ms": "regressed",
+      "precision_at_10": "regressed",
+      "precision_at_5": "regressed"
+    },
+    "missing": {
+      "after": [],
+      "before": []
+    },
+    "regressed": [
+      "max_latency_ms",
+      "mean_latency_ms",
+      "mrr",
+      "p95_latency_ms",
+      "precision_at_10",
+      "precision_at_5"
+    ],
+    "unchanged": [
+      "blocker_count",
+      "hit_rate"
+    ]
+  },
+  "generated_at_utc": "2026-04-28T10:38:44.340160Z",
+  "metrics": {
+    "blocker_count": {
+      "after": 0,
+      "before": 0,
+      "delta": 0.0
+    },
+    "blockers": {
+      "after": [],
+      "before": [],
+      "delta": {
+        "added": [],
+        "count_delta": 0,
+        "removed": []
+      }
+    },
+    "hit_rate": {
+      "after": 0.8,
+      "before": 0.8,
+      "delta": 0.0
+    },
+    "max_latency_ms": {
+      "after": 32.061792000000366,
+      "before": 27.262250000003263,
+      "delta": 4.799541999997103
+    },
+    "mean_latency_ms": {
+      "after": 10.33283320000109,
+      "before": 9.451091600000083,
+      "delta": 0.881741600001007
+    },
+    "mrr": {
+      "after": 0.7333333333333333,
+      "before": 0.75,
+      "delta": -0.01666666666666672
+    },
+    "p95_latency_ms": {
+      "after": 32.061792000000366,
+      "before": 27.262250000003263,
+      "delta": 4.799541999997103
+    },
+    "precision_at_10": {
+      "after": 0.18,
+      "before": 0.19,
+      "delta": -0.010000000000000009
+    },
+    "precision_at_5": {
+      "after": 0.27999999999999997,
+      "before": 0.30000000000000004,
+      "delta": -0.020000000000000073
+    },
+    "reason_codes": {
+      "after": [],
+      "before": [],
+      "delta": {
+        "added": [],
+        "count_delta": 0,
+        "removed": []
+      }
+    }
+  },
+  "notes": [
+    "Diff artifacts are evidence/reporting only.",
+    "These deltas are informational and are not used as CI regression gates."
+  ]
+}

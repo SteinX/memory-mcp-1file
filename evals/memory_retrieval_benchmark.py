@@ -4,6 +4,7 @@ import argparse
 import ast
 import json
 import re
+import subprocess
 import sys
 import tempfile
 import time
@@ -46,10 +47,39 @@ FIXTURE_GRAPH_PATH = HERE / "fixtures" / "memory_graph.json"
 GOLDEN_QUERIES_PATH = HERE / "golden" / "memory_retrieval_queries.json"
 MINI_FIXTURE_CORPUS_PATH = HERE / "fixtures" / "memory_corpus_mini_long_memory.json"
 MINI_GOLDEN_QUERIES_PATH = HERE / "golden" / "memory_retrieval_queries_mini_long_memory.json"
+MEDIUM_FIXTURE_CORPUS_PATH = HERE / "fixtures" / "memory_corpus_medium_long_memory.json"
+MEDIUM_GOLDEN_QUERIES_PATH = HERE / "golden" / "memory_retrieval_queries_medium_long_memory.json"
+STRESS_FIXTURE_MANIFEST_PATH = HERE / "fixtures" / "memory_corpus_stress_manifest.json"
+STRESS_GOLDEN_MANIFEST_PATH = HERE / "golden" / "memory_retrieval_queries_stress_manifest.json"
 EVIDENCE_DIR = ROOT / ".sisyphus" / "evidence" / "evals"
+V2_EVIDENCE_DIR = ROOT / ".sisyphus" / "evidence" / "benchmark-v2"
 OUTPUT_JSON = EVIDENCE_DIR / "memory-retrieval-baseline.json"
 OUTPUT_MD = EVIDENCE_DIR / "memory-retrieval-baseline.md"
 BENCHMARK_NAME = "memory_retrieval_baseline"
+V2_SCHEMA_VERSION = "2.0"
+V2_DEFAULT_FIXTURE_TIER = "small"
+V2_DEFAULT_BASELINE_VERSION = "v2-initial"
+V2_THRESHOLD_POLICY = "local-v2-threshold-policy"
+V2_DETERMINISM_POLICY = "stable_fixture_order+stable_tie_break+stable_report_order+tolerance_1e-9_1e-6"
+V2_VALID_FIXTURE_TIERS = ("small", "medium", "stress")
+
+RUNTIME_TARGET_BY_TIER: dict[str, dict[str, Any]] = {
+    "small": {
+        "target_minutes": "5-10",
+        "required_by_default": True,
+        "optional_policy": "small tier default",
+    },
+    "medium": {
+        "target_minutes": "15-30",
+        "required_by_default": False,
+        "optional_policy": "explicit medium-tier run",
+    },
+    "stress": {
+        "target_minutes": "45-90+",
+        "required_by_default": False,
+        "optional_policy": "manual-only stress tier",
+    },
+}
 
 EXPECTED_MEMORY_COUNT = 15
 EXPECTED_GRAPH_ENTITY_COUNT = 5
@@ -62,6 +92,8 @@ GRAPH_RELATION_MAX_COUNT = 8
 FIXTURE_SCHEMA_VERSION = 1
 MINI_MEMORY_CORPUS_MAX_COUNT = 30
 MINI_GOLDEN_QUERY_MAX_COUNT = 20
+MEDIUM_MEMORY_CORPUS_MAX_COUNT = 120
+MEDIUM_GOLDEN_QUERY_MAX_COUNT = 80
 
 REQUIRED_QUERY_TYPES = {
     "recall_fusion",
@@ -80,6 +112,124 @@ class McpClientLike(Protocol):
 
 def _utc_now() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+
+def _git_commit_hash() -> str | None:
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=str(ROOT),
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+    except Exception:  # noqa: BLE001
+        return None
+    if result.returncode != 0:
+        return None
+    value = result.stdout.strip()
+    return value or None
+
+
+def _canonical_baseline_targets() -> tuple[Path, Path]:
+    return OUTPUT_JSON.resolve(), OUTPUT_MD.resolve()
+
+
+def _is_canonical_target_pair(output_json: Path, output_md: Path) -> bool:
+    canonical_json, canonical_md = _canonical_baseline_targets()
+    return output_json.resolve() == canonical_json and output_md.resolve() == canonical_md
+
+
+def _non_refresh_report_paths(benchmark_name: str, fixture_tier: str) -> tuple[Path, Path]:
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    base = V2_EVIDENCE_DIR / "runs" / f"{benchmark_name}-{fixture_tier}-{timestamp}"
+    return base.with_suffix(".json"), base.with_suffix(".md")
+
+
+def _normalize_fixture_tier(value: str) -> str:
+    tier = str(value or "").strip().lower()
+    if tier in V2_VALID_FIXTURE_TIERS:
+        return tier
+    valid = ", ".join(V2_VALID_FIXTURE_TIERS)
+    raise ValueError(f"Invalid fixture tier: {value!r}. Valid choices: {valid}")
+
+
+def _runtime_target_for_tier(fixture_tier: str) -> dict[str, Any]:
+    return dict(RUNTIME_TARGET_BY_TIER.get(fixture_tier, RUNTIME_TARGET_BY_TIER[V2_DEFAULT_FIXTURE_TIER]))
+
+
+def _fixture_paths_for_tier(fixture_tier: str) -> dict[str, str]:
+    tier = _normalize_fixture_tier(fixture_tier)
+    if tier == "small":
+        return {
+            "memory_corpus": str(MINI_FIXTURE_CORPUS_PATH.relative_to(ROOT)),
+            "memory_graph": str(FIXTURE_GRAPH_PATH.relative_to(ROOT)),
+            "golden_queries": str(MINI_GOLDEN_QUERIES_PATH.relative_to(ROOT)),
+        }
+    if tier == "medium":
+        return {
+            "memory_corpus": str(MEDIUM_FIXTURE_CORPUS_PATH.relative_to(ROOT)),
+            "memory_graph": str(FIXTURE_GRAPH_PATH.relative_to(ROOT)),
+            "golden_queries": str(MEDIUM_GOLDEN_QUERIES_PATH.relative_to(ROOT)),
+        }
+    return {
+        "memory_corpus_manifest": str(STRESS_FIXTURE_MANIFEST_PATH.relative_to(ROOT)),
+        "memory_graph": str(FIXTURE_GRAPH_PATH.relative_to(ROOT)),
+        "golden_queries_manifest": str(STRESS_GOLDEN_MANIFEST_PATH.relative_to(ROOT)),
+    }
+
+
+def _load_tier_inputs(
+    fixture_tier: str,
+) -> tuple[list[dict[str, Any]], dict[str, list[dict[str, Any]]], list[dict[str, Any]], dict[str, Any], dict[str, Any]]:
+    tier = _normalize_fixture_tier(fixture_tier)
+    graph_fixture = load_graph_fixture()
+    if tier == "small":
+        memories = load_memory_corpus(MINI_FIXTURE_CORPUS_PATH)
+        queries = load_golden_queries(MINI_GOLDEN_QUERIES_PATH)
+        validation = _validate_mini_long_memory_caps(memories=memories, queries=queries)
+    elif tier == "medium":
+        memories = load_memory_corpus(MEDIUM_FIXTURE_CORPUS_PATH)
+        queries = load_golden_queries(MEDIUM_GOLDEN_QUERIES_PATH)
+        validation = _validate_medium_long_memory_caps(memories=memories, queries=queries)
+    else:
+        memories = []
+        queries = []
+        validation = _validate_stress_long_memory_manifests()
+
+    observed_query_types = sorted({str(query.get("query_type")) for query in queries})
+    query_validation = {
+        "fixture_tier": tier,
+        "query_count": len(queries),
+        "observed_query_types": observed_query_types,
+    }
+    return memories, graph_fixture, queries, validation, query_validation
+
+
+def _self_test_fixture_tier_resolution() -> dict[str, Any]:
+    resolved: dict[str, Any] = {}
+    for tier in V2_VALID_FIXTURE_TIERS:
+        fixture_paths = _fixture_paths_for_tier(tier)
+        missing = [
+            path
+            for path in fixture_paths.values()
+            if not (ROOT / path).exists()
+        ]
+        if missing:
+            raise AssertionError(f"fixture tier {tier} has missing path mappings: {missing}")
+        resolved[tier] = {
+            "fixture_paths": fixture_paths,
+            "runtime_target": _runtime_target_for_tier(tier),
+        }
+    return resolved
+
+
+def _cli_command(argv: Sequence[str]) -> str:
+    if not argv:
+        return "python3 evals/memory_retrieval_benchmark.py"
+    if argv[0].endswith("memory_retrieval_benchmark.py"):
+        return "python3 " + " ".join(argv)
+    return " ".join(argv)
 
 
 def _new_phase(name: str) -> dict[str, Any]:
@@ -134,6 +284,142 @@ def load_golden_queries(path: Path = GOLDEN_QUERIES_PATH) -> list[dict[str, Any]
     if not isinstance(queries, list):
         raise TypeError(f"Invalid golden query shape in {path}: expected 'queries' list")
     return queries
+
+
+def _find_duplicate_values(values: Iterable[str]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for value in values:
+        counts[value] = counts.get(value, 0) + 1
+    return {value: count for value, count in counts.items() if count > 1}
+
+
+def _assert_unique_values(values: Iterable[str], *, label: str) -> None:
+    duplicates = _find_duplicate_values(values)
+    if duplicates:
+        details = ", ".join(f"{value} ({count}x)" for value, count in sorted(duplicates.items()))
+        raise AssertionError(f"{label} must be unique; duplicate values: {details}")
+
+
+def _memory_alias_values(memory: Mapping[str, Any]) -> list[str]:
+    """Return explicit ID-like aliases that must not collide with fixture IDs or each other."""
+    aliases: list[str] = []
+    metadata = memory.get("metadata")
+    if not isinstance(metadata, Mapping):
+        return aliases
+
+    explicit_alias_keys = {
+        "alias",
+        "aliases",
+        "canonical_id",
+        "fixture_id",
+        "legacy_id",
+        "server_id",
+    }
+
+    def collect(value: Any) -> None:
+        if isinstance(value, str) and value.strip():
+            aliases.append(value.strip())
+        elif isinstance(value, list):
+            for item in value:
+                collect(item)
+        elif isinstance(value, Mapping):
+            nested_string = value.get("String") or value.get("string")
+            if isinstance(nested_string, str) and nested_string.strip():
+                aliases.append(nested_string.strip())
+
+    for key, value in metadata.items():
+        normalized_key = str(key).strip().lower()
+        if normalized_key in explicit_alias_keys or normalized_key.endswith("_alias") or normalized_key.endswith("_id_alias"):
+            collect(value)
+    return aliases
+
+
+def _validate_memory_fixture_identity_integrity(memories: Sequence[Mapping[str, Any]], *, label: str) -> dict[str, Any]:
+    memory_ids = [str(memory.get("id")) for memory in memories]
+    _assert_unique_values(memory_ids, label=f"{label} fixture IDs")
+
+    alias_owner: dict[str, str] = {}
+    collisions: list[str] = []
+    memory_id_set = set(memory_ids)
+    for memory in memories:
+        memory_id = str(memory.get("id"))
+        for alias in _memory_alias_values(memory):
+            if alias == memory_id:
+                continue
+            if alias in memory_id_set:
+                collisions.append(f"{memory_id} alias {alias} collides with fixture memory id")
+            previous_owner = alias_owner.get(alias)
+            if previous_owner is not None and previous_owner != memory_id:
+                collisions.append(f"alias {alias} is shared by {previous_owner} and {memory_id}")
+            alias_owner[alias] = memory_id
+
+    if collisions:
+        raise AssertionError(f"{label} fixture alias collisions detected: {collisions}")
+
+    return {
+        "memory_unique_ids": len(memory_id_set),
+        "explicit_alias_count": len(alias_owner),
+    }
+
+
+def _validate_memory_label_rationale(
+    query: Mapping[str, Any],
+    *,
+    fixture_tier: str,
+    allowed_categories: set[str] | None = None,
+) -> str:
+    query_id = str(query.get("id") or "<missing-id>")
+    label_rationale = query.get("label_rationale")
+    if not isinstance(label_rationale, Mapping):
+        raise AssertionError(f"Memory query missing label_rationale object: {query_id}")
+
+    required_fields = (
+        "scenario_category",
+        "tier",
+        "why_label_is_correct",
+        "expected_behavior",
+    )
+    missing = [field for field in required_fields if not str(label_rationale.get(field) or "").strip()]
+    if missing:
+        raise AssertionError(f"Memory query {query_id} missing label_rationale fields: {missing}")
+
+    scenario_category = str(label_rationale["scenario_category"]).strip()
+    tier = str(label_rationale["tier"]).strip()
+    if tier != fixture_tier:
+        raise AssertionError(f"Memory query {query_id} must declare label_rationale.tier={fixture_tier}, got {tier!r}")
+    if allowed_categories is not None and scenario_category not in allowed_categories:
+        raise AssertionError(
+            f"Memory query {query_id} uses unsupported label_rationale.scenario_category={scenario_category!r}; "
+            f"expected one of {sorted(allowed_categories)}"
+        )
+
+    expected_ids = [str(memory_id) for memory_id in query.get("expected_ids", [])]
+    rationale_expected_ids = label_rationale.get("expected_ids", [])
+    if not isinstance(rationale_expected_ids, list):
+        raise AssertionError(f"Memory query {query_id} label_rationale.expected_ids must be a list")
+    rationale_expected = [str(memory_id) for memory_id in rationale_expected_ids]
+    if rationale_expected != expected_ids:
+        raise AssertionError(
+            f"Memory query {query_id} label_rationale.expected_ids drift: "
+            f"expected {expected_ids}, got {rationale_expected}"
+        )
+
+    no_match_raw = label_rationale.get("no_match_expected")
+    if not isinstance(no_match_raw, bool):
+        raise AssertionError(f"Memory query {query_id} label_rationale.no_match_expected must be boolean")
+    query_type = str(query.get("query_type") or "")
+    if expected_ids and no_match_raw:
+        raise AssertionError(f"Memory query {query_id} marks no_match_expected=true but has expected_ids")
+    if not expected_ids and query_type != "negative_no_match" and not no_match_raw:
+        raise AssertionError(
+            f"Memory query {query_id} with empty expected_ids must be negative_no_match or label_rationale.no_match_expected=true"
+        )
+    if query_type == "negative_no_match" and (expected_ids or not no_match_raw):
+        raise AssertionError(
+            f"Memory query {query_id} negative_no_match must have empty expected_ids and no_match_expected=true"
+        )
+
+    return scenario_category
 
 
 def settle_after_seeding(
@@ -460,6 +746,7 @@ def _server_to_fixture_id_map(fixture_to_server_id_map: Mapping[str, str] | None
 def seed_memory_fixtures(
     client: McpClientLike,
     *,
+    fixture_tier: str = V2_DEFAULT_FIXTURE_TIER,
     corpus_path: Path = FIXTURE_CORPUS_PATH,
     graph_path: Path = FIXTURE_GRAPH_PATH,
     golden_path: Path = GOLDEN_QUERIES_PATH,
@@ -484,10 +771,16 @@ def seed_memory_fixtures(
     phase_load = _new_phase("load_and_validate_fixtures")
     progress["phases"].append(phase_load)
     try:
+        normalized_tier = _normalize_fixture_tier(fixture_tier)
         memories = load_memory_corpus(corpus_path)
         graph_fixture = load_graph_fixture(graph_path)
         queries = load_golden_queries(golden_path)
-        validation = _validate_fixture_caps(memories=memories, graph_fixture=graph_fixture, queries=queries)
+        if normalized_tier == "small":
+            validation = _validate_mini_long_memory_caps(memories=memories, queries=queries)
+        elif normalized_tier == "medium":
+            validation = _validate_medium_long_memory_caps(memories=memories, queries=queries)
+        else:
+            validation = _validate_fixture_caps(memories=memories, graph_fixture=graph_fixture, queries=queries)
         _complete_phase(phase_load, validation=validation)
     except Exception as exc:  # noqa: BLE001
         _block_phase(phase_load, str(exc), error_type=type(exc).__name__)
@@ -840,6 +1133,16 @@ def _has_embedding_not_ready_signal(
     return any(token in signal_text for token in ("not_ready", "not ready", "loading", "initializ", "timeout"))
 
 
+def _top_result_score(raw_top_k: Sequence[Mapping[str, Any]]) -> float | None:
+    for row in raw_top_k:
+        if not isinstance(row, Mapping):
+            continue
+        score = row.get("score")
+        if isinstance(score, (int, float)):
+            return float(score)
+    return None
+
+
 def _classify_failure_type(
     *,
     query_type: str,
@@ -848,6 +1151,7 @@ def _classify_failure_type(
     missing_expected_fixture_ids: Sequence[str],
     found_expected_server_ids: Sequence[str],
     result_count: int,
+    raw_top_k: Sequence[Mapping[str, Any]],
     call_error: str | None,
     parse_errors: Sequence[str],
     summary_partial_reason_code: str | None,
@@ -881,7 +1185,11 @@ def _classify_failure_type(
     if missing_expected_fixture_ids or (expected_fixture_ids and not expected_server_ids):
         return "id_mismatch"
 
-    return "wrong_rank"
+    top_score = _top_result_score(raw_top_k)
+    if top_score is not None and top_score <= 0.05:
+        return "low_confidence"
+
+    return "true_miss"
 
 
 def _normalize_result_ids(payload: dict[str, Any]) -> list[str]:
@@ -990,6 +1298,7 @@ def execute_query(
         missing_expected_fixture_ids=missing_expected_fixture_ids,
         found_expected_server_ids=found_expected_server_ids,
         result_count=len(result_ids),
+        raw_top_k=raw_top_k,
         call_error=call_error,
         parse_errors=parse_errors,
         summary_partial_reason_code=summary_partial_reason_code,
@@ -1103,17 +1412,20 @@ def _fixture_manifest(
     graph_fixture: dict[str, list[dict[str, Any]]] | None = None,
     queries: Sequence[dict[str, Any]] | None = None,
     command: Sequence[str] | None = None,
+    fixture_tier: str = V2_DEFAULT_FIXTURE_TIER,
 ) -> dict[str, Any]:
-    memories = memories if memories is not None else load_memory_corpus()
+    fixture_tier = _normalize_fixture_tier(fixture_tier)
+    if memories is None or queries is None:
+        tier_memories, _, tier_queries, _, _ = _load_tier_inputs(fixture_tier)
+        memories = memories if memories is not None else tier_memories
+        queries = queries if queries is not None else tier_queries
+    memories = memories if memories is not None else []
     graph_fixture = graph_fixture if graph_fixture is not None else load_graph_fixture()
-    queries = queries if queries is not None else load_golden_queries()
+    queries = queries if queries is not None else []
     query_types = sorted({str(query.get("query_type")) for query in queries})
+    fixture_paths = _fixture_paths_for_tier(fixture_tier)
     return {
-        "fixture_paths": {
-            "memory_corpus": str(FIXTURE_CORPUS_PATH.relative_to(ROOT)),
-            "memory_graph": str(FIXTURE_GRAPH_PATH.relative_to(ROOT)),
-            "golden_queries": str(GOLDEN_QUERIES_PATH.relative_to(ROOT)),
-        },
+        "fixture_paths": fixture_paths,
         "fixture_counts": {
             "memories": len(memories),
             "graph_entities": len(graph_fixture["entities"]),
@@ -1126,6 +1438,8 @@ def _fixture_manifest(
         "seed_order": ["knowledge_graph", "store_memory"],
         "command_selected": list(command) if command is not None else None,
         "data_dir_strategy": "temporary isolated DATA_DIR",
+        "fixture_tier": fixture_tier,
+        "runtime_target": _runtime_target_for_tier(fixture_tier),
     }
 
 
@@ -1204,11 +1518,146 @@ def _positive_query_aggregate_metrics(per_query: Sequence[dict[str, Any]]) -> di
             return None
         return sum(values) / len(values)
 
+    positive_hits = sum(1 for row in positive_rows if row.get("expected_rank") is not None)
+    positive_hit_rate = (positive_hits / len(positive_rows)) if positive_rows else None
+
     return {
         "positive_query_count": len(positive_rows),
+        "positive_hit_rate": positive_hit_rate,
         "positive_mean_mrr": _mean_metric("mrr"),
+        "positive_mean_recall_at_5": _mean_metric("recall_at_5"),
+        "positive_mean_ndcg_at_5": _mean_metric("ndcg_at_5"),
         "positive_mean_precision_at_5": _mean_metric("precision_at_5"),
         "positive_mean_precision_at_10": _mean_metric("precision_at_10"),
+    }
+
+
+def _evaluate_threshold_status(
+    *,
+    fixture_tier: str,
+    aggregate: Mapping[str, Any],
+    policy_name: str,
+) -> dict[str, Any]:
+    policy_matrix: dict[str, list[dict[str, Any]]] = {
+        "small": [
+            {"metric": "blocker_count", "comparator": "==", "threshold": 0, "severity": "blocker"},
+            {"metric": "positive_hit_rate", "comparator": ">=", "threshold": 0.80, "severity": "blocker"},
+            {"metric": "positive_mean_mrr", "comparator": ">=", "threshold": 0.70, "severity": "blocker"},
+            {"metric": "positive_mean_recall_at_5", "comparator": ">=", "threshold": 0.80, "severity": "blocker"},
+            {"metric": "positive_mean_ndcg_at_5", "comparator": ">=", "threshold": 0.75, "severity": "warn"},
+            {"metric": "positive_mean_precision_at_5", "comparator": ">=", "threshold": 0.20, "severity": "warn"},
+            {"metric": "mean_latency_ms", "comparator": "<=", "threshold": 5000, "severity": "warn"},
+            {"metric": "runtime_minutes", "comparator": "<=", "threshold": 10, "severity": "warn"},
+        ],
+        "medium": [
+            {"metric": "blocker_count", "comparator": "==", "threshold": 0, "severity": "blocker"},
+            {"metric": "positive_hit_rate", "comparator": ">=", "threshold": 0.82, "severity": "blocker"},
+            {"metric": "positive_mean_mrr", "comparator": ">=", "threshold": 0.72, "severity": "blocker"},
+            {"metric": "positive_mean_recall_at_5", "comparator": ">=", "threshold": 0.82, "severity": "blocker"},
+            {"metric": "positive_mean_ndcg_at_5", "comparator": ">=", "threshold": 0.77, "severity": "warn"},
+            {"metric": "positive_mean_precision_at_5", "comparator": ">=", "threshold": 0.22, "severity": "warn"},
+            {"metric": "mean_latency_ms", "comparator": "<=", "threshold": 7500, "severity": "warn"},
+            {"metric": "runtime_minutes", "comparator": "<=", "threshold": 30, "severity": "warn"},
+        ],
+        "stress": [
+            {"metric": "blocker_count", "comparator": "==", "threshold": 0, "severity": "blocker"},
+            {"metric": "positive_hit_rate", "comparator": ">=", "threshold": 0.80, "severity": "blocker"},
+            {"metric": "positive_mean_mrr", "comparator": ">=", "threshold": 0.70, "severity": "blocker"},
+            {"metric": "positive_mean_recall_at_5", "comparator": ">=", "threshold": 0.80, "severity": "blocker"},
+            {"metric": "positive_mean_ndcg_at_5", "comparator": ">=", "threshold": 0.75, "severity": "warn"},
+            {"metric": "positive_mean_precision_at_5", "comparator": ">=", "threshold": 0.20, "severity": "warn"},
+            {"metric": "mean_latency_ms", "comparator": "<=", "threshold": 15000, "severity": "warn"},
+            {"metric": "runtime_minutes", "comparator": "<=", "threshold": 90, "severity": "warn"},
+        ],
+    }
+
+    rules = policy_matrix.get(fixture_tier)
+    if not rules:
+        return {
+            "policy_name": policy_name,
+            "enforcement": "local-only",
+            "status": "deferred",
+            "reason": f"unsupported fixture tier for threshold evaluation: {fixture_tier}",
+            "fixture_tier": fixture_tier,
+            "evaluated_metrics": 0,
+            "failures": [],
+        }
+
+    query_count = aggregate.get("query_count")
+    if not isinstance(query_count, int) or query_count <= 0:
+        return {
+            "policy_name": policy_name,
+            "enforcement": "local-only",
+            "status": "deferred",
+            "reason": "threshold evaluation deferred because no queries were executed",
+            "fixture_tier": fixture_tier,
+            "evaluated_metrics": 0,
+            "failures": [],
+        }
+
+    failures: list[dict[str, Any]] = []
+    evaluated = 0
+    for rule in rules:
+        metric_key = str(rule["metric"])
+        comparator = str(rule["comparator"])
+        threshold = float(rule["threshold"])
+        severity = str(rule["severity"])
+        actual_raw = aggregate.get(metric_key)
+        if not isinstance(actual_raw, (int, float)):
+            return {
+                "policy_name": policy_name,
+                "enforcement": "local-only",
+                "status": "deferred",
+                "reason": f"threshold evaluation deferred because metric is unavailable: {metric_key}",
+                "fixture_tier": fixture_tier,
+                "evaluated_metrics": evaluated,
+                "failures": failures,
+            }
+        actual = float(actual_raw)
+        evaluated += 1
+
+        passed = False
+        if comparator == "==":
+            passed = abs(actual - threshold) <= 1e-9
+        elif comparator == ">=":
+            passed = actual + 1e-9 >= threshold
+        elif comparator == "<=":
+            passed = actual <= threshold + 1e-9
+        if not passed:
+            failures.append(
+                {
+                    "metric": metric_key,
+                    "severity": severity,
+                    "comparator": comparator,
+                    "threshold": threshold,
+                    "actual": actual,
+                }
+            )
+
+    blocker_failures = [failure for failure in failures if failure.get("severity") == "blocker"]
+    warn_failures = [failure for failure in failures if failure.get("severity") == "warn"]
+    if blocker_failures:
+        status = "blocker"
+        reason = f"{len(blocker_failures)} blocker threshold(s) failed"
+    elif warn_failures:
+        status = "warn"
+        reason = f"{len(warn_failures)} warning threshold(s) failed"
+    else:
+        status = "pass"
+        reason = "all required threshold checks passed"
+
+    return {
+        "policy_name": policy_name,
+        "enforcement": "local-only",
+        "status": status,
+        "reason": reason,
+        "fixture_tier": fixture_tier,
+        "evaluated_metrics": evaluated,
+        "failures": failures,
+        "failure_counts": {
+            "blocker": len(blocker_failures),
+            "warn": len(warn_failures),
+        },
     }
 
 
@@ -1276,23 +1725,39 @@ def _validate_report_payload(path: Path) -> dict[str, Any]:
 
 
 def run_full_self_test() -> int:
-    memories = load_memory_corpus()
+    memories = load_memory_corpus(MINI_FIXTURE_CORPUS_PATH)
     graph_fixture = load_graph_fixture()
-    queries = load_golden_queries()
+    queries = load_golden_queries(MINI_GOLDEN_QUERIES_PATH)
     mini_memories = load_memory_corpus(MINI_FIXTURE_CORPUS_PATH)
     mini_queries = load_golden_queries(MINI_GOLDEN_QUERIES_PATH)
-    fixture_summary = _validate_fixture_caps(memories=memories, graph_fixture=graph_fixture, queries=queries)
-    query_summary = _validate_query_caps()
+    medium_memories = load_memory_corpus(MEDIUM_FIXTURE_CORPUS_PATH)
+    medium_queries = load_golden_queries(MEDIUM_GOLDEN_QUERIES_PATH)
+    fixture_summary = _validate_mini_long_memory_caps(memories=memories, queries=queries)
+    query_summary = {
+        "query_count": len(queries),
+        "required_query_types": sorted(REQUIRED_QUERY_TYPES),
+        "observed_query_types": sorted({str(query.get("query_type")) for query in queries}),
+    }
     mini_fixture_summary = _validate_mini_long_memory_caps(memories=mini_memories, queries=mini_queries)
+    medium_fixture_summary = _validate_medium_long_memory_caps(memories=medium_memories, queries=medium_queries)
+    label_qa_rejections = _self_test_label_qa_rejections(
+        medium_memories=medium_memories,
+        medium_queries=medium_queries,
+    )
+    stress_manifest_summary = _validate_stress_long_memory_manifests()
+    tier_resolution_summary = _self_test_fixture_tier_resolution()
     negative_snippet = negative_query_metrics_snippet(queries)
 
     sample_rows: list[dict[str, Any]] = []
     for index, query in enumerate(queries, start=1):
         expected_ids = [str(value) for value in query.get("expected_ids", [])]
+        query_type = str(query.get("query_type"))
         if expected_ids:
             mock_result_ids = [expected_ids[0], "synthetic_non_expected_id"]
+            failure_type = "none"
         else:
-            mock_result_ids = ["synthetic_no_match_id"]
+            mock_result_ids = []
+            failure_type = "expected_no_match"
         sample_rows.append(
             {
                 "query_id": query.get("id", f"query_{index}"),
@@ -1300,19 +1765,45 @@ def run_full_self_test() -> int:
                 **compute_query_metrics(
                     mock_result_ids,
                     expected_ids,
-                    query_type=str(query.get("query_type")),
+                    query_type=query_type,
                     latency_ms=10.0 + index,
-                    negative=str(query.get("query_type")) == "negative_no_match" or not expected_ids,
+                    negative=query_type == "negative_no_match" or not expected_ids,
                 ),
+                "failure_type": failure_type,
             }
         )
 
     aggregate = aggregate_metrics(sample_rows)
+    aggregate.update(_positive_query_aggregate_metrics(sample_rows))
+    aggregate["runtime_minutes"] = 0.0
+    aggregate["baseline_query_count"] = len(queries)
+    aggregate["seed_completed"] = True
+    aggregate["observed_summary_partial_reason_codes"] = []
+    aggregate["blocker_count"] = 0
+    aggregate["readiness_fallback"] = classify_readiness_fallback(None)
+    aggregate["reason_code_classification"] = classify_reason_codes([], evidence={"blocker_count": 0})
+    aggregate["threshold_evaluation"] = _evaluate_threshold_status(
+        fixture_tier=V2_DEFAULT_FIXTURE_TIER,
+        aggregate=aggregate,
+        policy_name=V2_THRESHOLD_POLICY,
+    )
     with tempfile.TemporaryDirectory(prefix="task-8-memory-self-test-") as tmp:
         tmp_path = Path(tmp)
         json_path = tmp_path / "self-test.json"
         md_path = tmp_path / "self-test.md"
-        manifest = _fixture_manifest(memories=memories, graph_fixture=graph_fixture, queries=queries, command=["offline-self-test"])
+        manifest = _fixture_manifest(
+            memories=memories,
+            graph_fixture=graph_fixture,
+            queries=queries,
+            command=["offline-self-test"],
+            fixture_tier=V2_DEFAULT_FIXTURE_TIER,
+        )
+        manifest["schema_version"] = V2_SCHEMA_VERSION
+        manifest["fixture_tier"] = V2_DEFAULT_FIXTURE_TIER
+        manifest["baseline_version"] = V2_DEFAULT_BASELINE_VERSION
+        manifest["threshold_policy"] = {"name": V2_THRESHOLD_POLICY, "enforcement": "local-only"}
+        manifest["runtime_target"] = _runtime_target_for_tier(V2_DEFAULT_FIXTURE_TIER)
+        manifest["determinism_policy"] = {"name": V2_DETERMINISM_POLICY}
         _write_reports(
             output_json=json_path,
             output_md=md_path,
@@ -1327,15 +1818,66 @@ def run_full_self_test() -> int:
         parsed = _validate_report_payload(json_path)
         if parsed.get("aggregate_metrics", {}).get("query_count") != len(sample_rows):
             raise AssertionError("self-test JSON report query_count mismatch")
-        if "Memory Retrieval Baseline" not in md_path.read_text(encoding="utf-8"):
+        if parsed.get("schema_version") is None:
+            raise AssertionError("self-test JSON report missing schema_version")
+        if parsed.get("fixture_tier") is None:
+            raise AssertionError("self-test JSON report missing fixture_tier")
+        if parsed.get("threshold_status") is None:
+            raise AssertionError("self-test JSON report missing threshold_status")
+        if not isinstance(parsed.get("failure_buckets"), dict):
+            raise AssertionError("self-test JSON report missing failure_buckets")
+        if parsed["failure_buckets"].get("expected_no_match", 0) < 1:
+            raise AssertionError("self-test JSON report missing expected_no_match failure bucket")
+        if parsed["failure_buckets"].get("none", 0) < 1:
+            raise AssertionError("self-test JSON report missing none failure bucket")
+        if not isinstance(parsed.get("readiness_summary"), dict):
+            raise AssertionError("self-test JSON report missing readiness_summary")
+        markdown = md_path.read_text(encoding="utf-8")
+        if "Memory Retrieval Baseline" not in markdown:
             raise AssertionError("self-test markdown title missing")
+        if "## Benchmark V2 summary" not in markdown:
+            raise AssertionError("self-test markdown V2 summary missing")
+        if "| expected_no_match |" not in markdown:
+            raise AssertionError("self-test markdown expected_no_match bucket missing")
+
+    assert _classify_failure_type(
+        query_type="search_vector",
+        expected_fixture_ids=["m1"],
+        expected_server_ids=["srv1"],
+        missing_expected_fixture_ids=[],
+        found_expected_server_ids=[],
+        result_count=1,
+        raw_top_k=[{"score": 0.01}],
+        call_error=None,
+        parse_errors=[],
+        summary_partial_reason_code=None,
+        warnings=[],
+        contract=None,
+    ) == "low_confidence"
+    assert _classify_failure_type(
+        query_type="search_vector",
+        expected_fixture_ids=["m1"],
+        expected_server_ids=["srv1"],
+        missing_expected_fixture_ids=[],
+        found_expected_server_ids=[],
+        result_count=1,
+        raw_top_k=[{"score": 0.5}],
+        call_error=None,
+        parse_errors=[],
+        summary_partial_reason_code=None,
+        warnings=[],
+        contract=None,
+    ) == "true_miss"
 
     print(
         "self-test passed "
         f"(fixtures={fixture_summary['memory_count']} memories, queries={query_summary['query_count']}, "
         f"negative_queries={negative_snippet['query_count']}, "
         f"mini_fixtures={mini_fixture_summary['memory_count']} memories, "
-        f"mini_queries={mini_fixture_summary['query_count']})"
+        f"mini_queries={mini_fixture_summary['query_count']}, "
+        f"medium_fixtures={medium_fixture_summary['memory_count']} memories, "
+        f"medium_queries={medium_fixture_summary['query_count']}, "
+        f"stress_manifests={stress_manifest_summary['status']})"
     )
     print(
         json.dumps(
@@ -1343,6 +1885,10 @@ def run_full_self_test() -> int:
                 "fixture_summary": fixture_summary,
                 "query_summary": query_summary,
                 "mini_fixture_summary": mini_fixture_summary,
+                "medium_fixture_summary": medium_fixture_summary,
+                "label_qa_rejections": label_qa_rejections,
+                "stress_manifest_summary": stress_manifest_summary,
+                "tier_resolution_summary": tier_resolution_summary,
                 "negative_query_summary": {
                     "query_count": negative_snippet["query_count"],
                     "aggregate_metrics": negative_snippet["aggregate_metrics"],
@@ -1380,15 +1926,13 @@ def _validate_fixture_caps(
     if len(queries) != EXPECTED_GOLDEN_QUERY_COUNT:
         raise AssertionError(f"Expected {EXPECTED_GOLDEN_QUERY_COUNT} golden queries, found {len(queries)}")
 
+    identity_summary = _validate_memory_fixture_identity_integrity(memories, label="Baseline memory")
     memory_ids = [str(memory["id"]) for memory in memories]
-    if len(memory_ids) != len(set(memory_ids)):
-        raise AssertionError("Memory fixture IDs must be unique")
 
     entity_id_set = {str(entity["id"]) for entity in entities}
     query_ids = [str(query["id"]) for query in queries]
 
-    if len(query_ids) != len(set(query_ids)):
-        raise AssertionError("Golden query IDs must be unique")
+    _assert_unique_values(query_ids, label="Baseline golden query IDs")
 
     for relation in relations:
         from_entity = str(relation["from_entity"])
@@ -1418,7 +1962,8 @@ def _validate_fixture_caps(
         "query_count": len(queries),
         "query_expected_id_total": expected_total,
         "query_unique_ids": len(set(query_ids)),
-        "memory_unique_ids": len(memory_id_set),
+        "memory_unique_ids": identity_summary["memory_unique_ids"],
+        "explicit_alias_count": identity_summary["explicit_alias_count"],
     }
 
 
@@ -1464,14 +2009,11 @@ def _validate_mini_long_memory_caps(
             f"Mini long-memory golden queries exceed cap: {query_count} > {MINI_GOLDEN_QUERY_MAX_COUNT}"
         )
 
-    memory_ids = [str(memory.get("id")) for memory in memories]
-    if len(memory_ids) != len(set(memory_ids)):
-        raise AssertionError("Mini long-memory fixture IDs must be unique")
+    identity_summary = _validate_memory_fixture_identity_integrity(memories, label="Mini long-memory")
     memory_index = {str(memory.get("id")): memory for memory in memories}
 
     query_ids = [str(query.get("id")) for query in queries]
-    if len(query_ids) != len(set(query_ids)):
-        raise AssertionError("Mini long-memory query IDs must be unique")
+    _assert_unique_values(query_ids, label="Mini long-memory query IDs")
 
     supported_tools = {"recall", "search_memory", "get_valid"}
     for query in queries:
@@ -1546,6 +2088,8 @@ def _validate_mini_long_memory_caps(
         },
         "memory_count": memory_count,
         "query_count": query_count,
+        "memory_unique_ids": identity_summary["memory_unique_ids"],
+        "explicit_alias_count": identity_summary["explicit_alias_count"],
         "coverage": {
             "temporal": temporal_covered,
             "person_project_topic": person_project_topic_covered,
@@ -1555,31 +2099,256 @@ def _validate_mini_long_memory_caps(
     }
 
 
+def _validate_medium_long_memory_caps(
+    *,
+    memories: list[dict[str, Any]] | None = None,
+    queries: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    memories = memories if memories is not None else load_memory_corpus(MEDIUM_FIXTURE_CORPUS_PATH)
+    queries = queries if queries is not None else load_golden_queries(MEDIUM_GOLDEN_QUERIES_PATH)
+
+    memory_count = len(memories)
+    query_count = len(queries)
+    if memory_count > MEDIUM_MEMORY_CORPUS_MAX_COUNT:
+        raise AssertionError(
+            f"Medium long-memory fixture exceeds cap: {memory_count} > {MEDIUM_MEMORY_CORPUS_MAX_COUNT}"
+        )
+    if query_count > MEDIUM_GOLDEN_QUERY_MAX_COUNT:
+        raise AssertionError(
+            f"Medium long-memory golden queries exceed cap: {query_count} > {MEDIUM_GOLDEN_QUERY_MAX_COUNT}"
+        )
+
+    identity_summary = _validate_memory_fixture_identity_integrity(memories, label="Medium long-memory")
+    memory_index = {str(memory.get("id")): memory for memory in memories}
+
+    query_ids = [str(query.get("id")) for query in queries]
+    _assert_unique_values(query_ids, label="Medium long-memory query IDs")
+
+    supported_tools = {"recall", "search_memory", "get_valid"}
+    required_categories = {
+        "long_memory_recall",
+        "namespace_boundary",
+        "temporal_boundary",
+        "negative_no_match",
+        "partial_readiness",
+        "id_mismatch_alias",
+        "record_shaped_ids",
+    }
+    covered_categories: set[str] = set()
+
+    for query in queries:
+        tool = str(query.get("tool") or "")
+        if tool not in supported_tools:
+            raise AssertionError(f"Medium long-memory query uses unsupported tool: {query.get('id')}: {tool}")
+
+        expected_ids = [str(memory_id) for memory_id in query.get("expected_ids", [])]
+        for memory_id in expected_ids:
+            if memory_id not in memory_index:
+                raise AssertionError(f"Medium long-memory query references unknown memory id: {memory_id}")
+
+        scenario_category = _validate_memory_label_rationale(
+            query,
+            fixture_tier="medium",
+            allowed_categories=required_categories,
+        )
+        covered_categories.add(scenario_category)
+
+    missing_categories = sorted(required_categories - covered_categories)
+    if missing_categories:
+        raise AssertionError(
+            f"Medium long-memory queries missing required scenario categories: {missing_categories}"
+        )
+
+    return {
+        "fixture_paths": {
+            "memory_corpus": str(MEDIUM_FIXTURE_CORPUS_PATH.relative_to(ROOT)),
+            "golden_queries": str(MEDIUM_GOLDEN_QUERIES_PATH.relative_to(ROOT)),
+        },
+        "caps": {
+            "memory_count_max": MEDIUM_MEMORY_CORPUS_MAX_COUNT,
+            "query_count_max": MEDIUM_GOLDEN_QUERY_MAX_COUNT,
+        },
+        "memory_count": memory_count,
+        "query_count": query_count,
+        "memory_unique_ids": identity_summary["memory_unique_ids"],
+        "explicit_alias_count": identity_summary["explicit_alias_count"],
+        "coverage": {category: category in covered_categories for category in sorted(required_categories)},
+    }
+
+
+def _validate_stress_long_memory_manifests() -> dict[str, Any]:
+    fixture_manifest = _load_json(STRESS_FIXTURE_MANIFEST_PATH)
+    golden_manifest = _load_json(STRESS_GOLDEN_MANIFEST_PATH)
+
+    if fixture_manifest.get("version") != FIXTURE_SCHEMA_VERSION:
+        raise AssertionError(
+            f"Invalid stress fixture manifest version in {STRESS_FIXTURE_MANIFEST_PATH}: expected {FIXTURE_SCHEMA_VERSION}"
+        )
+    if golden_manifest.get("version") != FIXTURE_SCHEMA_VERSION:
+        raise AssertionError(
+            f"Invalid stress golden manifest version in {STRESS_GOLDEN_MANIFEST_PATH}: expected {FIXTURE_SCHEMA_VERSION}"
+        )
+
+    if str(fixture_manifest.get("fixture_tier")) != "stress":
+        raise AssertionError("Stress fixture manifest must declare fixture_tier=stress")
+    if str(golden_manifest.get("fixture_tier")) != "stress":
+        raise AssertionError("Stress golden manifest must declare fixture_tier=stress")
+
+    if not isinstance(fixture_manifest.get("generation_plan"), dict):
+        raise AssertionError("Stress fixture manifest missing generation_plan object")
+    if not isinstance(golden_manifest.get("generation_plan"), dict):
+        raise AssertionError("Stress golden manifest missing generation_plan object")
+
+    return {
+        "fixture_manifest": str(STRESS_FIXTURE_MANIFEST_PATH.relative_to(ROOT)),
+        "golden_manifest": str(STRESS_GOLDEN_MANIFEST_PATH.relative_to(ROOT)),
+        "status": "validated",
+    }
+
+
+def _assert_raises_with_message(fn: Any, expected_substring: str, *, label: str) -> str:
+    try:
+        fn()
+    except AssertionError as exc:
+        message = str(exc)
+        if expected_substring not in message:
+            raise AssertionError(
+                f"{label} raised AssertionError without expected diagnostic {expected_substring!r}: {message}"
+            ) from exc
+        return message
+    raise AssertionError(f"{label} did not reject invalid input")
+
+
+def _self_test_label_qa_rejections(
+    *,
+    medium_memories: list[dict[str, Any]],
+    medium_queries: list[dict[str, Any]],
+) -> dict[str, str]:
+    duplicate_memories = [dict(memory) for memory in medium_memories]
+    duplicate = dict(duplicate_memories[0])
+    duplicate["content"] = f"{duplicate['content']} duplicate copy for validation self-test"
+    duplicate_memories.append(duplicate)
+
+    alias_collision_memories = [dict(memory) for memory in medium_memories]
+    alias_collision_memory = dict(alias_collision_memories[0])
+    alias_collision_metadata = dict(alias_collision_memory.get("metadata", {}))
+    alias_collision_metadata["aliases"] = [str(alias_collision_memories[1].get("id"))]
+    alias_collision_memory["metadata"] = alias_collision_metadata
+    alias_collision_memories[0] = alias_collision_memory
+
+    missing_rationale_queries = [dict(query) for query in medium_queries]
+    missing_rationale_queries[0] = dict(missing_rationale_queries[0])
+    missing_rationale_queries[0].pop("label_rationale", None)
+
+    drifted_rationale_queries = [dict(query) for query in medium_queries]
+    drifted_query = dict(drifted_rationale_queries[0])
+    drifted_rationale = dict(drifted_query["label_rationale"])
+    drifted_rationale["expected_ids"] = []
+    drifted_query["label_rationale"] = drifted_rationale
+    drifted_rationale_queries[0] = drifted_query
+
+    negative_consistency_queries = [dict(query) for query in medium_queries]
+    negative_query = dict(negative_consistency_queries[3])
+    negative_rationale = dict(negative_query["label_rationale"])
+    negative_rationale["no_match_expected"] = False
+    negative_query["label_rationale"] = negative_rationale
+    negative_consistency_queries[3] = negative_query
+
+    return {
+        "duplicate_memory_ids": _assert_raises_with_message(
+            lambda: _validate_medium_long_memory_caps(memories=duplicate_memories, queries=medium_queries),
+            "duplicate values",
+            label="medium duplicate memory ID validation",
+        ),
+        "alias_collision": _assert_raises_with_message(
+            lambda: _validate_medium_long_memory_caps(memories=alias_collision_memories, queries=medium_queries),
+            "alias collisions detected",
+            label="medium alias collision validation",
+        ),
+        "missing_label_rationale": _assert_raises_with_message(
+            lambda: _validate_medium_long_memory_caps(memories=medium_memories, queries=missing_rationale_queries),
+            "missing label_rationale object",
+            label="medium missing label_rationale validation",
+        ),
+        "expected_id_drift": _assert_raises_with_message(
+            lambda: _validate_medium_long_memory_caps(memories=medium_memories, queries=drifted_rationale_queries),
+            "label_rationale.expected_ids drift",
+            label="medium label expected_ids drift validation",
+        ),
+        "negative_consistency": _assert_raises_with_message(
+            lambda: _validate_medium_long_memory_caps(memories=medium_memories, queries=negative_consistency_queries),
+            "negative_no_match must have empty expected_ids and no_match_expected=true",
+            label="medium negative no-match consistency validation",
+        ),
+    }
+
+
 def self_test_fixtures() -> dict[str, Any]:
     summary = _validate_fixture_caps()
     mini_summary = _validate_mini_long_memory_caps()
+    medium_summary = _validate_medium_long_memory_caps()
+    stress_summary = _validate_stress_long_memory_manifests()
+    label_qa_rejections = _self_test_label_qa_rejections(
+        medium_memories=load_memory_corpus(MEDIUM_FIXTURE_CORPUS_PATH),
+        medium_queries=load_golden_queries(MEDIUM_GOLDEN_QUERIES_PATH),
+    )
     print(
         "fixtures self-test passed "
         f"(memory_count={summary['memory_count']}, graph_entity_count={summary['graph_entity_count']}, "
         f"graph_relation_count={summary['graph_relation_count']}, query_count={summary['query_count']})"
     )
-    print(json.dumps({"baseline": summary, "mini_long_memory": mini_summary}, sort_keys=True))
-    return {"baseline": summary, "mini_long_memory": mini_summary}
+    print(
+        json.dumps(
+            {
+                "baseline": summary,
+                "mini_long_memory": mini_summary,
+                "medium_long_memory": medium_summary,
+                "stress_long_memory": stress_summary,
+                "label_qa_rejections": label_qa_rejections,
+            },
+            sort_keys=True,
+        )
+    )
+    return {
+        "baseline": summary,
+        "mini_long_memory": mini_summary,
+        "medium_long_memory": medium_summary,
+        "stress_long_memory": stress_summary,
+        "label_qa_rejections": label_qa_rejections,
+    }
 
 
 def self_test_queries() -> dict[str, Any]:
     summary = _validate_query_caps()
     mini_summary = _validate_mini_long_memory_caps()
+    medium_summary = _validate_medium_long_memory_caps()
     print(
         "queries self-test passed "
         f"(query_count={summary['query_count']}, required_query_types={summary['required_query_types']})"
     )
-    print(json.dumps({"baseline": summary, "mini_long_memory": mini_summary}, sort_keys=True))
-    return {"baseline": summary, "mini_long_memory": mini_summary}
+    print(
+        json.dumps(
+            {
+                "baseline": summary,
+                "mini_long_memory": mini_summary,
+                "medium_long_memory": medium_summary,
+            },
+            sort_keys=True,
+        )
+    )
+    return {
+        "baseline": summary,
+        "mini_long_memory": mini_summary,
+        "medium_long_memory": medium_summary,
+    }
 
 
 def run_queries(args: argparse.Namespace) -> int:
-    queries = load_golden_queries()
+    fixture_tier = _normalize_fixture_tier(args.fixture_tier)
+    _, _, queries, _, _ = _load_tier_inputs(fixture_tier)
+    if fixture_tier == "stress":
+        print(json.dumps({"query_count": 0, "reason": "stress tier is manifest-only and requires generated queries"}, sort_keys=True))
+        return 0
     with McpClient.start(timeout=args.timeout, client_name="memory-retrieval-benchmark", client_version="0.1.0") as client:
         result = execute_queries(client, queries)
     if args.output:
@@ -1592,7 +2361,9 @@ def run_queries(args: argparse.Namespace) -> int:
 
 def run_benchmark(args: argparse.Namespace) -> int:
     EVIDENCE_DIR.mkdir(parents=True, exist_ok=True)
+    V2_EVIDENCE_DIR.mkdir(parents=True, exist_ok=True)
     run_started = time.time()
+    fixture_tier = _normalize_fixture_tier(args.fixture_tier)
     resolved_command = resolve_mcp_command()
     warnings: list[Any] = []
     blockers: list[dict[str, Any]] = []
@@ -1601,11 +2372,7 @@ def run_benchmark(args: argparse.Namespace) -> int:
     stderr_tail: list[str] = []
 
     try:
-        memories = load_memory_corpus()
-        graph_fixture = load_graph_fixture()
-        queries = load_golden_queries()
-        validation = _validate_fixture_caps(memories=memories, graph_fixture=graph_fixture, queries=queries)
-        query_validation = _validate_query_caps()
+        memories, graph_fixture, queries, validation, query_validation = _load_tier_inputs(fixture_tier)
         raw["fixture_validation"] = validation
         raw["query_validation"] = query_validation
     except Exception as exc:  # noqa: BLE001
@@ -1665,16 +2432,26 @@ def run_benchmark(args: argparse.Namespace) -> int:
                             )
                         )
                         seed_progress = {"status": "skipped", "reason": "embedding_not_ready"}
+                    elif fixture_tier == "stress":
+                        seed_progress = {
+                            "status": "deferred",
+                            "reason": "stress_manifest_only",
+                            "fixture_tier": fixture_tier,
+                        }
+                        warnings.append("stress tier is manifest-only; runtime seeding/query execution deferred")
                     else:
                         seed_progress = seed_memory_fixtures(
                             client,
                             call_timeout_s=max(args.timeout, 120.0),
+                            fixture_tier=fixture_tier,
+                            corpus_path=MINI_FIXTURE_CORPUS_PATH if fixture_tier == "small" else MEDIUM_FIXTURE_CORPUS_PATH,
                             readiness_timeout_s=args.readiness_timeout_s,
                             readiness_poll_interval_s=args.poll_interval_s,
                             readiness_fallback_sleep_s=args.readiness_fallback_sleep_s,
+                            golden_path=MINI_GOLDEN_QUERIES_PATH if fixture_tier == "small" else MEDIUM_GOLDEN_QUERIES_PATH,
                         )
                     raw["seed_progress"] = seed_progress
-                    if seed_progress.get("status") != "completed":
+                    if seed_progress.get("status") not in {"completed", "deferred"}:
                         blockers.extend(
                             _blocker(
                                 phase=str(blocker.get("phase") or "seed_memory_fixtures"),
@@ -1697,7 +2474,7 @@ def run_benchmark(args: argparse.Namespace) -> int:
                                     diagnostics={"seed_status": seed_progress.get("status")},
                                 )
                             )
-                    else:
+                    elif seed_progress.get("status") == "completed":
                         fixture_to_server_id_map: dict[str, str] | None = None
                         memory_progress = seed_progress.get("memory") if isinstance(seed_progress, dict) else None
                         if isinstance(memory_progress, dict):
@@ -1724,6 +2501,14 @@ def run_benchmark(args: argparse.Namespace) -> int:
                                     diagnostics=query_result["diagnostics"],
                                 )
                             )
+                    else:
+                        per_query = []
+                        raw["query_diagnostics"] = {
+                            "degraded_or_partial_count": 0,
+                            "parse_issue_count": 0,
+                            "call_error_count": 0,
+                            "reason": "stress_manifest_only",
+                        }
                     stderr_tail = client.stderr_tail(80)
             except Exception as exc:  # noqa: BLE001
                 blockers.append(
@@ -1739,6 +2524,7 @@ def run_benchmark(args: argparse.Namespace) -> int:
 
     aggregate = aggregate_metrics(per_query)
     aggregate.update(_positive_query_aggregate_metrics(per_query))
+    aggregate["runtime_minutes"] = round((time.time() - run_started) / 60.0, 6)
     aggregate["baseline_query_count"] = len(queries)
     aggregate["seed_completed"] = bool(raw.get("seed_progress", {}).get("status") == "completed")
     aggregate["observed_summary_partial_reason_codes"] = _reason_codes_from_rows(per_query)
@@ -1753,11 +2539,77 @@ def run_benchmark(args: argparse.Namespace) -> int:
             "readiness_degraded": aggregate["readiness_fallback"].get("impact") == "degraded",
         },
     )
+    aggregate["threshold_evaluation"] = _evaluate_threshold_status(
+        fixture_tier=fixture_tier,
+        aggregate=aggregate,
+        policy_name=V2_THRESHOLD_POLICY,
+    )
 
     if blockers and not per_query:
         warnings.append("benchmark blocked before query loop; structured blocker evidence written")
 
-    manifest = _fixture_manifest(memories=memories, graph_fixture=graph_fixture, queries=queries, command=resolved_command)
+    output_json = Path(args.output_json)
+    output_md = Path(args.output_md)
+    using_canonical_targets = _is_canonical_target_pair(output_json, output_md)
+    effective_output_json = output_json
+    effective_output_md = output_md
+    refresh_allowed = bool(args.refresh_baseline)
+    if using_canonical_targets and not refresh_allowed:
+        effective_output_json, effective_output_md = _non_refresh_report_paths(BENCHMARK_NAME, fixture_tier)
+        warnings.append(
+            "baseline refresh not requested; canonical baseline targets are protected and output was redirected"
+        )
+
+    refresh_metadata = {
+        "schema_version": V2_SCHEMA_VERSION,
+        "fixture_tier": fixture_tier,
+        "baseline_version": args.baseline_version,
+        "model": args.embedding_model,
+        "command": _cli_command(list(getattr(args, "_argv", []))),
+        "refresh_reason": args.refresh_reason,
+        "refresh_mode": refresh_allowed,
+        "refresh_requested": bool(args.refresh_baseline),
+        "canonical_target_requested": using_canonical_targets,
+        "canonical_target_written": using_canonical_targets and refresh_allowed,
+        "output_json": str(effective_output_json),
+        "output_md": str(effective_output_md),
+        "refresh_timestamp_utc": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z") if refresh_allowed else None,
+        "git_commit": _git_commit_hash(),
+    }
+
+    if refresh_allowed and not args.refresh_reason:
+        blockers.append(
+            _blocker(
+                phase="baseline_refresh_policy",
+                command_or_tool="--refresh-baseline",
+                message="explicit baseline refresh requires --refresh-reason",
+                stderr_tail=stderr_tail,
+                diagnostics={"required_field": "refresh_reason"},
+            )
+        )
+        refresh_allowed = False
+        refresh_metadata["refresh_mode"] = False
+        refresh_metadata["canonical_target_written"] = False
+        refresh_metadata["refresh_timestamp_utc"] = None
+        if using_canonical_targets:
+            effective_output_json, effective_output_md = _non_refresh_report_paths(BENCHMARK_NAME, fixture_tier)
+            refresh_metadata["output_json"] = str(effective_output_json)
+            refresh_metadata["output_md"] = str(effective_output_md)
+
+    manifest = _fixture_manifest(
+        memories=memories,
+        graph_fixture=graph_fixture,
+        queries=queries,
+        command=resolved_command,
+        fixture_tier=fixture_tier,
+    )
+    manifest["schema_version"] = V2_SCHEMA_VERSION
+    manifest["fixture_tier"] = fixture_tier
+    manifest["baseline_version"] = args.baseline_version
+    manifest["threshold_policy"] = {"name": V2_THRESHOLD_POLICY, "enforcement": "local-only"}
+    manifest["runtime_target"] = _runtime_target_for_tier(fixture_tier)
+    manifest["determinism_policy"] = {"name": V2_DETERMINISM_POLICY}
+    manifest["baseline_refresh"] = refresh_metadata
     environment = _environment(
         command=resolved_command,
         data_dir=data_dir_used,
@@ -1767,12 +2619,9 @@ def run_benchmark(args: argparse.Namespace) -> int:
         raw=raw,
         stderr_tail=stderr_tail,
     )
-    
-    output_json = Path(args.output_json)
-    output_md = Path(args.output_md)
     _write_reports(
-        output_json=output_json,
-        output_md=output_md,
+        output_json=effective_output_json,
+        output_md=effective_output_md,
         manifest=manifest,
         aggregate=aggregate,
         per_query=per_query,
@@ -1785,12 +2634,13 @@ def run_benchmark(args: argparse.Namespace) -> int:
     print(
         json.dumps(
             {
-                "output_json": str(output_json),
-                "output_md": str(output_md),
+                "output_json": str(effective_output_json),
+                "output_md": str(effective_output_md),
                 "query_count": len(queries),
                 "ran_queries": len(per_query),
                 "blocker_count": len(blockers),
                 "observed_reason_codes": aggregate["observed_summary_partial_reason_codes"],
+                "baseline_refresh": refresh_metadata,
             },
             indent=2,
         )
@@ -1800,6 +2650,7 @@ def run_benchmark(args: argparse.Namespace) -> int:
 
 def parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Memory retrieval benchmark fixture + query execution utilities.")
+    tier_help = "Fixture tier selection: small default; medium/stress explicit only."
     parser.add_argument("--self-test", action="store_true", help="Run built-in checks.")
     parser.add_argument("--phase", choices=("all", "fixtures", "queries"), default="all", help="Self-test phase selector.")
     parser.add_argument("--run", action="store_true", help="Execute all golden queries via MCP and print summary.")
@@ -1813,17 +2664,28 @@ def parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--output", type=Path, default=None, help="Optional JSON output path for --run results.")
     parser.add_argument("--output-json", type=Path, default=OUTPUT_JSON, help="Benchmark JSON evidence output path.")
     parser.add_argument("--output-md", type=Path, default=OUTPUT_MD, help="Benchmark Markdown evidence output path.")
+    parser.add_argument("--fixture-tier", default=V2_DEFAULT_FIXTURE_TIER, help=tier_help)
+    parser.add_argument("--tier", dest="fixture_tier", help="Alias for --fixture-tier.")
+    parser.add_argument("--baseline-version", default=V2_DEFAULT_BASELINE_VERSION, help="Baseline version metadata for V2 artifacts.")
+    parser.add_argument("--refresh-baseline", action="store_true", help="Allow canonical baseline output targets to be refreshed intentionally.")
+    parser.add_argument("--refresh-reason", default=None, help="Required reason text when --refresh-baseline is used.")
     parser.add_argument(
         "--negative-metrics-snippet-out",
         type=Path,
         default=None,
         help="Write negative_no_match baseline metric snippet JSON for QA evidence.",
     )
-    return parser.parse_args(list(argv) if argv is not None else None)
+    args = parser.parse_args(list(argv) if argv is not None else None)
+    try:
+        args.fixture_tier = _normalize_fixture_tier(args.fixture_tier)
+    except ValueError as exc:
+        parser.error(str(exc))
+    return args
 
 
 def main(argv: Iterable[str] | None = None) -> int:
     args = parse_args(argv)
+    args._argv = list(argv) if argv is not None else ["evals/memory_retrieval_benchmark.py", *sys.argv[1:]]
 
     if args.self_test and args.phase == "all":
         return run_full_self_test()
