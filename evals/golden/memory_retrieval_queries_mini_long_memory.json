@@ -1,0 +1,98 @@
+{
+  "queries": [
+    {
+      "expected_ids": [
+        "mini_mem_task_checkout_retry",
+        "mini_mem_decision_checkout_backoff"
+      ],
+      "filters": {},
+      "id": "mini_q_recall_checkout_retry_backoff",
+      "mode": "hybrid",
+      "query": "Maya checkout retry jitter backoff",
+      "query_type": "recall_fusion",
+      "rationale": "Hybrid retrieval should connect Maya's retry task and the checkout backoff decision.",
+      "tool": "recall"
+    },
+    {
+      "expected_ids": [
+        "mini_mem_research_refund_notifications",
+        "mini_mem_context_refund_runbook"
+      ],
+      "filters": {},
+      "id": "mini_q_search_bm25_refund_ops",
+      "mode": "bm25",
+      "query": "refund notifications runbook AtlasPay",
+      "query_type": "search_bm25",
+      "rationale": "Lexical retrieval should match explicit refund and runbook terms in AtlasPay memories.",
+      "tool": "search_memory"
+    },
+    {
+      "expected_ids": [
+        "mini_mem_project_helios_triage",
+        "mini_mem_task_helios_crash_review"
+      ],
+      "filters": {},
+      "id": "mini_q_search_vector_helios_stability",
+      "mode": "vector",
+      "query": "Priya Helios crash triage reminder",
+      "query_type": "search_vector",
+      "rationale": "Vector retrieval should connect semantically similar Helios ownership and crash-review task memories.",
+      "tool": "search_memory"
+    },
+    {
+      "expected_ids": [
+        "mini_mem_task_checkout_retry",
+        "mini_mem_decision_checkout_backoff"
+      ],
+      "filters": {
+        "namespace": "evals/mempalace-mini/checkout",
+        "valid_at": "2026-02-12T00:00:00Z"
+      },
+      "id": "mini_q_get_valid_checkout_namespace",
+      "mode": null,
+      "query": "checkout namespace memories valid in mid February",
+      "query_type": "get_valid_filtered",
+      "rationale": "Namespace-scoped get_valid should return only checkout memories active at this checkpoint.",
+      "tool": "get_valid"
+    },
+    {
+      "expected_ids": [
+        "mini_mem_decision_parser_fallback_removed"
+      ],
+      "filters": {
+        "namespace": "evals/mempalace-mini/platform",
+        "valid_at": "2026-02-22T00:00:00Z"
+      },
+      "id": "mini_q_get_valid_temporal_post_migration",
+      "mode": null,
+      "query": "platform parser fallback state after migration week",
+      "query_type": "get_valid_temporal",
+      "rationale": "Temporal checkpoint after 2026-02-21 should include the removal decision but not the expired temporary task.",
+      "tool": "get_valid"
+    },
+    {
+      "expected_ids": [
+        "mini_mem_user_pref_release_notes",
+        "mini_mem_context_process_namespace"
+      ],
+      "filters": {},
+      "id": "mini_q_recall_person_project_topic",
+      "mode": "hybrid",
+      "query": "Maya release-process communication style notes",
+      "query_type": "recall_fusion",
+      "rationale": "Person/project/topic-aligned memories should co-retrieve for process communication prompts.",
+      "tool": "recall"
+    },
+    {
+      "expected_ids": [],
+      "filters": {},
+      "id": "mini_q_negative_no_match_nonsense",
+      "mode": "hybrid",
+      "query": "cerulean walrus moonbeam lattice",
+      "query_type": "negative_no_match",
+      "rationale": "Deliberate nonsense should produce no expected matches in this synthetic fixture.",
+      "tool": "recall"
+    }
+  ],
+  "version": 1
+}

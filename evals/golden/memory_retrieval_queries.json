@@ -71,9 +71,9 @@
       "filters": {},
       "id": "q_search_vector_billing_retry",
       "mode": "vector",
-      "query": "billing retry window",
+      "query": "Billing retries stay open for a 15 minute retry window",
       "query_type": "search_vector",
-      "rationale": "Vector search should find the semantically aligned billing retry task.",
+      "rationale": "Vector search should find the billing retry task using the same synthetic concepts as the fixture content.",
       "tool": "search_memory"
     },
     {

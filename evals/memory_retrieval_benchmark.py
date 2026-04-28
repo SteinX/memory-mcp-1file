@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 import argparse
+import ast
 import json
+import re
 import sys
 import tempfile
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterable, Protocol, Sequence
+from typing import Any, Iterable, Mapping, Protocol, Sequence
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
@@ -15,10 +17,26 @@ if str(PROJECT_ROOT) not in sys.path:
 
 try:
     from evals.lib.mcp_client import McpClient, build_env, resolve_mcp_command
-    from evals.lib.metrics import aggregate_metrics, compute_query_metrics, write_json_report, write_markdown_report
+    from evals.lib.metrics import (
+        aggregate_metrics,
+        classify_readiness_fallback,
+        classify_reason_code,
+        classify_reason_codes,
+        compute_query_metrics,
+        write_json_report,
+        write_markdown_report,
+    )
 except ModuleNotFoundError:  # pragma: no cover - supports `python3 evals/...` direct script invocation
     from lib.mcp_client import McpClient, build_env, resolve_mcp_command
-    from lib.metrics import aggregate_metrics, compute_query_metrics, write_json_report, write_markdown_report
+    from lib.metrics import (
+        aggregate_metrics,
+        classify_readiness_fallback,
+        classify_reason_code,
+        classify_reason_codes,
+        compute_query_metrics,
+        write_json_report,
+        write_markdown_report,
+    )
 
 
 HERE = Path(__file__).resolve().parent
@@ -26,6 +44,8 @@ ROOT = HERE.parent
 FIXTURE_CORPUS_PATH = HERE / "fixtures" / "memory_corpus.json"
 FIXTURE_GRAPH_PATH = HERE / "fixtures" / "memory_graph.json"
 GOLDEN_QUERIES_PATH = HERE / "golden" / "memory_retrieval_queries.json"
+MINI_FIXTURE_CORPUS_PATH = HERE / "fixtures" / "memory_corpus_mini_long_memory.json"
+MINI_GOLDEN_QUERIES_PATH = HERE / "golden" / "memory_retrieval_queries_mini_long_memory.json"
 EVIDENCE_DIR = ROOT / ".sisyphus" / "evidence" / "evals"
 OUTPUT_JSON = EVIDENCE_DIR / "memory-retrieval-baseline.json"
 OUTPUT_MD = EVIDENCE_DIR / "memory-retrieval-baseline.md"
@@ -40,6 +60,8 @@ MEMORY_CORPUS_MAX_COUNT = 30
 GRAPH_ENTITY_MAX_COUNT = 5
 GRAPH_RELATION_MAX_COUNT = 8
 FIXTURE_SCHEMA_VERSION = 1
+MINI_MEMORY_CORPUS_MAX_COUNT = 30
+MINI_GOLDEN_QUERY_MAX_COUNT = 20
 
 REQUIRED_QUERY_TYPES = {
     "recall_fusion",
@@ -374,14 +396,19 @@ def seed_memory_corpus(
     timeout_s: float = 30.0,
 ) -> dict[str, Any]:
     memory_ids: list[str] = []
+    fixture_to_server_id_map: dict[str, str] = {}
     call_log: list[dict[str, Any]] = []
     for memory in memories:
+        fixture_id = str(memory.get("id")) if memory.get("id") is not None else None
         decoded = _decode_tool_response(client.call_tool("store_memory", dict(memory), timeout=timeout_s))
         payload = decoded["payload"]
         memory_id = str(payload.get("id") or memory.get("id"))
+        if fixture_id:
+            fixture_to_server_id_map[fixture_id] = memory_id
         memory_ids.append(memory_id)
         call_log.append(
             {
+                "fixture_id": fixture_id,
                 "memory_id": memory_id,
                 "memory_type": memory.get("memory_type"),
                 "namespace": memory.get("namespace"),
@@ -391,7 +418,43 @@ def seed_memory_corpus(
                 "parse_errors": decoded["parse_errors"],
             }
         )
-    return {"memory_ids": memory_ids, "memory_count": len(memory_ids), "calls": call_log}
+    return {
+        "memory_ids": memory_ids,
+        "memory_count": len(memory_ids),
+        "fixture_to_server_id_map": fixture_to_server_id_map,
+        "calls": call_log,
+    }
+
+
+def _remap_expected_fixture_ids(
+    expected_fixture_ids: Sequence[str],
+    fixture_to_server_id_map: Mapping[str, str] | None,
+) -> tuple[list[str], list[str]]:
+    if not fixture_to_server_id_map:
+        return list(expected_fixture_ids), []
+
+    remapped: list[str] = []
+    missing: list[str] = []
+    seen: set[str] = set()
+    for fixture_id in expected_fixture_ids:
+        server_id = fixture_to_server_id_map.get(fixture_id)
+        if not server_id:
+            missing.append(fixture_id)
+            continue
+        if server_id in seen:
+            continue
+        seen.add(server_id)
+        remapped.append(server_id)
+    return remapped, missing
+
+
+def _server_to_fixture_id_map(fixture_to_server_id_map: Mapping[str, str] | None) -> dict[str, str]:
+    if not fixture_to_server_id_map:
+        return {}
+    server_to_fixture: dict[str, str] = {}
+    for fixture_id, server_id in fixture_to_server_id_map.items():
+        server_to_fixture.setdefault(str(server_id), str(fixture_id))
+    return server_to_fixture
 
 
 def seed_memory_fixtures(
@@ -592,12 +655,65 @@ def _normalize_result_items(payload: dict[str, Any]) -> list[dict[str, Any]]:
     return normalized
 
 
+def _extract_record_id_from_mapping(value: Mapping[str, Any]) -> str | None:
+    if not isinstance(value, Mapping):
+        return None
+
+    if isinstance(value.get("String"), str) and value.get("String"):
+        return str(value.get("String"))
+
+    for key in ("id", "key", "record", "memory", "item", "node", "value"):
+        nested = value.get(key)
+        normalized = _normalize_memory_result_id(nested)
+        if normalized:
+            return normalized
+
+    return None
+
+
+def _normalize_memory_result_id(value: Any) -> str | None:
+    if value is None:
+        return None
+
+    if isinstance(value, Mapping):
+        return _extract_record_id_from_mapping(value)
+
+    if isinstance(value, str):
+        raw = value.strip()
+        if not raw:
+            return None
+
+        if raw.startswith("{") and "String" in raw:
+            parsed: Any | None = None
+            try:
+                parsed = json.loads(raw)
+            except json.JSONDecodeError:
+                try:
+                    parsed = ast.literal_eval(raw)
+                except (SyntaxError, ValueError):
+                    parsed = None
+
+            if isinstance(parsed, Mapping):
+                normalized = _extract_record_id_from_mapping(parsed)
+                if normalized:
+                    return normalized
+
+            regex_match = re.search(r'''['\"]String['\"]\s*:\s*['\"]([^'\"]+)['\"]''', raw)
+            if regex_match:
+                return regex_match.group(1)
+
+        return raw
+
+    return None
+
+
 def _extract_item_id(item: dict[str, Any]) -> str | None:
     direct_keys = ("id", "memory_id", "entity_id")
     for key in direct_keys:
         value = item.get(key)
-        if value is not None:
-            return str(value)
+        normalized = _normalize_memory_result_id(value)
+        if normalized:
+            return normalized
 
     nested_keys = ("memory", "record", "item", "node")
     for key in nested_keys:
@@ -605,9 +721,167 @@ def _extract_item_id(item: dict[str, Any]) -> str | None:
         if isinstance(nested, dict):
             for nested_key in direct_keys:
                 value = nested.get(nested_key)
-                if value is not None:
-                    return str(value)
+                normalized = _normalize_memory_result_id(value)
+                if normalized:
+                    return normalized
     return None
+
+
+def _extract_item_score(item: dict[str, Any]) -> float | None:
+    direct_keys = ("score", "similarity", "distance", "rank_score", "relevance", "confidence")
+    for key in direct_keys:
+        value = item.get(key)
+        if isinstance(value, (int, float)):
+            return float(value)
+
+    nested_keys = ("memory", "record", "item", "node")
+    for key in nested_keys:
+        nested = item.get(key)
+        if not isinstance(nested, dict):
+            continue
+        for nested_key in direct_keys:
+            value = nested.get(nested_key)
+            if isinstance(value, (int, float)):
+                return float(value)
+    return None
+
+
+def _truncate_text_preview(value: str, *, limit: int = 120) -> str:
+    compact = " ".join(value.split())
+    if len(compact) <= limit:
+        return compact
+    return compact[: max(0, limit - 1)].rstrip() + "…"
+
+
+def _extract_item_preview(item: dict[str, Any]) -> str | None:
+    text_keys = ("content", "text", "summary", "title", "description")
+
+    def _extract_from_mapping(mapping: dict[str, Any]) -> str | None:
+        for key in text_keys:
+            value = mapping.get(key)
+            if isinstance(value, str) and value.strip():
+                return value
+            if isinstance(value, dict):
+                nested_content = value.get("content")
+                if isinstance(nested_content, str) and nested_content.strip():
+                    return nested_content
+        return None
+
+    direct = _extract_from_mapping(item)
+    if direct:
+        return _truncate_text_preview(direct)
+
+    for key in ("memory", "record", "item", "node"):
+        nested = item.get(key)
+        if not isinstance(nested, dict):
+            continue
+        nested_value = _extract_from_mapping(nested)
+        if nested_value:
+            return _truncate_text_preview(nested_value)
+    return None
+
+
+def _extract_raw_top_k(
+    payload: dict[str, Any],
+    *,
+    server_to_fixture: Mapping[str, str],
+    limit: int = 10,
+) -> list[dict[str, Any]]:
+    diagnostics: list[dict[str, Any]] = []
+    seen_result_ids: set[str] = set()
+
+    for item in _normalize_result_items(payload):
+        result_id = _extract_item_id(item)
+        if not result_id or result_id in seen_result_ids:
+            continue
+        seen_result_ids.add(result_id)
+
+        row: dict[str, Any] = {
+            "rank": len(diagnostics) + 1,
+            "result_id": result_id,
+            "fixture_id": server_to_fixture.get(result_id),
+        }
+        score = _extract_item_score(item)
+        if score is not None:
+            row["score"] = score
+        preview = _extract_item_preview(item)
+        if preview:
+            row["preview"] = preview
+
+        diagnostics.append(row)
+        if len(diagnostics) >= max(1, limit):
+            break
+
+    return diagnostics
+
+
+def _has_embedding_not_ready_signal(
+    *,
+    summary_partial_reason_code: str | None,
+    warnings: Sequence[Any],
+    contract: Mapping[str, Any] | None,
+) -> bool:
+    signal_bag: list[str] = []
+    if isinstance(summary_partial_reason_code, str):
+        signal_bag.append(summary_partial_reason_code)
+
+    for warning in warnings:
+        if isinstance(warning, str):
+            signal_bag.append(warning)
+        elif isinstance(warning, dict):
+            signal_bag.extend(str(value) for value in warning.values() if value is not None)
+
+    if isinstance(contract, Mapping):
+        signal_bag.extend(str(value) for value in contract.values() if value is not None)
+
+    signal_text = " ".join(signal_bag).lower()
+    if "embedding" not in signal_text:
+        return False
+    return any(token in signal_text for token in ("not_ready", "not ready", "loading", "initializ", "timeout"))
+
+
+def _classify_failure_type(
+    *,
+    query_type: str,
+    expected_fixture_ids: Sequence[str],
+    expected_server_ids: Sequence[str],
+    missing_expected_fixture_ids: Sequence[str],
+    found_expected_server_ids: Sequence[str],
+    result_count: int,
+    call_error: str | None,
+    parse_errors: Sequence[str],
+    summary_partial_reason_code: str | None,
+    warnings: Sequence[Any],
+    contract: Mapping[str, Any] | None,
+) -> str:
+    if call_error:
+        return "call_error"
+
+    if parse_errors and result_count == 0:
+        return "parse_error"
+
+    if _has_embedding_not_ready_signal(
+        summary_partial_reason_code=summary_partial_reason_code,
+        warnings=warnings,
+        contract=contract,
+    ):
+        return "embedding_not_ready"
+
+    if query_type == "negative_no_match":
+        if result_count == 0:
+            return "expected_no_match"
+        return "wrong_rank"
+
+    if found_expected_server_ids:
+        return "none"
+
+    if result_count == 0:
+        return "empty_results"
+
+    if missing_expected_fixture_ids or (expected_fixture_ids and not expected_server_ids):
+        return "id_mismatch"
+
+    return "wrong_rank"
 
 
 def _normalize_result_ids(payload: dict[str, Any]) -> list[str]:
@@ -659,11 +933,21 @@ def _build_tool_call(query: dict[str, Any]) -> tuple[str, dict[str, Any]]:
     raise ValueError(f"Unsupported query_type: {query_type}")
 
 
-def execute_query(client: McpClientLike, query: dict[str, Any]) -> dict[str, Any]:
+def execute_query(
+    client: McpClientLike,
+    query: dict[str, Any],
+    *,
+    fixture_to_server_id_map: Mapping[str, str] | None = None,
+) -> dict[str, Any]:
     query_id = str(query.get("id"))
     query_type = str(query.get("query_type") or "")
-    expected_ids = [str(value) for value in query.get("expected_ids", [])]
-    negative = query_type == "negative_no_match" or not expected_ids
+    expected_fixture_ids = [str(value) for value in query.get("expected_ids", [])]
+    expected_server_ids, missing_expected_fixture_ids = _remap_expected_fixture_ids(
+        expected_fixture_ids,
+        fixture_to_server_id_map,
+    )
+    server_to_fixture = _server_to_fixture_id_map(fixture_to_server_id_map)
+    negative = query_type == "negative_no_match" or not expected_fixture_ids
 
     tool_name, arguments = _build_tool_call(query)
     started = time.perf_counter()
@@ -675,6 +959,7 @@ def execute_query(client: McpClientLike, query: dict[str, Any]) -> dict[str, Any
     summary_partial_reason_code: str | None = None
     contract: dict[str, Any] | None = None
     result_ids: list[str] = []
+    raw_top_k: list[dict[str, Any]] = []
 
     try:
         raw_response = client.call_tool(tool_name, arguments)
@@ -683,6 +968,7 @@ def execute_query(client: McpClientLike, query: dict[str, Any]) -> dict[str, Any
         result = decoded["result"]
         parse_errors = decoded["parse_errors"]
         result_ids = _normalize_result_ids(payload)
+        raw_top_k = _extract_raw_top_k(payload, server_to_fixture=server_to_fixture, limit=10)
         summary_partial_reason_code = _extract_summary_partial_reason_code(payload, result)
         warnings = _extract_warnings(payload, result)
         contract = _extract_contract(payload, result)
@@ -690,11 +976,29 @@ def execute_query(client: McpClientLike, query: dict[str, Any]) -> dict[str, Any
         call_error = str(exc)
 
     latency_ms = (time.perf_counter() - started) * 1000.0
-    expected_set = set(expected_ids)
-    found_expected_ids = [result_id for result_id in result_ids if result_id in expected_set]
+    expected_server_set = set(expected_server_ids)
+    found_expected_server_ids = [result_id for result_id in result_ids if result_id in expected_server_set]
+    found_expected_fixture_ids = [
+        server_to_fixture[result_id]
+        for result_id in found_expected_server_ids
+        if result_id in server_to_fixture
+    ]
+    failure_type = _classify_failure_type(
+        query_type=query_type,
+        expected_fixture_ids=expected_fixture_ids,
+        expected_server_ids=expected_server_ids,
+        missing_expected_fixture_ids=missing_expected_fixture_ids,
+        found_expected_server_ids=found_expected_server_ids,
+        result_count=len(result_ids),
+        call_error=call_error,
+        parse_errors=parse_errors,
+        summary_partial_reason_code=summary_partial_reason_code,
+        warnings=warnings,
+        contract=contract,
+    )
     metric_row = compute_query_metrics(
         result_ids,
-        expected_ids,
+        expected_server_ids,
         query_type=query_type,
         latency_ms=latency_ms,
         negative=negative,
@@ -706,11 +1010,22 @@ def execute_query(client: McpClientLike, query: dict[str, Any]) -> dict[str, Any
         "query": query.get("query"),
         "tool": tool_name,
         "tool_arguments": arguments,
-        "expected_ids": expected_ids,
-        "found_expected_ids": found_expected_ids,
+        "expected_ids": expected_fixture_ids,
+        "expected_fixture_ids": expected_fixture_ids,
+        "expected_server_ids": expected_server_ids,
+        "missing_expected_fixture_ids": missing_expected_fixture_ids,
+        "found_expected_ids": found_expected_server_ids,
+        "found_expected_server_ids": found_expected_server_ids,
+        "found_expected_fixture_ids": found_expected_fixture_ids,
         "result_ids": result_ids,
+        "raw_top_k": raw_top_k,
         "result_count": len(result_ids),
         "summary_partial_reason_code": summary_partial_reason_code,
+        "reason_code_classification": classify_reason_code(
+            summary_partial_reason_code,
+            evidence={"failure_type": failure_type, "retrieval_blocked": failure_type in {"call_error", "parse_error", "embedding_not_ready"}},
+        ) if summary_partial_reason_code else None,
+        "failure_type": failure_type,
         "warnings": warnings,
         "contract": contract,
         "parse_errors": parse_errors,
@@ -720,8 +1035,16 @@ def execute_query(client: McpClientLike, query: dict[str, Any]) -> dict[str, Any
     return row
 
 
-def execute_queries(client: McpClientLike, queries: Sequence[dict[str, Any]]) -> dict[str, Any]:
-    per_query = [execute_query(client, query) for query in queries]
+def execute_queries(
+    client: McpClientLike,
+    queries: Sequence[dict[str, Any]],
+    *,
+    fixture_to_server_id_map: Mapping[str, str] | None = None,
+) -> dict[str, Any]:
+    per_query = [
+        execute_query(client, query, fixture_to_server_id_map=fixture_to_server_id_map)
+        for query in queries
+    ]
     aggregate = aggregate_metrics(per_query)
     diagnostics = {
         "degraded_or_partial_count": sum(1 for row in per_query if row.get("summary_partial_reason_code")),
@@ -956,8 +1279,11 @@ def run_full_self_test() -> int:
     memories = load_memory_corpus()
     graph_fixture = load_graph_fixture()
     queries = load_golden_queries()
+    mini_memories = load_memory_corpus(MINI_FIXTURE_CORPUS_PATH)
+    mini_queries = load_golden_queries(MINI_GOLDEN_QUERIES_PATH)
     fixture_summary = _validate_fixture_caps(memories=memories, graph_fixture=graph_fixture, queries=queries)
     query_summary = _validate_query_caps()
+    mini_fixture_summary = _validate_mini_long_memory_caps(memories=mini_memories, queries=mini_queries)
     negative_snippet = negative_query_metrics_snippet(queries)
 
     sample_rows: list[dict[str, Any]] = []
@@ -1007,13 +1333,16 @@ def run_full_self_test() -> int:
     print(
         "self-test passed "
         f"(fixtures={fixture_summary['memory_count']} memories, queries={query_summary['query_count']}, "
-        f"negative_queries={negative_snippet['query_count']})"
+        f"negative_queries={negative_snippet['query_count']}, "
+        f"mini_fixtures={mini_fixture_summary['memory_count']} memories, "
+        f"mini_queries={mini_fixture_summary['query_count']})"
     )
     print(
         json.dumps(
             {
                 "fixture_summary": fixture_summary,
                 "query_summary": query_summary,
+                "mini_fixture_summary": mini_fixture_summary,
                 "negative_query_summary": {
                     "query_count": negative_snippet["query_count"],
                     "aggregate_metrics": negative_snippet["aggregate_metrics"],
@@ -1116,25 +1445,137 @@ def _validate_query_caps() -> dict[str, Any]:
     }
 
 
+def _validate_mini_long_memory_caps(
+    *,
+    memories: list[dict[str, Any]] | None = None,
+    queries: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    memories = memories if memories is not None else load_memory_corpus(MINI_FIXTURE_CORPUS_PATH)
+    queries = queries if queries is not None else load_golden_queries(MINI_GOLDEN_QUERIES_PATH)
+
+    memory_count = len(memories)
+    query_count = len(queries)
+    if memory_count > MINI_MEMORY_CORPUS_MAX_COUNT:
+        raise AssertionError(
+            f"Mini long-memory fixture exceeds cap: {memory_count} > {MINI_MEMORY_CORPUS_MAX_COUNT}"
+        )
+    if query_count > MINI_GOLDEN_QUERY_MAX_COUNT:
+        raise AssertionError(
+            f"Mini long-memory golden queries exceed cap: {query_count} > {MINI_GOLDEN_QUERY_MAX_COUNT}"
+        )
+
+    memory_ids = [str(memory.get("id")) for memory in memories]
+    if len(memory_ids) != len(set(memory_ids)):
+        raise AssertionError("Mini long-memory fixture IDs must be unique")
+    memory_index = {str(memory.get("id")): memory for memory in memories}
+
+    query_ids = [str(query.get("id")) for query in queries]
+    if len(query_ids) != len(set(query_ids)):
+        raise AssertionError("Mini long-memory query IDs must be unique")
+
+    supported_tools = {"recall", "search_memory", "get_valid"}
+    for query in queries:
+        tool = str(query.get("tool") or "")
+        if tool not in supported_tools:
+            raise AssertionError(f"Mini long-memory query uses unsupported tool: {query.get('id')}: {tool}")
+        expected_ids = [str(memory_id) for memory_id in query.get("expected_ids", [])]
+        for memory_id in expected_ids:
+            if memory_id not in memory_index:
+                raise AssertionError(f"Mini long-memory query references unknown memory id: {memory_id}")
+
+    temporal_covered = any(
+        isinstance(query.get("filters"), dict) and query["filters"].get("valid_at")
+        for query in queries
+    )
+    namespace_covered = any(
+        isinstance(query.get("filters"), dict) and query["filters"].get("namespace")
+        for query in queries
+    )
+    negative_covered = any(
+        str(query.get("query_type")) == "negative_no_match"
+        and isinstance(query.get("expected_ids"), list)
+        and len(query.get("expected_ids", [])) == 0
+        for query in queries
+    )
+
+    person_project_topic_covered = False
+    for query in queries:
+        expected_ids = [str(memory_id) for memory_id in query.get("expected_ids", [])]
+        if not expected_ids:
+            continue
+        has_person = False
+        has_project = False
+        has_topic = False
+        for expected_id in expected_ids:
+            memory = memory_index.get(expected_id, {})
+            metadata = memory.get("metadata")
+            if not isinstance(metadata, dict):
+                continue
+            if metadata.get("person"):
+                has_person = True
+            if metadata.get("project"):
+                has_project = True
+            if metadata.get("topic"):
+                has_topic = True
+        if has_person and has_project and has_topic:
+            person_project_topic_covered = True
+            break
+
+    missing_categories: list[str] = []
+    if not temporal_covered:
+        missing_categories.append("temporal")
+    if not person_project_topic_covered:
+        missing_categories.append("person_project_topic")
+    if not namespace_covered:
+        missing_categories.append("namespace")
+    if not negative_covered:
+        missing_categories.append("negative")
+    if missing_categories:
+        raise AssertionError(
+            f"Mini long-memory queries missing required coverage categories: {missing_categories}"
+        )
+
+    return {
+        "fixture_paths": {
+            "memory_corpus": str(MINI_FIXTURE_CORPUS_PATH.relative_to(ROOT)),
+            "golden_queries": str(MINI_GOLDEN_QUERIES_PATH.relative_to(ROOT)),
+        },
+        "caps": {
+            "memory_count_max": MINI_MEMORY_CORPUS_MAX_COUNT,
+            "query_count_max": MINI_GOLDEN_QUERY_MAX_COUNT,
+        },
+        "memory_count": memory_count,
+        "query_count": query_count,
+        "coverage": {
+            "temporal": temporal_covered,
+            "person_project_topic": person_project_topic_covered,
+            "namespace": namespace_covered,
+            "negative": negative_covered,
+        },
+    }
+
+
 def self_test_fixtures() -> dict[str, Any]:
     summary = _validate_fixture_caps()
+    mini_summary = _validate_mini_long_memory_caps()
     print(
         "fixtures self-test passed "
         f"(memory_count={summary['memory_count']}, graph_entity_count={summary['graph_entity_count']}, "
         f"graph_relation_count={summary['graph_relation_count']}, query_count={summary['query_count']})"
     )
-    print(json.dumps(summary, sort_keys=True))
-    return summary
+    print(json.dumps({"baseline": summary, "mini_long_memory": mini_summary}, sort_keys=True))
+    return {"baseline": summary, "mini_long_memory": mini_summary}
 
 
 def self_test_queries() -> dict[str, Any]:
     summary = _validate_query_caps()
+    mini_summary = _validate_mini_long_memory_caps()
     print(
         "queries self-test passed "
         f"(query_count={summary['query_count']}, required_query_types={summary['required_query_types']})"
     )
-    print(json.dumps(summary, sort_keys=True))
-    return summary
+    print(json.dumps({"baseline": summary, "mini_long_memory": mini_summary}, sort_keys=True))
+    return {"baseline": summary, "mini_long_memory": mini_summary}
 
 
 def run_queries(args: argparse.Namespace) -> int:
@@ -1257,7 +1698,20 @@ def run_benchmark(args: argparse.Namespace) -> int:
                                 )
                             )
                     else:
-                        query_result = execute_queries(client, queries)
+                        fixture_to_server_id_map: dict[str, str] | None = None
+                        memory_progress = seed_progress.get("memory") if isinstance(seed_progress, dict) else None
+                        if isinstance(memory_progress, dict):
+                            raw_fixture_map = memory_progress.get("fixture_to_server_id_map")
+                            if isinstance(raw_fixture_map, dict):
+                                fixture_to_server_id_map = {
+                                    str(fixture_id): str(server_id)
+                                    for fixture_id, server_id in raw_fixture_map.items()
+                                }
+                        query_result = execute_queries(
+                            client,
+                            queries,
+                            fixture_to_server_id_map=fixture_to_server_id_map,
+                        )
                         per_query = query_result["per_query"]
                         raw["query_diagnostics"] = query_result["diagnostics"]
                         if query_result["diagnostics"].get("call_error_count"):
@@ -1289,6 +1743,16 @@ def run_benchmark(args: argparse.Namespace) -> int:
     aggregate["seed_completed"] = bool(raw.get("seed_progress", {}).get("status") == "completed")
     aggregate["observed_summary_partial_reason_codes"] = _reason_codes_from_rows(per_query)
     aggregate["blocker_count"] = len(blockers)
+    seed_settle = raw.get("seed_progress", {}).get("settle") if isinstance(raw.get("seed_progress"), dict) else None
+    aggregate["readiness_fallback"] = classify_readiness_fallback(seed_settle)
+    aggregate["reason_code_classification"] = classify_reason_codes(
+        aggregate["observed_summary_partial_reason_codes"],
+        evidence={
+            "blocker_count": len(blockers),
+            "readiness_timeout": aggregate["readiness_fallback"].get("impact") == "blocking",
+            "readiness_degraded": aggregate["readiness_fallback"].get("impact") == "degraded",
+        },
+    )
 
     if blockers and not per_query:
         warnings.append("benchmark blocked before query loop; structured blocker evidence written")

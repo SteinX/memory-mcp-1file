@@ -1,0 +1,255 @@
+{
+  "memories": [
+    {
+      "agent_id": "atlas",
+      "content": "TASK: During sprint planning, Maya requested idempotent write retries with jitter for checkout failures.",
+      "id": "mini_mem_task_checkout_retry",
+      "memory_type": "episodic",
+      "metadata": {
+        "benchmark": {
+          "suite": "memory-retrieval-benchmark",
+          "tier": "mini"
+        },
+        "person": "Maya",
+        "project": "checkout-reliability",
+        "tags": [
+          "retry",
+          "jitter",
+          "checkout"
+        ],
+        "topic": "retries"
+      },
+      "namespace": "evals/mempalace-mini/checkout",
+      "run_id": "mini-run-001",
+      "user_id": "eval-user",
+      "valid_from": "2026-02-01T00:00:00Z",
+      "valid_until": null
+    },
+    {
+      "agent_id": "atlas",
+      "content": "DECISION: Project checkout-reliability will use capped exponential backoff with a 90 second max window.",
+      "id": "mini_mem_decision_checkout_backoff",
+      "memory_type": "semantic",
+      "metadata": {
+        "benchmark": {
+          "suite": "memory-retrieval-benchmark",
+          "tier": "mini"
+        },
+        "person": "Maya",
+        "project": "checkout-reliability",
+        "tags": [
+          "backoff",
+          "checkout",
+          "decision"
+        ],
+        "topic": "resilience"
+      },
+      "namespace": "evals/mempalace-mini/checkout",
+      "run_id": "mini-run-001",
+      "user_id": "eval-user",
+      "valid_from": "2026-02-02T00:00:00Z",
+      "valid_until": null
+    },
+    {
+      "agent_id": "atlas",
+      "content": "RESEARCH: Nora documented that support tickets cluster around delayed refund notifications in AtlasPay.",
+      "id": "mini_mem_research_refund_notifications",
+      "memory_type": "semantic",
+      "metadata": {
+        "benchmark": {
+          "suite": "memory-retrieval-benchmark",
+          "tier": "mini"
+        },
+        "person": "Nora",
+        "project": "AtlasPay",
+        "tags": [
+          "refund",
+          "notifications",
+          "support"
+        ],
+        "topic": "refund-ops"
+      },
+      "namespace": "evals/mempalace-mini/refunds",
+      "run_id": "mini-run-002",
+      "user_id": "eval-user",
+      "valid_from": "2026-02-03T00:00:00Z",
+      "valid_until": null
+    },
+    {
+      "agent_id": "atlas",
+      "content": "CONTEXT: Team AtlasPay stores refund webhook runbooks in the finance incident folder.",
+      "id": "mini_mem_context_refund_runbook",
+      "memory_type": "semantic",
+      "metadata": {
+        "benchmark": {
+          "suite": "memory-retrieval-benchmark",
+          "tier": "mini"
+        },
+        "person": "Nora",
+        "project": "AtlasPay",
+        "tags": [
+          "runbook",
+          "webhook",
+          "finance"
+        ],
+        "topic": "operations"
+      },
+      "namespace": "evals/mempalace-mini/refunds",
+      "run_id": "mini-run-002",
+      "user_id": "eval-user",
+      "valid_from": "2026-02-04T00:00:00Z",
+      "valid_until": null
+    },
+    {
+      "agent_id": "atlas",
+      "content": "PROJECT: Helios mobile release moved crash triage ownership to Priya for sprint 9.",
+      "id": "mini_mem_project_helios_triage",
+      "memory_type": "semantic",
+      "metadata": {
+        "benchmark": {
+          "suite": "memory-retrieval-benchmark",
+          "tier": "mini"
+        },
+        "person": "Priya",
+        "project": "Helios",
+        "tags": [
+          "mobile",
+          "triage",
+          "sprint-9"
+        ],
+        "topic": "ownership"
+      },
+      "namespace": "evals/mempalace-mini/mobile",
+      "run_id": "mini-run-003",
+      "user_id": "eval-user",
+      "valid_from": "2026-02-05T00:00:00Z",
+      "valid_until": null
+    },
+    {
+      "agent_id": "atlas",
+      "content": "TASK: Priya requested a Friday reminder to verify top-5 Helios crash signatures.",
+      "id": "mini_mem_task_helios_crash_review",
+      "memory_type": "episodic",
+      "metadata": {
+        "benchmark": {
+          "suite": "memory-retrieval-benchmark",
+          "tier": "mini"
+        },
+        "person": "Priya",
+        "project": "Helios",
+        "tags": [
+          "crash",
+          "review",
+          "reminder"
+        ],
+        "topic": "stability"
+      },
+      "namespace": "evals/mempalace-mini/mobile",
+      "run_id": "mini-run-003",
+      "user_id": "eval-user",
+      "valid_from": "2026-02-06T00:00:00Z",
+      "valid_until": null
+    },
+    {
+      "agent_id": "atlas",
+      "content": "TASK: Temporary experiment for legacy parser fallback during migration week.",
+      "id": "mini_mem_task_parser_fallback_temp",
+      "memory_type": "episodic",
+      "metadata": {
+        "benchmark": {
+          "suite": "memory-retrieval-benchmark",
+          "tier": "mini"
+        },
+        "person": "Ishan",
+        "project": "parser-migration",
+        "tags": [
+          "legacy",
+          "fallback",
+          "migration"
+        ],
+        "topic": "compatibility"
+      },
+      "namespace": "evals/mempalace-mini/platform",
+      "run_id": "mini-run-004",
+      "user_id": "eval-user",
+      "valid_from": "2026-02-10T00:00:00Z",
+      "valid_until": "2026-02-20T00:00:00Z"
+    },
+    {
+      "agent_id": "atlas",
+      "content": "DECISION: After migration week, parser fallback was removed from the active path.",
+      "id": "mini_mem_decision_parser_fallback_removed",
+      "memory_type": "semantic",
+      "metadata": {
+        "benchmark": {
+          "suite": "memory-retrieval-benchmark",
+          "tier": "mini"
+        },
+        "person": "Ishan",
+        "project": "parser-migration",
+        "tags": [
+          "cleanup",
+          "fallback",
+          "migration"
+        ],
+        "topic": "deprecation"
+      },
+      "namespace": "evals/mempalace-mini/platform",
+      "run_id": "mini-run-004",
+      "user_id": "eval-user",
+      "valid_from": "2026-02-21T00:00:00Z",
+      "valid_until": null
+    },
+    {
+      "agent_id": "atlas",
+      "content": "USER: Maya prefers bullet-point release notes with one-line risks.",
+      "id": "mini_mem_user_pref_release_notes",
+      "memory_type": "semantic",
+      "metadata": {
+        "benchmark": {
+          "suite": "memory-retrieval-benchmark",
+          "tier": "mini"
+        },
+        "person": "Maya",
+        "project": "release-process",
+        "tags": [
+          "style",
+          "notes",
+          "risk"
+        ],
+        "topic": "communication"
+      },
+      "namespace": "evals/mempalace-mini/process",
+      "run_id": "mini-run-005",
+      "user_id": "eval-user",
+      "valid_from": "2026-02-08T00:00:00Z",
+      "valid_until": null
+    },
+    {
+      "agent_id": "atlas",
+      "content": "CONTEXT: Namespace evals/mempalace-mini/process stores team communication memories.",
+      "id": "mini_mem_context_process_namespace",
+      "memory_type": "semantic",
+      "metadata": {
+        "benchmark": {
+          "suite": "memory-retrieval-benchmark",
+          "tier": "mini"
+        },
+        "person": "Maya",
+        "project": "release-process",
+        "tags": [
+          "namespace",
+          "process",
+          "communication"
+        ],
+        "topic": "namespace"
+      },
+      "namespace": "evals/mempalace-mini/process",
+      "run_id": "mini-run-005",
+      "user_id": "eval-user",
+      "valid_from": "2026-02-09T00:00:00Z",
+      "valid_until": null
+    }
+  ],
+  "version": 1
+}
