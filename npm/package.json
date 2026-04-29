@@ -1,6 +1,6 @@
 {
-    "name": "memory-mcp-1file",
-    "version": "0.4.8",
+    "name": "@steinx/memory-mcp-1file",
+    "version": "0.8.3",
     "description": "MCP memory server with semantic search, code indexing, and knowledge graph for AI agents",
     "bin": {
         "memory-mcp": "./run.js"
@@ -19,15 +19,18 @@
     ],
     "repository": {
         "type": "git",
-        "url": "git+https://github.com/pomazanbohdan/memory-mcp-1file.git"
+        "url": "git+https://github.com/SteinX/memory-mcp-1file.git"
     },
-    "homepage": "https://github.com/pomazanbohdan/memory-mcp-1file#readme",
+    "homepage": "https://github.com/SteinX/memory-mcp-1file#readme",
     "bugs": {
-        "url": "https://github.com/pomazanbohdan/memory-mcp-1file/issues"
+        "url": "https://github.com/SteinX/memory-mcp-1file/issues"
     },
     "license": "MIT",
     "engines": {
         "node": ">=18.0.0"
+    },
+    "publishConfig": {
+        "registry": "https://npm.pkg.github.com"
     },
     "files": [
         "run.js",

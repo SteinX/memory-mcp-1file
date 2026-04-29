@@ -18,6 +18,7 @@ You must adhere to strict workflows, utilize specialized tools, and maintain con
 6. **[MUST]** After each implementation step, report progress against the active roadmap/phase to the user.
 7. **[MUST]** Treat stale `README.md` and `AGENTS.md` updates as part of task completion whenever behavior, workflow, or operator-facing semantics change.
 8. **[MUST]** Prefer explicit operator-visible write flows (e.g. dedicated consolidation/supersede actions) over silently changing existing write semantics when evolving memory behavior.
+6. **[MUST]** Promptly maintain every existing `AGENTS.md` and `README.md` in scope when they no longer match the current facts, behavior, workflow, or project state.
 
 ---
 
@@ -587,6 +588,7 @@ get_related(entity_id="WP:WP01", depth=2, direction="both")
 - ✅ Every entry starts with prefix (PROJECT:/EPIC:/TASK:/DECISION:)
 - ✅ Every TASK/EPIC has `Updated:` field with ISO timestamp
 - ✅ TASK has fields: Status, Current, Path, Command, Agent
+- ✅ Keep every relevant `AGENTS.md` and `README.md` aligned with reality; update stale guidance promptly
 - ✅ Use `invalidate` instead of `delete_memory`
 - ✅ Update TASK on subtask change
 - ✅ Update EPIC on WP completion
@@ -617,6 +619,7 @@ get_related(entity_id="WP:WP01", depth=2, direction="both")
 | **Memory: start** | REQUIRED `search_text` + show to user |
 | **Memory: completion** | REQUIRED `invalidate` + `store_memory` |
 | **Memory: deletion** | FORBIDDEN `delete_memory`, only `invalidate` |
+| **Docs: maintenance** | REQUIRED to update in-scope `AGENTS.md` and `README.md` files when reality changes |
 | **Thinking: Boot** | REQUIRED to read algorithms after context wipe |
 | **Thinking: Routing** | REQUIRED to identify phases and load specific commands |
 

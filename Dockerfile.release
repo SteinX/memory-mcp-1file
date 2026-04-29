@@ -9,8 +9,7 @@ RUN grep '^version' /tmp/Cargo.toml | head -1 | cut -d'"' -f2 > /tmp/VERSION
 FROM alpine:3.23
 
 ARG VERSION
-ARG REPO=pomazanbohdan/memory-mcp-1file
-ARG TARGETARCH
+ARG REPO=SteinX/memory-mcp-1file
 
 # Install runtime dependencies (minimal)
 RUN apk add --no-cache ca-certificates tzdata

@@ -1,6 +1,6 @@
 target/
 !target/release/memory-mcp
-!target/fast/memory-mcp
+!target/x86_64-unknown-linux-gnu/fast/memory-mcp
 **/*.rs.bk
 .git/
 .env

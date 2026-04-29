@@ -11,8 +11,8 @@ RUN apt-get update && apt-get install -y \
 WORKDIR /app
 
 # Copy the GNU binary built locally (fast profile)
-# Ensure you ran `cargo build --profile fast` first
-COPY target/fast/memory-mcp /usr/local/bin/memory-mcp
+# Ensure you ran `cargo build --profile fast --target x86_64-unknown-linux-gnu` first
+COPY target/x86_64-unknown-linux-gnu/fast/memory-mcp /usr/local/bin/memory-mcp
 
 # Data directory setup
 RUN mkdir -p /data /project
