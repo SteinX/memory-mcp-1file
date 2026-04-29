@@ -1000,6 +1000,48 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_legacy_none_access_count_reads_as_zero() {
+        let (storage, _tmp) = setup_test_db().await;
+        let id = storage
+            .create_memory(Memory::new("legacy none access count".to_string()))
+            .await
+            .unwrap();
+
+        storage
+            .db
+            .query("UPDATE $thing SET access_count = NONE")
+            .bind(("thing", RecordId::new("memories", id.as_str())))
+            .await
+            .unwrap()
+            .check()
+            .unwrap();
+
+        let retrieved = storage.get_memory(&id).await.unwrap().unwrap();
+        assert_eq!(retrieved.access_count, 0);
+
+        let listed = storage
+            .list_memories(&empty_memory_query(), 10, 0)
+            .await
+            .unwrap();
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].access_count, 0);
+
+        let searched = storage
+            .bm25_search("legacy", &empty_memory_query(), 10)
+            .await
+            .unwrap();
+        assert_eq!(searched.len(), 1);
+        assert_eq!(searched[0].access_count, 0);
+
+        storage
+            .record_memory_access(&id, chrono::Utc::now())
+            .await
+            .unwrap();
+        let accessed = storage.get_memory(&id).await.unwrap().unwrap();
+        assert_eq!(accessed.access_count, 1);
+    }
+
+    #[tokio::test]
     async fn test_scope_filters_isolate_user_agent_run_and_namespace() {
         let cases = [
             (

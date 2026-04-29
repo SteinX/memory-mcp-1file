@@ -2,11 +2,13 @@ use surrealdb::engine::local::Db;
 use surrealdb::Surreal;
 
 use crate::storage::traits::CapacityMemoryCandidate;
-use crate::types::{Memory, MemoryQuery, MemoryUpdate, SearchResult};
 use crate::types::SurrealValue;
+use crate::types::{Memory, MemoryQuery, MemoryUpdate, SearchResult};
 use crate::Result;
 
 use super::helpers::{generate_id, parse_thing};
+
+const MEMORY_SELECT: &str = "*, access_count OR 0 AS access_count";
 
 #[derive(Debug, serde::Deserialize, SurrealValue)]
 struct SearchRow {
@@ -124,8 +126,15 @@ pub(super) async fn create_memory(db: &Surreal<Db>, mut memory: Memory) -> Resul
 }
 
 pub(super) async fn get_memory(db: &Surreal<Db>, id: &str) -> Result<Option<Memory>> {
-    let result: Option<Memory> = db.select(("memories", id)).await?;
-    Ok(result)
+    let sql = format!(
+        "SELECT {MEMORY_SELECT} FROM memories WHERE id = type::record($id) LIMIT 1"
+    );
+    let mut response = db
+        .query(&sql)
+        .bind(("id", format!("memories:{id}")))
+        .await?;
+    let mut memories: Vec<Memory> = response.take(0)?;
+    Ok(memories.pop())
 }
 
 pub(super) async fn update_memory(
@@ -133,8 +142,9 @@ pub(super) async fn update_memory(
     id: &str,
     update: MemoryUpdate,
 ) -> Result<Memory> {
-    let existing: Option<Memory> = db.select(("memories", id)).await?;
-    let mut memory = existing.ok_or_else(|| crate::types::AppError::NotFound(id.to_string()))?;
+    let mut memory = get_memory(db, id)
+        .await?
+        .ok_or_else(|| crate::types::AppError::NotFound(id.to_string()))?;
 
     if let Some(content) = update.content {
         memory.content = content;
@@ -181,7 +191,7 @@ pub(super) async fn record_memory_access(
 ) -> Result<()> {
     let sql = r#"
         UPDATE memories
-        SET access_count = math::max(0, access_count) + 1,
+        SET access_count = (access_count OR 0) + 1,
             last_accessed_at = $accessed_at
         WHERE id = (type::record($id))
     "#;
@@ -207,7 +217,7 @@ pub(super) async fn list_memories(
     offset: usize,
 ) -> Result<Vec<Memory>> {
     let sql = format!(
-        "SELECT * FROM memories WHERE {} ORDER BY ingestion_time DESC LIMIT $limit START $offset",
+        "SELECT {MEMORY_SELECT} FROM memories WHERE {} ORDER BY ingestion_time DESC LIMIT $limit START $offset",
         base_filter_clause("time::now()")
     );
     let mut response = bind_memory_query(db.query(&sql), filters)
@@ -233,7 +243,7 @@ pub(super) async fn count_memories_filtered(
     filters: &MemoryQuery,
 ) -> Result<usize> {
     let sql = format!(
-        "SELECT * FROM memories WHERE {}",
+        "SELECT {MEMORY_SELECT} FROM memories WHERE {}",
         base_filter_clause("time::now()")
     );
     let mut response = bind_memory_query(db.query(&sql), filters).await?;
@@ -265,7 +275,7 @@ pub(super) async fn list_capacity_candidates(
                memory_type,
                event_time,
                ingestion_time,
-               access_count,
+               access_count OR 0 AS access_count,
                last_accessed_at,
                importance_score
         FROM memories
@@ -273,7 +283,10 @@ pub(super) async fn list_capacity_candidates(
     "#;
     let mut response = db.query(sql).await?;
     let rows: Vec<CapacityCandidateRow> = response.take(0)?;
-    Ok(rows.into_iter().map(CapacityMemoryCandidate::from).collect())
+    Ok(rows
+        .into_iter()
+        .map(CapacityMemoryCandidate::from)
+        .collect())
 }
 
 pub(super) async fn get_memory_last_accessed_at(
@@ -303,7 +316,7 @@ pub(super) async fn find_memories_by_content_hash(
     content_hash: &str,
 ) -> Result<Vec<Memory>> {
     let sql = format!(
-        "SELECT * FROM memories WHERE content_hash = $content_hash AND {} ORDER BY ingestion_time DESC",
+        "SELECT {MEMORY_SELECT} FROM memories WHERE content_hash = $content_hash AND {} ORDER BY ingestion_time DESC",
         base_filter_clause("time::now()")
     );
     let mut response = bind_memory_query(db.query(&sql), filters)
@@ -343,19 +356,18 @@ pub(super) async fn bm25_search(
         r#"
         SELECT meta::id(id) AS id, content, content_hash, memory_type, 1.0f AS score,
                importance_score,
-               event_time, ingestion_time, access_count, last_accessed_at,
+               event_time, ingestion_time, access_count OR 0 AS access_count, last_accessed_at,
                user_id, agent_id, run_id, namespace, metadata, superseded_by,
                valid_until, invalidation_reason
         FROM memories
         WHERE {where_clause}
           AND {}
         LIMIT $limit
-    "#
-        , base_filter_clause("time::now()")
+    "#,
+        base_filter_clause("time::now()")
     );
 
-    let mut response = bind_memory_query(db.query(&sql), filters)
-        .bind(("limit", fetch_limit));
+    let mut response = bind_memory_query(db.query(&sql), filters).bind(("limit", fetch_limit));
     for (i, word) in words.iter().enumerate() {
         response = response.bind((format!("w{i}"), word.to_string()));
     }
@@ -409,7 +421,7 @@ pub(super) async fn vector_search(
         SELECT meta::id(id) AS id, content, content_hash, memory_type,
             vector::similarity::cosine(embedding, $vec) AS score,
             importance_score,
-            event_time, ingestion_time, access_count, last_accessed_at,
+            event_time, ingestion_time, access_count OR 0 AS access_count, last_accessed_at,
             user_id, agent_id, run_id, namespace, metadata, superseded_by,
             valid_until, invalidation_reason
         FROM memories 
@@ -418,8 +430,8 @@ pub(super) async fn vector_search(
           AND {}
         ORDER BY score DESC 
         LIMIT $limit
-    "#
-        , base_filter_clause("time::now()")
+    "#,
+        base_filter_clause("time::now()")
     );
     let mut response = bind_memory_query(db.query(&query), filters)
         .bind(("vec", embedding.to_vec()))
@@ -439,12 +451,15 @@ pub(super) async fn get_valid(
     filters: &MemoryQuery,
     limit: usize,
 ) -> Result<Vec<Memory>> {
-    let sql = format!(r#"
-        SELECT * FROM memories 
+    let sql = format!(
+        r#"
+        SELECT {MEMORY_SELECT} FROM memories 
         WHERE {}
         ORDER BY ingestion_time DESC
         LIMIT $limit
-    "#, base_filter_clause("time::now()"));
+    "#,
+        base_filter_clause("time::now()")
+    );
     let mut response = bind_memory_query(db.query(&sql), filters)
         .bind(("limit", limit))
         .await?;
@@ -458,17 +473,19 @@ pub(super) async fn get_valid_at(
     filters: &MemoryQuery,
     limit: usize,
 ) -> Result<Vec<Memory>> {
-    let timestamp = filters
-        .valid_at
-        .clone()
-        .ok_or_else(|| crate::types::AppError::Internal(anyhow::anyhow!("valid_at timestamp required").into()))?;
+    let timestamp = filters.valid_at.clone().ok_or_else(|| {
+        crate::types::AppError::Internal(anyhow::anyhow!("valid_at timestamp required").into())
+    })?;
 
-    let sql = format!(r#"
-        SELECT * FROM memories 
+    let sql = format!(
+        r#"
+        SELECT {MEMORY_SELECT} FROM memories 
         WHERE {}
         ORDER BY ingestion_time DESC
         LIMIT $limit
-    "#, base_filter_clause("$timestamp"));
+    "#,
+        base_filter_clause("$timestamp")
+    );
     let mut response = bind_memory_query(db.query(&sql), filters)
         .bind(("timestamp", timestamp))
         .bind(("limit", limit))
@@ -583,13 +600,11 @@ pub(super) async fn raw_update_embedding(
     embedding_state: &str,
 ) -> Result<()> {
     let thing = parse_thing(&format!("memories:{}", id))?;
-    db.query(
-        "UPDATE $thing SET embedding = $emb, content_hash = $hash, embedding_state = $state",
-    )
-    .bind(("thing", thing))
-    .bind(("emb", embedding))
-    .bind(("hash", content_hash))
-    .bind(("state", embedding_state.to_string()))
-    .await?;
+    db.query("UPDATE $thing SET embedding = $emb, content_hash = $hash, embedding_state = $state")
+        .bind(("thing", thing))
+        .bind(("emb", embedding))
+        .bind(("hash", content_hash))
+        .bind(("state", embedding_state.to_string()))
+        .await?;
     Ok(())
 }
