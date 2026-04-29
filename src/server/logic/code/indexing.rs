@@ -5,22 +5,21 @@ use serde_json::json;
 
 use crate::config::AppState;
 use crate::server::params::{
-    DeleteProjectParams, GetIndexStatusParams, GetProjectionByLocatorParams,
-    GetProjectProjectionParams, GetProjectStatsParams, IndexProjectParams,
-    ListProjectsParams,
+    DeleteProjectParams, GetIndexStatusParams, GetProjectProjectionParams, GetProjectStatsParams,
+    GetProjectionByLocatorParams, IndexProjectParams, ListProjectsParams,
 };
 use crate::storage::StorageBackend;
 use crate::types::{
-    ContractReasonCode, ExportIdentity, ProjectionLocatorLifecycle, ProjectionLocatorLookup,
-    ProjectionLocatorLookupState, ProjectionLocatorRecord,
+    ContractReasonCode, ExportIdentity, IndexState, IndexStatus, ProjectionLocatorLifecycle,
+    ProjectionLocatorLookup, ProjectionLocatorLookupState, ProjectionLocatorRecord,
 };
 
-use super::super::{error_response, success_json};
 use super::super::contracts::{
     assemble_project_projection, collect_project_projection_inputs, export_contract_meta,
     shape_project_projection_graph, summary_collection_response, summary_index_status_response,
     with_surface_guidance,
 };
+use super::super::{error_response, success_json};
 
 fn lifecycle_json(status: &crate::types::IndexStatus) -> serde_json::Value {
     json!({
@@ -74,7 +73,13 @@ fn phase1_contract_json(
             status,
         ),
         &["lifecycle", "contract"],
-        &["status", "total_files", "indexed_files", "total_chunks", "total_symbols"],
+        &[
+            "status",
+            "total_files",
+            "indexed_files",
+            "total_chunks",
+            "total_symbols",
+        ],
         &[],
     );
     contract.generation_basis.structural_generation = structural_generation;
@@ -91,8 +96,9 @@ fn projection_locator_lifecycle() -> ProjectionLocatorLifecycle {
         survives_process_restart: false,
         survives_generation_change: false,
         client_persistable: false,
-        generation_binding: "locator is bound to the semantic generation captured at projection creation time"
-            .to_string(),
+        generation_binding:
+            "locator is bound to the semantic generation captured at projection creation time"
+                .to_string(),
     }
 }
 
@@ -273,13 +279,18 @@ pub async fn get_index_status(
     state: &Arc<AppState>,
     params: GetIndexStatusParams,
 ) -> anyhow::Result<CallToolResult> {
-    match state.storage.get_index_status(&params.project_id).await {
+    let project_id = params.project_id.trim().to_string();
+    if project_id.is_empty() {
+        return Ok(error_response("project_id required for status action"));
+    }
+
+    match state.storage.get_index_status(&project_id).await {
         Ok(Some(mut status)) => {
             status.refresh_lifecycle_states();
             let mut current_file: Option<String> = None;
 
             // Always try to fetch current_file from monitor if available, even if failed or stuck
-            if let Some(monitor) = state.progress.get(&params.project_id).await {
+            if let Some(monitor) = state.progress.get(&project_id).await {
                 if let Ok(cf) = monitor.current_file.read() {
                     if !cf.is_empty() {
                         current_file = Some(cf.clone());
@@ -307,37 +318,29 @@ pub async fn get_index_status(
             // Use manifest entry count as the authoritative "indexed files" number.
             let indexed_files = state
                 .storage
-                .count_manifest_entries(&params.project_id)
+                .count_manifest_entries(&project_id)
                 .await
                 .unwrap_or(0) as u32;
 
             // Sync queue status from shared AtomicUsize counter.
             let sync_queue_size = {
                 let map = state.index_pending.read().await;
-                map.get(&params.project_id)
+                map.get(&project_id)
                     .map(|c| c.load(std::sync::atomic::Ordering::Relaxed))
                     .unwrap_or(0)
             };
             let is_syncing = sync_queue_size > 0;
 
-            let total_symbols = state
-                .storage
-                .count_symbols(&params.project_id)
-                .await
-                .unwrap_or(0);
-            let total_chunks = state
-                .storage
-                .count_chunks(&params.project_id)
-                .await
-                .unwrap_or(0);
+            let total_symbols = state.storage.count_symbols(&project_id).await.unwrap_or(0);
+            let total_chunks = state.storage.count_chunks(&project_id).await.unwrap_or(0);
             let embedded_symbols = state
                 .storage
-                .count_embedded_symbols(&params.project_id)
+                .count_embedded_symbols(&project_id)
                 .await
                 .unwrap_or(0);
             let embedded_chunks = state
                 .storage
-                .count_embedded_chunks(&params.project_id)
+                .count_embedded_chunks(&project_id)
                 .await
                 .unwrap_or(0);
 
@@ -456,10 +459,113 @@ pub async fn get_index_status(
                 "failed_files": status.failed_files
             })))
         }
-        Ok(None) => Ok(error_response(format!(
-            "Project not found: {}",
-            params.project_id
-        ))),
+        Ok(None) => {
+            let total_symbols = state.storage.count_symbols(&project_id).await.unwrap_or(0);
+            let total_chunks = state.storage.count_chunks(&project_id).await.unwrap_or(0);
+            let indexed_files = state
+                .storage
+                .count_manifest_entries(&project_id)
+                .await
+                .unwrap_or(0) as u32;
+
+            if total_chunks == 0 && total_symbols == 0 && indexed_files == 0 {
+                return Ok(error_response(format!("Project not found: {}", project_id)));
+            }
+
+            let mut status = IndexStatus::new(project_id.clone());
+            status.status = IndexState::Failed;
+            status.total_files = indexed_files;
+            status.indexed_files = indexed_files;
+            status.total_chunks = total_chunks as u32;
+            status.total_symbols = total_symbols as u32;
+            status.error_message = Some(
+                "Index status metadata is missing while code intelligence rows exist; re-run index_project with force=true and confirm_failed_restart=true to rebuild metadata."
+                    .to_string(),
+            );
+            status.refresh_lifecycle_states();
+
+            let embedded_symbols = state
+                .storage
+                .count_embedded_symbols(&project_id)
+                .await
+                .unwrap_or(0);
+            let embedded_chunks = state
+                .storage
+                .count_embedded_chunks(&project_id)
+                .await
+                .unwrap_or(0);
+            let sync_queue_size = {
+                let map = state.index_pending.read().await;
+                map.get(&project_id)
+                    .map(|c| c.load(std::sync::atomic::Ordering::Relaxed))
+                    .unwrap_or(0)
+            };
+            let vector_progress = if total_chunks > 0 {
+                (embedded_chunks as f32 / total_chunks as f32) * 100.0
+            } else {
+                0.0
+            };
+            let graph_progress = if total_symbols > 0 {
+                (embedded_symbols as f32 / total_symbols as f32) * 100.0
+            } else {
+                0.0
+            };
+            let indexing_message = status.error_message.clone();
+
+            Ok(success_json(json!({
+                "project_id": project_id,
+                "status": status.status.to_string(),
+                "contract": phase1_contract_json(
+                    Some(&status.project_id),
+                    Some(&lifecycle_json(&status)),
+                    Some(&status),
+                ),
+                "summary": summary_index_status_response(
+                    status.total_files,
+                    indexed_files,
+                    total_chunks,
+                    total_symbols,
+                    0.0,
+                    true,
+                    indexing_message,
+                ),
+                "diagnostics": {
+                    "status_metadata_missing": true,
+                    "reason_code": "degraded",
+                    "message": status.error_message.clone()
+                },
+                "is_syncing": sync_queue_size > 0,
+                "sync_queue_size": sync_queue_size,
+                "total_files": status.total_files,
+                "indexed_files": indexed_files,
+                "started_at": status.started_at,
+                "completed_at": status.completed_at,
+                "lifecycle": lifecycle_json(&status),
+                "parsing": {
+                    "status": "degraded",
+                    "progress": format!("{}/{}", indexed_files, status.total_files),
+                    "current_file": null
+                },
+                "vector_embeddings": {
+                    "status": if total_chunks > 0 && embedded_chunks >= total_chunks { "completed" } else { "pending" },
+                    "total": total_chunks,
+                    "completed": embedded_chunks,
+                    "percent": format!("{:.1}", vector_progress)
+                },
+                "graph_embeddings": {
+                    "status": if total_symbols > 0 && embedded_symbols >= total_symbols { "completed" } else { "pending" },
+                    "total": total_symbols,
+                    "completed": embedded_symbols,
+                    "percent": format!("{:.1}", graph_progress)
+                },
+                "overall_progress": {
+                    "percent": "0.0",
+                    "is_complete": false
+                },
+                "error_message": status.error_message.clone(),
+                "failed_files": status.failed_files
+            })))
+        }
         Err(e) => Ok(error_response(e)),
     }
 }
@@ -555,6 +661,10 @@ pub async fn delete_project(
 
     let _ = state.storage.delete_index_status(&params.project_id).await;
     let _ = state.storage.delete_file_hashes(&params.project_id).await;
+    let _ = state
+        .storage
+        .delete_manifest_entries(&params.project_id)
+        .await;
 
     // Remove from in-memory BM25 index
     state.code_search.remove_project(&params.project_id).await;
@@ -576,51 +686,60 @@ pub async fn get_project_stats(
     state: &Arc<AppState>,
     params: GetProjectStatsParams,
 ) -> anyhow::Result<CallToolResult> {
-    let status = state.storage.get_index_status(&params.project_id).await?;
-
-    if status.is_none() {
-        return Ok(error_response(format!(
-            "Project not found: {}",
-            params.project_id
-        )));
+    let project_id = params.project_id.trim().to_string();
+    if project_id.is_empty() {
+        return Ok(error_response("project_id required for stats action"));
     }
 
-    let status = status.unwrap();
-    let mut status = status;
-    status.refresh_lifecycle_states();
-
-    let total_symbols = state
-        .storage
-        .count_symbols(&params.project_id)
-        .await
-        .unwrap_or(0);
-    let total_chunks = state
-        .storage
-        .count_chunks(&params.project_id)
-        .await
-        .unwrap_or(0);
+    let total_symbols = state.storage.count_symbols(&project_id).await.unwrap_or(0);
+    let total_chunks = state.storage.count_chunks(&project_id).await.unwrap_or(0);
     let embedded_symbols = state
         .storage
-        .count_embedded_symbols(&params.project_id)
+        .count_embedded_symbols(&project_id)
         .await
         .unwrap_or(0);
     let embedded_chunks = state
         .storage
-        .count_embedded_chunks(&params.project_id)
+        .count_embedded_chunks(&project_id)
         .await
         .unwrap_or(0);
 
     // Use manifest entry count as the authoritative "indexed files" number.
     let indexed_files = state
         .storage
-        .count_manifest_entries(&params.project_id)
+        .count_manifest_entries(&project_id)
         .await
         .unwrap_or(0) as u32;
+
+    let status = state.storage.get_index_status(&project_id).await?;
+    let status_metadata_missing = status.is_none();
+
+    let mut status = match status {
+        Some(status) => status,
+        None => {
+            if total_chunks == 0 && total_symbols == 0 && indexed_files == 0 {
+                return Ok(error_response(format!("Project not found: {}", project_id)));
+            }
+
+            let mut status = IndexStatus::new(project_id.clone());
+            status.status = IndexState::Failed;
+            status.total_files = indexed_files;
+            status.indexed_files = indexed_files;
+            status.total_chunks = total_chunks as u32;
+            status.total_symbols = total_symbols as u32;
+            status.error_message = Some(
+                "Index status metadata is missing while code intelligence rows exist; re-run index_project with force=true and confirm_failed_restart=true to rebuild metadata."
+                    .to_string(),
+            );
+            status
+        }
+    };
+    status.refresh_lifecycle_states();
 
     // Sync queue status from shared AtomicUsize counter.
     let sync_queue_size = {
         let map = state.index_pending.read().await;
-        map.get(&params.project_id)
+        map.get(&project_id)
             .map(|c| c.load(std::sync::atomic::Ordering::Relaxed))
             .unwrap_or(0)
     };
@@ -652,17 +771,19 @@ pub async fn get_project_stats(
         1.0
     };
     let overall_progress = parse_ratio * (PARSE_WEIGHT + embed_ratio * EMBED_WEIGHT) * 100.0;
-    let indexing_message = if status.status == crate::types::IndexState::Completed {
+    let indexing_message = if status_metadata_missing {
+        status.error_message.clone()
+    } else if status.status == IndexState::Completed {
         None
     } else {
         Some("Indexing in progress. Project stats may still change.".to_string())
     };
 
     Ok(success_json(json!({
-        "project_id": params.project_id,
+        "project_id": project_id,
         "status": status.status.to_string(),
         "contract": phase1_contract_json(
-            Some(&params.project_id),
+            Some(&status.project_id),
             Some(&lifecycle_json(&status)),
             Some(&status),
         ),
@@ -672,9 +793,14 @@ pub async fn get_project_stats(
             total_chunks,
             total_symbols,
             overall_progress,
-            status.status != crate::types::IndexState::Completed,
+            status.status != IndexState::Completed,
             indexing_message,
         ),
+        "diagnostics": {
+            "status_metadata_missing": status_metadata_missing,
+            "reason_code": if status_metadata_missing { "degraded" } else { "ok" },
+            "message": if status_metadata_missing { status.error_message.clone() } else { None }
+        },
         "is_syncing": is_syncing,
         "sync_queue_size": sync_queue_size,
         "lifecycle": lifecycle_json(&status),
@@ -845,7 +971,7 @@ pub async fn get_project_projection_by_locator(
                 ),
                 "reason_code": ContractReasonCode::InvalidLocator,
                 "locator": locator_record,
-            })))
+            })));
         }
     };
 
@@ -941,11 +1067,11 @@ pub async fn get_degradation_info(state: &Arc<AppState>) -> Option<serde_json::V
     None
 }
 
-    #[cfg(test)]
-    mod tests {
-        use super::*;
-        use crate::test_utils::TestContext;
-        use crate::types::{IndexState, IndexStatus};
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_utils::TestContext;
+    use crate::types::{IndexState, IndexStatus};
 
     #[tokio::test]
     async fn index_project_does_not_auto_restart_failed_index_without_force() {
@@ -1075,26 +1201,75 @@ pub async fn get_degradation_info(state: &Arc<AppState>) -> Option<serde_json::V
         assert_eq!(json["lifecycle"]["projection"]["state"], "stale");
         assert_eq!(json["lifecycle"]["projection"]["is_current"], false);
         assert_eq!(json["contract"]["schema_version"], 1);
-        assert_eq!(json["contract"]["compatibility"]["clients_must_ignore_unknown_fields"], true);
-        assert_eq!(json["contract"]["generation_basis"]["structural_generation"], 1);
-        assert_eq!(json["contract"]["generation_basis"]["semantic_generation"], 0);
+        assert_eq!(
+            json["contract"]["compatibility"]["clients_must_ignore_unknown_fields"],
+            true
+        );
+        assert_eq!(
+            json["contract"]["generation_basis"]["structural_generation"],
+            1
+        );
+        assert_eq!(
+            json["contract"]["generation_basis"]["semantic_generation"],
+            0
+        );
         assert_eq!(json["contract"]["projection"]["state"], "stale");
-        assert_eq!(json["contract"]["projection"]["basis"], "semantic_generation");
+        assert_eq!(
+            json["contract"]["projection"]["basis"],
+            "semantic_generation"
+        );
         assert_eq!(json["contract"]["projection"]["generation"], 0);
-        assert_eq!(json["contract"]["projection"]["materialization"]["strategy"], "not_materialized");
-        assert_eq!(json["contract"]["projection"]["materialization"]["refresh_basis"], "semantic_generation");
+        assert_eq!(
+            json["contract"]["projection"]["materialization"]["strategy"],
+            "not_materialized"
+        );
+        assert_eq!(
+            json["contract"]["projection"]["materialization"]["refresh_basis"],
+            "semantic_generation"
+        );
         assert_eq!(json["contract"]["projection"]["materialization"]["persistence_semantics"], "contract is exposed on status surfaces only; no persisted projection artifact is promised yet");
-        assert_eq!(json["contract"]["projection"]["materialization"]["shape_version_semantics"], "materialized_projection_payload_shape_version");
-        assert_eq!(json["contract"]["projection"]["materialization"]["addressability_semantics"], "no_stable_external_read_target_is_promised_until_materialization_strategy_changes");
-        assert_eq!(json["contract"]["projection"]["materialization"]["locator_kind"], serde_json::Value::Null);
+        assert_eq!(
+            json["contract"]["projection"]["materialization"]["shape_version_semantics"],
+            "materialized_projection_payload_shape_version"
+        );
+        assert_eq!(
+            json["contract"]["projection"]["materialization"]["addressability_semantics"],
+            "no_stable_external_read_target_is_promised_until_materialization_strategy_changes"
+        );
+        assert_eq!(
+            json["contract"]["projection"]["materialization"]["locator_kind"],
+            serde_json::Value::Null
+        );
         assert_eq!(json["contract"]["projection"]["materialization"]["locator_semantics"], "absent_when_not_materialized; when present it identifies the externally consumable projection instance");
-        assert_eq!(json["contract"]["projection"]["materialization"]["locator_stability"], "not_stable_until_materialization_strategy_changes");
-        assert_eq!(json["contract"]["projection"]["materialization"]["locator_scope"], "none_when_not_materialized");
-        assert_eq!(json["contract"]["projection"]["materialization"]["locator_is_opaque"], true);
-        assert_eq!(json["contract"]["projection"]["materialization"]["locator_can_be_persisted_by_clients"], false);
-        assert_eq!(json["contract"]["projection"]["materialization"]["locator_survives_generation_change"], false);
-        assert_eq!(json["contract"]["projection"]["materialization"]["current_generation"], 0);
-        assert_eq!(json["contract"]["projection"]["materialization"]["is_addressable"], false);
+        assert_eq!(
+            json["contract"]["projection"]["materialization"]["locator_stability"],
+            "not_stable_until_materialization_strategy_changes"
+        );
+        assert_eq!(
+            json["contract"]["projection"]["materialization"]["locator_scope"],
+            "none_when_not_materialized"
+        );
+        assert_eq!(
+            json["contract"]["projection"]["materialization"]["locator_is_opaque"],
+            true
+        );
+        assert_eq!(
+            json["contract"]["projection"]["materialization"]
+                ["locator_can_be_persisted_by_clients"],
+            false
+        );
+        assert_eq!(
+            json["contract"]["projection"]["materialization"]["locator_survives_generation_change"],
+            false
+        );
+        assert_eq!(
+            json["contract"]["projection"]["materialization"]["current_generation"],
+            0
+        );
+        assert_eq!(
+            json["contract"]["projection"]["materialization"]["is_addressable"],
+            false
+        );
         assert_eq!(json["summary"]["result_kind"], "status");
         assert_eq!(json["summary"]["counts"]["files"], 0);
         assert_eq!(json["summary"]["counts"]["indexed_files"], 0);
@@ -1131,25 +1306,151 @@ pub async fn get_degradation_info(state: &Arc<AppState>) -> Option<serde_json::V
         assert_eq!(json["lifecycle"]["semantic"]["is_caught_up"], true);
         assert_eq!(json["lifecycle"]["projection"]["state"], "stale");
         assert_eq!(json["contract"]["schema_version"], 1);
-        assert_eq!(json["contract"]["identity"]["project_id"], "completed-lifecycle-project");
+        assert_eq!(
+            json["contract"]["identity"]["project_id"],
+            "completed-lifecycle-project"
+        );
         assert_eq!(json["contract"]["projection"]["state"], "stale");
         assert_eq!(json["contract"]["projection"]["generation"], 1);
-        assert_eq!(json["contract"]["projection"]["materialization"]["strategy"], "not_materialized");
+        assert_eq!(
+            json["contract"]["projection"]["materialization"]["strategy"],
+            "not_materialized"
+        );
         assert_eq!(json["contract"]["projection"]["materialization"]["persistence_semantics"], "contract is exposed on status surfaces only; no persisted projection artifact is promised yet");
-        assert_eq!(json["contract"]["projection"]["materialization"]["shape_version_semantics"], "materialized_projection_payload_shape_version");
-        assert_eq!(json["contract"]["projection"]["materialization"]["addressability_semantics"], "no_stable_external_read_target_is_promised_until_materialization_strategy_changes");
-        assert_eq!(json["contract"]["projection"]["materialization"]["locator_kind"], serde_json::Value::Null);
+        assert_eq!(
+            json["contract"]["projection"]["materialization"]["shape_version_semantics"],
+            "materialized_projection_payload_shape_version"
+        );
+        assert_eq!(
+            json["contract"]["projection"]["materialization"]["addressability_semantics"],
+            "no_stable_external_read_target_is_promised_until_materialization_strategy_changes"
+        );
+        assert_eq!(
+            json["contract"]["projection"]["materialization"]["locator_kind"],
+            serde_json::Value::Null
+        );
         assert_eq!(json["contract"]["projection"]["materialization"]["locator_semantics"], "absent_when_not_materialized; when present it identifies the externally consumable projection instance");
-        assert_eq!(json["contract"]["projection"]["materialization"]["locator_stability"], "not_stable_until_materialization_strategy_changes");
-        assert_eq!(json["contract"]["projection"]["materialization"]["locator_scope"], "none_when_not_materialized");
-        assert_eq!(json["contract"]["projection"]["materialization"]["locator_is_opaque"], true);
-        assert_eq!(json["contract"]["projection"]["materialization"]["locator_can_be_persisted_by_clients"], false);
-        assert_eq!(json["contract"]["projection"]["materialization"]["locator_survives_generation_change"], false);
-        assert_eq!(json["contract"]["projection"]["materialization"]["current_generation"], 1);
+        assert_eq!(
+            json["contract"]["projection"]["materialization"]["locator_stability"],
+            "not_stable_until_materialization_strategy_changes"
+        );
+        assert_eq!(
+            json["contract"]["projection"]["materialization"]["locator_scope"],
+            "none_when_not_materialized"
+        );
+        assert_eq!(
+            json["contract"]["projection"]["materialization"]["locator_is_opaque"],
+            true
+        );
+        assert_eq!(
+            json["contract"]["projection"]["materialization"]
+                ["locator_can_be_persisted_by_clients"],
+            false
+        );
+        assert_eq!(
+            json["contract"]["projection"]["materialization"]["locator_survives_generation_change"],
+            false
+        );
+        assert_eq!(
+            json["contract"]["projection"]["materialization"]["current_generation"],
+            1
+        );
         assert_eq!(json["summary"]["result_kind"], "status");
         assert_eq!(json["summary"]["counts"]["files"], 0);
         assert_eq!(json["summary"]["counts"]["indexed_files"], 0);
         assert_eq!(json["summary"]["partial"]["is_partial"], false);
+    }
+
+    #[tokio::test]
+    async fn get_project_stats_reports_degraded_orphaned_rows() {
+        let ctx = TestContext::new().await;
+
+        let chunk = crate::types::CodeChunk {
+            id: None,
+            file_path: "src/orphaned.rs".to_string(),
+            content: "fn orphaned() {}".to_string(),
+            language: crate::types::Language::Rust,
+            start_line: 1,
+            end_line: 1,
+            chunk_type: crate::types::ChunkType::Function,
+            name: Some("orphaned".to_string()),
+            context_path: None,
+            embedding: None,
+            content_hash: "hash-orphaned".to_string(),
+            project_id: Some("orphaned-project".to_string()),
+            indexed_at: crate::types::Datetime::default(),
+        };
+        ctx.state.storage.create_code_chunk(chunk).await.unwrap();
+
+        let result = get_project_stats(
+            &ctx.state,
+            GetProjectStatsParams {
+                project_id: "orphaned-project".to_string(),
+            },
+        )
+        .await
+        .unwrap();
+
+        let value = serde_json::to_value(&result).unwrap();
+        let text = value["content"][0]["text"].as_str().unwrap();
+        let json: serde_json::Value = serde_json::from_str(text).unwrap();
+
+        assert_eq!(json["project_id"], "orphaned-project");
+        assert_eq!(json["status"], "failed");
+        assert_eq!(json["diagnostics"]["status_metadata_missing"], true);
+        assert_eq!(json["diagnostics"]["reason_code"], "degraded");
+        assert_eq!(json["chunks"]["total"], 1);
+        assert_eq!(json["symbols"]["total"], 0);
+        assert!(json["diagnostics"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("Index status metadata is missing"));
+    }
+
+    #[tokio::test]
+    async fn delete_project_removes_manifest_discovery_rows() {
+        let ctx = TestContext::new().await;
+
+        ctx.state
+            .storage
+            .upsert_manifest_entry("manifest-only-project", "src/stale.rs")
+            .await
+            .unwrap();
+
+        let before_delete = ctx.state.storage.list_projects().await.unwrap();
+        assert!(before_delete.contains(&"manifest-only-project".to_string()));
+
+        let result = delete_project(
+            &ctx.state,
+            DeleteProjectParams {
+                project_id: "manifest-only-project".to_string(),
+            },
+        )
+        .await
+        .unwrap();
+        let value = serde_json::to_value(&result).unwrap();
+        let text = value["content"][0]["text"].as_str().unwrap();
+        let json: serde_json::Value = serde_json::from_str(text).unwrap();
+        assert_eq!(json["project_id"], "manifest-only-project");
+
+        let after_delete = ctx.state.storage.list_projects().await.unwrap();
+        assert!(!after_delete.contains(&"manifest-only-project".to_string()));
+
+        let stats = get_project_stats(
+            &ctx.state,
+            GetProjectStatsParams {
+                project_id: "manifest-only-project".to_string(),
+            },
+        )
+        .await
+        .unwrap();
+        let value = serde_json::to_value(&stats).unwrap();
+        let text = value["content"][0]["text"].as_str().unwrap();
+        let json: serde_json::Value = serde_json::from_str(text).unwrap();
+        assert!(json["error"]
+            .as_str()
+            .unwrap()
+            .contains("Project not found"));
     }
 
     #[tokio::test]
@@ -1203,22 +1504,60 @@ pub async fn get_degradation_info(state: &Arc<AppState>) -> Option<serde_json::V
         assert_eq!(project["lifecycle"]["projection"]["state"], "current");
         assert_eq!(project["lifecycle"]["projection"]["is_current"], true);
         assert_eq!(project["contract"]["schema_version"], 1);
-        assert_eq!(project["contract"]["identity"]["project_id"], "list-lifecycle-project");
+        assert_eq!(
+            project["contract"]["identity"]["project_id"],
+            "list-lifecycle-project"
+        );
         assert_eq!(project["contract"]["projection"]["state"], "current");
-        assert_eq!(project["contract"]["projection"]["basis"], "semantic_generation");
+        assert_eq!(
+            project["contract"]["projection"]["basis"],
+            "semantic_generation"
+        );
         assert_eq!(project["contract"]["projection"]["generation"], 1);
-        assert_eq!(project["contract"]["projection"]["materialization"]["strategy"], "not_materialized");
+        assert_eq!(
+            project["contract"]["projection"]["materialization"]["strategy"],
+            "not_materialized"
+        );
         assert_eq!(project["contract"]["projection"]["materialization"]["persistence_semantics"], "contract is exposed on status surfaces only; no persisted projection artifact is promised yet");
-        assert_eq!(project["contract"]["projection"]["materialization"]["shape_version_semantics"], "materialized_projection_payload_shape_version");
-        assert_eq!(project["contract"]["projection"]["materialization"]["addressability_semantics"], "no_stable_external_read_target_is_promised_until_materialization_strategy_changes");
-        assert_eq!(project["contract"]["projection"]["materialization"]["locator_kind"], serde_json::Value::Null);
+        assert_eq!(
+            project["contract"]["projection"]["materialization"]["shape_version_semantics"],
+            "materialized_projection_payload_shape_version"
+        );
+        assert_eq!(
+            project["contract"]["projection"]["materialization"]["addressability_semantics"],
+            "no_stable_external_read_target_is_promised_until_materialization_strategy_changes"
+        );
+        assert_eq!(
+            project["contract"]["projection"]["materialization"]["locator_kind"],
+            serde_json::Value::Null
+        );
         assert_eq!(project["contract"]["projection"]["materialization"]["locator_semantics"], "absent_when_not_materialized; when present it identifies the externally consumable projection instance");
-        assert_eq!(project["contract"]["projection"]["materialization"]["locator_stability"], "not_stable_until_materialization_strategy_changes");
-        assert_eq!(project["contract"]["projection"]["materialization"]["locator_scope"], "none_when_not_materialized");
-        assert_eq!(project["contract"]["projection"]["materialization"]["locator_is_opaque"], true);
-        assert_eq!(project["contract"]["projection"]["materialization"]["locator_can_be_persisted_by_clients"], false);
-        assert_eq!(project["contract"]["projection"]["materialization"]["locator_survives_generation_change"], false);
-        assert_eq!(project["contract"]["projection"]["materialization"]["current_generation"], 1);
+        assert_eq!(
+            project["contract"]["projection"]["materialization"]["locator_stability"],
+            "not_stable_until_materialization_strategy_changes"
+        );
+        assert_eq!(
+            project["contract"]["projection"]["materialization"]["locator_scope"],
+            "none_when_not_materialized"
+        );
+        assert_eq!(
+            project["contract"]["projection"]["materialization"]["locator_is_opaque"],
+            true
+        );
+        assert_eq!(
+            project["contract"]["projection"]["materialization"]
+                ["locator_can_be_persisted_by_clients"],
+            false
+        );
+        assert_eq!(
+            project["contract"]["projection"]["materialization"]
+                ["locator_survives_generation_change"],
+            false
+        );
+        assert_eq!(
+            project["contract"]["projection"]["materialization"]["current_generation"],
+            1
+        );
         assert_eq!(project["summary"]["result_kind"], "project");
         assert_eq!(project["summary"]["counts"]["results"], 1);
         assert_eq!(project["summary"]["counts"]["total"], 1);
@@ -1233,9 +1572,15 @@ pub async fn get_degradation_info(state: &Arc<AppState>) -> Option<serde_json::V
 
         status.refresh_lifecycle_states();
 
-        assert_eq!(status.structural_state, crate::types::StructuralState::Ready);
+        assert_eq!(
+            status.structural_state,
+            crate::types::StructuralState::Ready
+        );
         assert_eq!(status.semantic_state, crate::types::SemanticState::Ready);
-        assert_eq!(status.projection_state, crate::types::ProjectionState::Current);
+        assert_eq!(
+            status.projection_state,
+            crate::types::ProjectionState::Current
+        );
     }
 
     #[test]
@@ -1248,9 +1593,15 @@ pub async fn get_degradation_info(state: &Arc<AppState>) -> Option<serde_json::V
 
         assert_eq!(status.structural_generation, 1);
         assert_eq!(status.semantic_generation, 0);
-        assert_eq!(status.structural_state, crate::types::StructuralState::Ready);
+        assert_eq!(
+            status.structural_state,
+            crate::types::StructuralState::Ready
+        );
         assert_eq!(status.semantic_state, crate::types::SemanticState::Pending);
-        assert_eq!(status.projection_state, crate::types::ProjectionState::Stale);
+        assert_eq!(
+            status.projection_state,
+            crate::types::ProjectionState::Stale
+        );
     }
 
     #[test]

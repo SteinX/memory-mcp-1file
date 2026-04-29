@@ -412,7 +412,9 @@ impl StorageBackend for SurrealStorage {
         memory_ops::count_valid_memories(&self.db).await
     }
 
-    async fn list_capacity_candidates(&self) -> Result<Vec<crate::storage::traits::CapacityMemoryCandidate>> {
+    async fn list_capacity_candidates(
+        &self,
+    ) -> Result<Vec<crate::storage::traits::CapacityMemoryCandidate>> {
         memory_ops::list_capacity_candidates(&self.db).await
     }
 
@@ -913,18 +915,29 @@ mod tests {
         assert_eq!(bm25[0].content, expected_content);
         assert_ne!(bm25[0].content, unexpected_content);
 
-        let unfiltered_list = storage.list_memories(&empty_memory_query(), 10, 0).await.unwrap();
+        let unfiltered_list = storage
+            .list_memories(&empty_memory_query(), 10, 0)
+            .await
+            .unwrap();
         assert_eq!(unfiltered_list.len(), 2);
-        assert!(unfiltered_list.iter().any(|m| m.content == expected_content));
-        assert!(unfiltered_list.iter().any(|m| m.content == unexpected_content));
+        assert!(unfiltered_list
+            .iter()
+            .any(|m| m.content == expected_content));
+        assert!(unfiltered_list
+            .iter()
+            .any(|m| m.content == unexpected_content));
 
         let unfiltered_bm25 = storage
             .bm25_search("scope regression", &empty_memory_query(), 10)
             .await
             .unwrap();
         assert_eq!(unfiltered_bm25.len(), 2);
-        assert!(unfiltered_bm25.iter().any(|m| m.content == expected_content));
-        assert!(unfiltered_bm25.iter().any(|m| m.content == unexpected_content));
+        assert!(unfiltered_bm25
+            .iter()
+            .any(|m| m.content == expected_content));
+        assert!(unfiltered_bm25
+            .iter()
+            .any(|m| m.content == unexpected_content));
     }
 
     async fn setup_test_db() -> (SurrealStorage, tempfile::TempDir) {
@@ -1050,20 +1063,8 @@ mod tests {
                     user_id: Some("user-a".to_string()),
                     ..Default::default()
                 },
-                scoped_memory(
-                    "scope regression user-a",
-                    Some("user-a"),
-                    None,
-                    None,
-                    None,
-                ),
-                scoped_memory(
-                    "scope regression user-b",
-                    Some("user-b"),
-                    None,
-                    None,
-                    None,
-                ),
+                scoped_memory("scope regression user-a", Some("user-a"), None, None, None),
+                scoped_memory("scope regression user-b", Some("user-b"), None, None, None),
             ),
             (
                 "agent_id",
@@ -1092,20 +1093,8 @@ mod tests {
                     run_id: Some("run-a".to_string()),
                     ..Default::default()
                 },
-                scoped_memory(
-                    "scope regression run-a",
-                    None,
-                    None,
-                    Some("run-a"),
-                    None,
-                ),
-                scoped_memory(
-                    "scope regression run-b",
-                    None,
-                    None,
-                    Some("run-b"),
-                    None,
-                ),
+                scoped_memory("scope regression run-a", None, None, Some("run-a"), None),
+                scoped_memory("scope regression run-b", None, None, Some("run-b"), None),
             ),
             (
                 "namespace",
@@ -1139,39 +1128,34 @@ mod tests {
             storage.create_memory(in_scope).await.unwrap();
             storage.create_memory(out_of_scope).await.unwrap();
 
-            assert_scope_isolation(
-                &storage,
-                filters,
-                &expected_content,
-                &unexpected_content,
-            )
-            .await;
+            assert_scope_isolation(&storage, filters, &expected_content, &unexpected_content).await;
 
-            let filtered_count = storage.count_memories_filtered(&MemoryQuery {
-                user_id: if scope_name == "user_id" {
-                    Some("user-a".to_string())
-                } else {
-                    None
-                },
-                agent_id: if scope_name == "agent_id" {
-                    Some("agent-a".to_string())
-                } else {
-                    None
-                },
-                run_id: if scope_name == "run_id" {
-                    Some("run-a".to_string())
-                } else {
-                    None
-                },
-                namespace: if scope_name == "namespace" {
-                    Some("namespace-a".to_string())
-                } else {
-                    None
-                },
-                ..Default::default()
-            })
-            .await
-            .unwrap();
+            let filtered_count = storage
+                .count_memories_filtered(&MemoryQuery {
+                    user_id: if scope_name == "user_id" {
+                        Some("user-a".to_string())
+                    } else {
+                        None
+                    },
+                    agent_id: if scope_name == "agent_id" {
+                        Some("agent-a".to_string())
+                    } else {
+                        None
+                    },
+                    run_id: if scope_name == "run_id" {
+                        Some("run-a".to_string())
+                    } else {
+                        None
+                    },
+                    namespace: if scope_name == "namespace" {
+                        Some("namespace-a".to_string())
+                    } else {
+                        None
+                    },
+                    ..Default::default()
+                })
+                .await
+                .unwrap();
 
             assert_eq!(filtered_count, 1, "scope {scope_name} should stay isolated");
         }
@@ -1454,8 +1438,12 @@ mod tests {
         );
         let target_id = storage.create_code_symbol(target).await.unwrap();
 
-        let caller_key = caller_id.strip_prefix("code_symbols:").unwrap_or(&caller_id);
-        let target_key = target_id.strip_prefix("code_symbols:").unwrap_or(&target_id);
+        let caller_key = caller_id
+            .strip_prefix("code_symbols:")
+            .unwrap_or(&caller_id);
+        let target_key = target_id
+            .strip_prefix("code_symbols:")
+            .unwrap_or(&target_id);
 
         storage
             .create_symbol_relation(SymbolRelation::new(
@@ -1640,6 +1628,60 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(results.len(), 50);
+    }
+
+    #[tokio::test]
+    async fn test_list_projects_unifies_status_chunks_symbols_and_manifest() {
+        let (storage, _tmp) = setup_test_db().await;
+        use crate::types::{ChunkType, CodeChunk, CodeSymbol, IndexStatus, Language, SymbolType};
+
+        storage
+            .update_index_status(IndexStatus::new("status_project".to_string()))
+            .await
+            .unwrap();
+
+        storage
+            .create_code_chunk(CodeChunk {
+                id: None,
+                file_path: "src/chunk.rs".to_string(),
+                content: "fn chunk_project() {}".to_string(),
+                language: Language::Rust,
+                start_line: 1,
+                end_line: 1,
+                chunk_type: ChunkType::Function,
+                name: Some("chunk_project".to_string()),
+                context_path: None,
+                embedding: None,
+                content_hash: "chunk-hash".to_string(),
+                project_id: Some("chunk_project".to_string()),
+                indexed_at: Datetime::default(),
+            })
+            .await
+            .unwrap();
+
+        storage
+            .create_code_symbol(CodeSymbol::new(
+                "symbol_project_fn".to_string(),
+                SymbolType::Function,
+                "src/symbol.rs".to_string(),
+                1,
+                3,
+                "symbol_project".to_string(),
+            ))
+            .await
+            .unwrap();
+
+        storage
+            .upsert_manifest_entry("manifest_project", "src/manifest.rs")
+            .await
+            .unwrap();
+
+        let projects = storage.list_projects().await.unwrap();
+
+        assert!(projects.contains(&"status_project".to_string()));
+        assert!(projects.contains(&"chunk_project".to_string()));
+        assert!(projects.contains(&"symbol_project".to_string()));
+        assert!(projects.contains(&"manifest_project".to_string()));
     }
 
     #[tokio::test]

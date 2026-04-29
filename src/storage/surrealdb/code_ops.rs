@@ -1,6 +1,8 @@
 use surrealdb::engine::local::Db;
 use surrealdb::Surreal;
 
+use std::collections::BTreeSet;
+
 use crate::types::{CodeChunk, IndexStatus, ScoredCodeChunk};
 use crate::Result;
 
@@ -228,18 +230,26 @@ pub(super) async fn delete_index_status(db: &Surreal<Db>, project_id: &str) -> R
 }
 
 pub(super) async fn list_projects(db: &Surreal<Db>) -> Result<Vec<String>> {
-    let sql = "SELECT project_id FROM code_chunks GROUP BY project_id";
+    let sql = r#"
+        SELECT project_id FROM index_status;
+        SELECT project_id FROM code_chunks WHERE project_id IS NOT NONE;
+        SELECT project_id FROM code_symbols;
+        SELECT project_id FROM file_manifest;
+    "#;
+
     let mut response = db.query(sql).await?;
-    let results: Vec<serde_json::Value> = response.take(0).unwrap_or_default();
-    let projects = results
-        .into_iter()
-        .filter_map(|v| {
-            v.get("project_id")
-                .and_then(|p| p.as_str())
-                .map(String::from)
-        })
-        .collect();
-    Ok(projects)
+    let mut projects = BTreeSet::new();
+
+    for result_index in 0..4 {
+        let results: Vec<serde_json::Value> = response.take(result_index).unwrap_or_default();
+        for value in results {
+            if let Some(project_id) = value.get("project_id").and_then(|p| p.as_str()) {
+                projects.insert(project_id.to_string());
+            }
+        }
+    }
+
+    Ok(projects.into_iter().collect())
 }
 
 pub(super) async fn get_file_hash(
@@ -516,10 +526,7 @@ pub(super) async fn get_unembedded_chunks(
 
 /// Clear all embeddings for a project (set to NONE), forcing re-embedding
 /// via the existing resume pipeline (get_unembedded_chunks → EmbeddingWorker).
-pub(super) async fn clear_project_embeddings(
-    db: &Surreal<Db>,
-    project_id: &str,
-) -> Result<u64> {
+pub(super) async fn clear_project_embeddings(db: &Surreal<Db>, project_id: &str) -> Result<u64> {
     let sql = "
         UPDATE code_chunks SET embedding = NONE WHERE project_id = $project_id;
         UPDATE code_symbols SET embedding = NONE WHERE project_id = $project_id;

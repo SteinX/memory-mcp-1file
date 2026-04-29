@@ -95,6 +95,7 @@ async fn do_index_project(
     state.storage.delete_project_chunks(project_id).await?;
     state.storage.delete_project_symbols(project_id).await?;
     state.storage.delete_file_hashes(project_id).await?;
+    state.storage.delete_manifest_entries(project_id).await?;
 
     // `scan_directory` uses `ignore::WalkBuilder` — a synchronous blocking I/O walk.
     // Wrap in `spawn_blocking` to avoid starving the Tokio async thread pool.
@@ -127,7 +128,7 @@ async fn do_index_project(
     let mut hash_buffer: Vec<(String, String)> = Vec::with_capacity(batch_size);
     const HASH_FLUSH_SIZE: usize = 50;
 
-        // Issue 4 fix: Parse files with bounded concurrency using JoinSet instead of
+    // Issue 4 fix: Parse files with bounded concurrency using JoinSet instead of
     // sequential spawn_blocking. Up to max_concurrent_parses files are parsed on
     // the blocking thread pool simultaneously.
     #[allow(clippy::type_complexity)]
@@ -156,20 +157,26 @@ async fn do_index_project(
                 if chunk_buffer.len() >= batch_size {
                     let batch = std::mem::take(&mut chunk_buffer);
                     let _permit = state.db_semaphore.acquire().await;
-                    if let Ok(results) = state.storage.create_code_chunks_batch(batch).await {
-                        for (id, chunk) in results {
-                            if let Err(e) = state
-                                .embedding_queue
-                                .send(EmbeddingRequest {
-                                    text: chunk.content,
-                                    responder: None,
-                                    target: Some(EmbeddingTarget::Chunk(id.clone())),
-                                    retry_count: 0,
-                                })
-                                .await
-                            {
-                                tracing::warn!(chunk_id = %id, error = %e, "Failed to enqueue chunk embedding");
-                            }
+                    let results = state
+                        .storage
+                        .create_code_chunks_batch(batch)
+                        .await
+                        .map_err(|e| crate::AppError::Internal(
+                            format!("failed to persist code chunks for {fp_str}: {e}").into(),
+                        ))?;
+
+                    for (id, chunk) in results {
+                        if let Err(e) = state
+                            .embedding_queue
+                            .send(EmbeddingRequest {
+                                text: chunk.content,
+                                responder: None,
+                                target: Some(EmbeddingTarget::Chunk(id.clone())),
+                                retry_count: 0,
+                            })
+                            .await
+                        {
+                            tracing::warn!(chunk_id = %id, error = %e, "Failed to enqueue chunk embedding");
                         }
                     }
                 }
@@ -339,8 +346,10 @@ async fn do_index_project(
         if parse_set.len() >= max_concurrent_parses {
             match tokio::time::timeout(
                 std::time::Duration::from_secs(PARSE_TIMEOUT_SECS),
-                parse_set.join_next()
-            ).await {
+                parse_set.join_next(),
+            )
+            .await
+            {
                 Ok(Some(join_result)) => {
                     drain_one_parse!(join_result);
                 }
@@ -352,9 +361,13 @@ async fn do_index_project(
                         path = ?file_path,
                         "Parse task timed out, skipping file"
                     );
-                    status.failed_files.push(file_path.to_string_lossy().to_string());
+                    status
+                        .failed_files
+                        .push(file_path.to_string_lossy().to_string());
                     status.indexed_files += 1;
-                    monitor.indexed_files.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    monitor
+                        .indexed_files
+                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                     skip_spawn = true;
                 }
             }
@@ -382,8 +395,10 @@ async fn do_index_project(
     loop {
         match tokio::time::timeout(
             std::time::Duration::from_secs(PARSE_TIMEOUT_SECS),
-            parse_set.join_next()
-        ).await {
+            parse_set.join_next(),
+        )
+        .await
+        {
             Ok(Some(join_result)) => {
                 consecutive_timeouts = 0;
                 drain_one_parse!(join_result);
@@ -395,7 +410,9 @@ async fn do_index_project(
                     pending = parse_set.len(),
                     "Final drain parse task timed out"
                 );
-                status.failed_files.push(format!("parse_timeout_{}s", PARSE_TIMEOUT_SECS));
+                status
+                    .failed_files
+                    .push(format!("parse_timeout_{}s", PARSE_TIMEOUT_SECS));
                 if let Some(join_result) = parse_set.try_join_next() {
                     consecutive_timeouts = 0;
                     let _ = drain_one_parse!(join_result);
@@ -423,18 +440,29 @@ async fn do_index_project(
 
     if !chunk_buffer.is_empty() {
         let _permit = state.db_semaphore.acquire().await;
-        if let Ok(results) = state.storage.create_code_chunks_batch(chunk_buffer).await {
-            for (id, chunk) in results {
-                let _ = state
-                    .embedding_queue
-                    .send(EmbeddingRequest {
-                        text: chunk.content,
-                        responder: None,
-                        target: Some(EmbeddingTarget::Chunk(id)),
-                        retry_count: 0,
-                    })
-                    .await;
-            }
+        let results = state
+            .storage
+            .create_code_chunks_batch(chunk_buffer)
+            .await
+            .map_err(|e| {
+                crate::AppError::Internal(
+                    format!(
+                        "failed to persist final code chunk batch for project {project_id}: {e}"
+                    )
+                    .into(),
+                )
+            })?;
+
+        for (id, chunk) in results {
+            let _ = state
+                .embedding_queue
+                .send(EmbeddingRequest {
+                    text: chunk.content,
+                    responder: None,
+                    target: Some(EmbeddingTarget::Chunk(id)),
+                    retry_count: 0,
+                })
+                .await;
         }
     }
 
@@ -551,20 +579,26 @@ pub async fn incremental_index(
             })?;
 
             let _permit = state.db_semaphore.acquire().await;
-            if let Ok(results) = state.storage.create_code_chunks_batch(chunks).await {
-                for (id, chunk) in results {
-                    // Collect the written chunk so the caller can inspect / BM25-rebuild selectively.
-                    result.new_chunks.push(chunk.clone());
-                    let _ = state
-                        .embedding_queue
-                        .send(EmbeddingRequest {
-                            text: chunk.content,
-                            responder: None,
-                            target: Some(EmbeddingTarget::Chunk(id)),
-                            retry_count: 0,
-                        })
-                        .await;
-                }
+            let results = state
+                .storage
+                .create_code_chunks_batch(chunks)
+                .await
+                .map_err(|e| crate::AppError::Internal(
+                    format!("failed to persist incremental code chunks for {path_str}: {e}").into(),
+                ))?;
+
+            for (id, chunk) in results {
+                // Collect the written chunk so the caller can inspect / BM25-rebuild selectively.
+                result.new_chunks.push(chunk.clone());
+                let _ = state
+                    .embedding_queue
+                    .send(EmbeddingRequest {
+                        text: chunk.content,
+                        responder: None,
+                        target: Some(EmbeddingTarget::Chunk(id)),
+                        retry_count: 0,
+                    })
+                    .await;
             }
 
             if !symbols.is_empty() {
@@ -684,8 +718,10 @@ pub async fn incremental_index(
         if parse_set.len() >= max_concurrent_parses {
             match tokio::time::timeout(
                 std::time::Duration::from_secs(PARSE_TIMEOUT_SECS),
-                parse_set.join_next()
-            ).await {
+                parse_set.join_next(),
+            )
+            .await
+            {
                 Ok(Some(join_result)) => {
                     drain_one_incr!(join_result);
                 }
@@ -725,8 +761,10 @@ pub async fn incremental_index(
     loop {
         match tokio::time::timeout(
             std::time::Duration::from_secs(PARSE_TIMEOUT_SECS),
-            parse_set.join_next()
-        ).await {
+            parse_set.join_next(),
+        )
+        .await
+        {
             Ok(Some(join_result)) => {
                 consecutive_timeouts = 0;
                 drain_one_incr!(join_result);
