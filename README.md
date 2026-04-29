@@ -359,6 +359,8 @@ The server exposes **21 tools** to the AI model, organized into logical categori
 - `contract` and `summary` remain **additive-first** surfaces. Clients must ignore unknown fields and unknown enum values.
 - `summary.partial.reason_code` is the canonical machine-readable contract reason. Current Phase 5A values are: `missing`, `stale`, `partial`, `degraded`, `invalid_locator`, `generation_mismatch`, and `unsupported`.
 - `summary.partial.reason` is retained as a legacy compatibility string. Existing values like `projection_stale`, `indexing_in_progress`, and `progress:NN.N` remain readable, but new integrations should key off `reason_code`.
+- `project_info(action="list")` discovers projects from the union of index status metadata, code chunks, code symbols, and file manifests, so partially indexed or degraded projects remain operator-visible.
+- `project_info(action="stats")` returns degraded diagnostics when code intelligence rows exist but `index_status` metadata is missing; it only returns `Project not found` when no status, chunks, symbols, or manifest entries exist for that project.
 - `project_info(action="projection")` returns `locator.lookup.state = "created"`; `project_info(action="projection_by_locator")` returns `locator.lookup.state = "resolved"` on success and `"missing"` on miss.
 - Projection locators are **opaque, same-process, non-persistable, and not generation-stable**. They are convenience handles for immediate readback, not stable public identities.
 - Stable identities remain unchanged:
