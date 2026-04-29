@@ -1,0 +1,7 @@
+## 2026-04-27T13:50:00+00:00 - T9 report field correction
+
+- Command: `python3 - <<'PY' ...` assertions against actual `.sisyphus/evidence/evals/memory-retrieval-baseline.json` and `.sisyphus/evidence/evals/code-retrieval-baseline.json`.
+- Actual memory baseline proof: `query_count=10`, `blocker_count=0`, `mrr/precision_at_5/precision_at_10` present, and `recall_at_5/recall_at_10/ndcg_at_5/ndcg_at_10` present in `aggregate_metrics` and all 10 `per_query` rows.
+- Actual code baseline proof: `query_count=0`, `readiness_timeout=true`, `blockers=1`, `mrr/precision_at_5/precision_at_10` present, and `recall_at_5/recall_at_10/ndcg_at_5/ndcg_at_10` present in `aggregate_metrics`; there are no per-query rows in the blocked run, so row-level ranking cannot be asserted from this artifact.
+- Markdown proof: `.sisyphus/evidence/evals/code-retrieval-baseline.md` contains the per-query header columns `R@5`, `R@10`, `NDCG@5`, `NDCG@10`.
+- Deterministic fallback proof: synthetic report generation still emits the full row schema for ranking rows, proving the formatter path supports the new fields when ranking rows exist.

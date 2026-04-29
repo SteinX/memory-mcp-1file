@@ -1,0 +1,167 @@
+Task 4 independent get_valid check
+Generated: 2026-04-27T11:20:05.075215+00:00
+Source: .sisyphus/evidence/evals/memory-retrieval-baseline.json
+
+Summary: both get_valid rows returned records and expected memories are visible in raw_top_k previews, but scoring/remap failed because get_valid result_id values are Surreal record-shaped strings instead of raw server IDs.
+
+## q_get_valid_temporal_checkpoint
+- query_type: get_valid_temporal
+- result_count: 15
+- expected_rank: None
+- mrr: 0.0
+- failure_type: wrong_rank
+- expected_fixture_ids: ["mem_context_namespace_evals", "mem_context_no_private_data", "mem_context_stdio_harness", "mem_decision_cache_ttl", "mem_decision_query_ids", "mem_decision_temporal_utc", "mem_project_benchmark_scope", "mem_research_rrf_fusion", "mem_task_auth_timeout", "mem_task_billing_retry_window", "mem_user_pref_concise_answers", "mem_user_pref_terse_notes"]
+- expected_server_ids: ["3df07c756a6bbf9cfdc4", "6fb4e4a7fa60c0e5d9ab", "3862bc3de76e0a14cb9b", "aaf146982d8e8b7db94a", "6daa3956c7895a1631dc", "a0dc59047d4095cb247c", "e429685f7ddacf28af47", "5b2066edd1095a68101d", "93aec863d81aa5e5dfa0", "7fec235c7b15bd23659f", "2cb216a6eecdfddcd565", "cd14a9826472bbe460b1"]
+- raw_top_k:
+  - {"fixture_id": null, "preview": "CONTEXT: Use namespace evals/memory-retrieval for benchmark runs and fixtures.", "rank": 1, "result_id": "{'key': {'String': '3df07c756a6bbf9cfdc4'}, 'table': 'memories'}"}
+  - {"fixture_id": null, "preview": "USER: Prefer terse benchmark notes and short rationale lines.", "rank": 2, "result_id": "{'key': {'String': 'cd14a9826472bbe460b1'}, 'table': 'memories'}"}
+  - {"fixture_id": null, "preview": "PROJECT: Recall fusion blends lexical evidence and graph evidence for benchmark queries.", "rank": 3, "result_id": "{'key': {'String': 'dc89f19abd4583e5243b'}, 'table': 'memories'}"}
+  - {"fixture_id": null, "preview": "DECISION: Represent temporal windows in ISO 8601 UTC for deterministic parsing.", "rank": 4, "result_id": "{'key': {'String': 'a0dc59047d4095cb247c'}, 'table': 'memories'}"}
+  - {"fixture_id": null, "preview": "TASK: This temporary memory expires before the February validity checkpoint.", "rank": 5, "result_id": "{'key': {'String': '85c06b44737f24df2f0f'}, 'table': 'memories'}"}
+  - {"fixture_id": null, "preview": "CONTEXT: Never use production, private, or local personal memory content in fixtures.", "rank": 6, "result_id": "{'key': {'String': '6fb4e4a7fa60c0e5d9ab'}, 'table': 'memories'}"}
+  - {"fixture_id": null, "preview": "RESEARCH: Temporal validity should be checked with explicit valid_from and valid_until windows.", "rank": 7, "result_id": "{'key': {'String': '995e3bb0f34eb3312e31'}, 'table': 'memories'}"}
+  - {"fixture_id": null, "preview": "DECISION: Golden queries must cite stable memory ids exactly as written.", "rank": 8, "result_id": "{'key': {'String': '6daa3956c7895a1631dc'}, 'table': 'memories'}"}
+  - {"fixture_id": null, "preview": "TASK: Billing retries stay open for a 15 minute retry window.", "rank": 9, "result_id": "{'key': {'String': '7fec235c7b15bd23659f'}, 'table': 'memories'}"}
+  - {"fixture_id": null, "preview": "USER: Keep benchmark notes concise and factual.", "rank": 10, "result_id": "{'key': {'String': '2cb216a6eecdfddcd565'}, 'table': 'memories'}"}
+
+## q_get_valid_filtered_auth_namespace
+- query_type: get_valid_filtered
+- result_count: 2
+- expected_rank: None
+- mrr: 0.0
+- failure_type: wrong_rank
+- expected_fixture_ids: ["mem_task_auth_timeout", "mem_decision_cache_ttl"]
+- expected_server_ids: ["93aec863d81aa5e5dfa0", "aaf146982d8e8b7db94a"]
+- raw_top_k:
+  - {"fixture_id": null, "preview": "DECISION: Use a 15 minute cache ttl for auth token refresh state.", "rank": 1, "result_id": "{'key': {'String': 'aaf146982d8e8b7db94a'}, 'table': 'memories'}"}
+  - {"fixture_id": null, "preview": "TASK: Retry auth requests for 15 minutes when the token refresh path stalls.", "rank": 2, "result_id": "{'key': {'String': '93aec863d81aa5e5dfa0'}, 'table': 'memories'}"}
+
+Machine-readable rows:
+[
+  {
+    "expected_fixture_ids": [
+      "mem_context_namespace_evals",
+      "mem_context_no_private_data",
+      "mem_context_stdio_harness",
+      "mem_decision_cache_ttl",
+      "mem_decision_query_ids",
+      "mem_decision_temporal_utc",
+      "mem_project_benchmark_scope",
+      "mem_research_rrf_fusion",
+      "mem_task_auth_timeout",
+      "mem_task_billing_retry_window",
+      "mem_user_pref_concise_answers",
+      "mem_user_pref_terse_notes"
+    ],
+    "expected_rank": null,
+    "expected_server_ids": [
+      "3df07c756a6bbf9cfdc4",
+      "6fb4e4a7fa60c0e5d9ab",
+      "3862bc3de76e0a14cb9b",
+      "aaf146982d8e8b7db94a",
+      "6daa3956c7895a1631dc",
+      "a0dc59047d4095cb247c",
+      "e429685f7ddacf28af47",
+      "5b2066edd1095a68101d",
+      "93aec863d81aa5e5dfa0",
+      "7fec235c7b15bd23659f",
+      "2cb216a6eecdfddcd565",
+      "cd14a9826472bbe460b1"
+    ],
+    "failure_type": "wrong_rank",
+    "query_id": "q_get_valid_temporal_checkpoint",
+    "query_type": "get_valid_temporal",
+    "raw_top_k": [
+      {
+        "fixture_id": null,
+        "preview": "CONTEXT: Use namespace evals/memory-retrieval for benchmark runs and fixtures.",
+        "rank": 1,
+        "result_id": "{'key': {'String': '3df07c756a6bbf9cfdc4'}, 'table': 'memories'}"
+      },
+      {
+        "fixture_id": null,
+        "preview": "USER: Prefer terse benchmark notes and short rationale lines.",
+        "rank": 2,
+        "result_id": "{'key': {'String': 'cd14a9826472bbe460b1'}, 'table': 'memories'}"
+      },
+      {
+        "fixture_id": null,
+        "preview": "PROJECT: Recall fusion blends lexical evidence and graph evidence for benchmark queries.",
+        "rank": 3,
+        "result_id": "{'key': {'String': 'dc89f19abd4583e5243b'}, 'table': 'memories'}"
+      },
+      {
+        "fixture_id": null,
+        "preview": "DECISION: Represent temporal windows in ISO 8601 UTC for deterministic parsing.",
+        "rank": 4,
+        "result_id": "{'key': {'String': 'a0dc59047d4095cb247c'}, 'table': 'memories'}"
+      },
+      {
+        "fixture_id": null,
+        "preview": "TASK: This temporary memory expires before the February validity checkpoint.",
+        "rank": 5,
+        "result_id": "{'key': {'String': '85c06b44737f24df2f0f'}, 'table': 'memories'}"
+      },
+      {
+        "fixture_id": null,
+        "preview": "CONTEXT: Never use production, private, or local personal memory content in fixtures.",
+        "rank": 6,
+        "result_id": "{'key': {'String': '6fb4e4a7fa60c0e5d9ab'}, 'table': 'memories'}"
+      },
+      {
+        "fixture_id": null,
+        "preview": "RESEARCH: Temporal validity should be checked with explicit valid_from and valid_until windows.",
+        "rank": 7,
+        "result_id": "{'key': {'String': '995e3bb0f34eb3312e31'}, 'table': 'memories'}"
+      },
+      {
+        "fixture_id": null,
+        "preview": "DECISION: Golden queries must cite stable memory ids exactly as written.",
+        "rank": 8,
+        "result_id": "{'key': {'String': '6daa3956c7895a1631dc'}, 'table': 'memories'}"
+      },
+      {
+        "fixture_id": null,
+        "preview": "TASK: Billing retries stay open for a 15 minute retry window.",
+        "rank": 9,
+        "result_id": "{'key': {'String': '7fec235c7b15bd23659f'}, 'table': 'memories'}"
+      },
+      {
+        "fixture_id": null,
+        "preview": "USER: Keep benchmark notes concise and factual.",
+        "rank": 10,
+        "result_id": "{'key': {'String': '2cb216a6eecdfddcd565'}, 'table': 'memories'}"
+      }
+    ],
+    "result_count": 15
+  },
+  {
+    "expected_fixture_ids": [
+      "mem_task_auth_timeout",
+      "mem_decision_cache_ttl"
+    ],
+    "expected_rank": null,
+    "expected_server_ids": [
+      "93aec863d81aa5e5dfa0",
+      "aaf146982d8e8b7db94a"
+    ],
+    "failure_type": "wrong_rank",
+    "query_id": "q_get_valid_filtered_auth_namespace",
+    "query_type": "get_valid_filtered",
+    "raw_top_k": [
+      {
+        "fixture_id": null,
+        "preview": "DECISION: Use a 15 minute cache ttl for auth token refresh state.",
+        "rank": 1,
+        "result_id": "{'key': {'String': 'aaf146982d8e8b7db94a'}, 'table': 'memories'}"
+      },
+      {
+        "fixture_id": null,
+        "preview": "TASK: Retry auth requests for 15 minutes when the token refresh path stalls.",
+        "rank": 2,
+        "result_id": "{'key': {'String': '93aec863d81aa5e5dfa0'}, 'table': 'memories'}"
+      }
+    ],
+    "result_count": 2
+  }
+]

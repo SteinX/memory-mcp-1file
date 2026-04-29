@@ -1,0 +1,5 @@
+task-8 mini fixture/query size assertions passed
+fixture_path=evals/fixtures/memory_corpus_mini_long_memory.json
+golden_path=evals/golden/memory_retrieval_queries_mini_long_memory.json
+memory_count=10
+query_count=7

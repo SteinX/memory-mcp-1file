@@ -1,0 +1,1520 @@
+{
+  "aggregate_metrics": {
+    "all_have_contract": true,
+    "all_have_score_breakdown_when_results": true,
+    "all_have_summary": true,
+    "blocker_count": 1,
+    "codeish_symbol_count": 5,
+    "max_latency_ms": 3961.1,
+    "mean_latency_ms": 1866.9466666666667,
+    "mean_result_count": 10.0,
+    "natural_language_count": 8,
+    "negative_count": 2,
+    "negative_empty_rate": 0.0,
+    "positive_mean_precision_at_10": 0.2846153846153846,
+    "positive_mean_precision_at_5": 0.4153846153846154,
+    "positive_mrr": 0.6393162393162393,
+    "query_count": 15
+  },
+  "benchmark_scope": "fixture_baseline_from_required_real_repo_files",
+  "blockers": [
+    {
+      "benchmark_blocker": true,
+      "error": "index readiness timeout",
+      "latest": {
+        "_jsonrpc_response": {
+          "id": 75,
+          "jsonrpc": "2.0",
+          "result": {
+            "content": [
+              {
+                "text": "{\"completed_at\":\"2026-04-25T02:32:40.113835Z\",\"contract\":{\"compatibility\":{\"clients_must_ignore_unknown_enum_values\":true,\"clients_must_ignore_unknown_fields\":true,\"db_shape_is_not_public_contract\":true,\"mode\":\"additive_first\"},\"generated_at\":\"2026-04-25T02:34:42.870085Z\",\"generation_basis\":{\"lifecycle\":{\"projection\":{\"is_current\":false,\"state\":\"stale\"},\"semantic\":{\"generation\":0,\"is_caught_up\":false,\"is_ready\":false,\"state\":\"pending\"},\"structural\":{\"generation\":1,\"is_ready\":true,\"state\":\"ready\"}},\"project_status\":\"embedding_pending\",\"semantic_generation\":0,\"structural_generation\":1},\"identity\":{\"edge_id_semantics\":\"no_public_edge_ids\",\"edge_ids_are_local_only\":true,\"node_id_semantics\":\"stable_project_scoped_project_id\",\"node_ids_are_project_scoped\":true,\"project_id\":\"task-2-recall-code-fixture\",\"stable_edge_ids\":false,\"stable_node_ids\":true},\"projection\":{\"basis\":\"semantic_generation\",\"generation\":0,\"materialization\":{\"addressability_semantics\":\"no_stable_external_read_target_is_promised_until_materialization_strategy_changes\",\"consistent_with_projection_state\":true,\"current_generation\":0,\"identity_basis\":\"project_id + semantic_generation\",\"is_addressable\":false,\"locator_can_be_persisted_by_clients\":false,\"locator_is_opaque\":true,\"locator_scope\":\"none_when_not_materialized\",\"locator_semantics\":\"absent_when_not_materialized; when present it identifies the externally consumable projection instance\",\"locator_stability\":\"not_stable_until_materialization_strategy_changes\",\"locator_survives_generation_change\":false,\"persistence\":\"ephemeral_contract_only\",\"persistence_semantics\":\"contract is exposed on status surfaces only; no persisted projection artifact is promised yet\",\"refresh_basis\":\"semantic_generation\",\"shape_version\":1,\"shape_version_semantics\":\"materialized_projection_payload_shape_version\",\"strategy\":\"not_materialized\"},\"state\":\"stale\"},\"projection_state\":\"stale\",\"schema_version\":1,\"surface_guidance\":{\"forbidden_to_depend_fields\":[],\"legacy_compatibility_fields\":[\"status\",\"total_files\",\"indexed_files\",\"total_chunks\",\"total_symbols\"],\"preferred_response_fields\":[\"lifecycle\",\"contract\"]}},\"error_message\":null,\"failed_files\":[],\"graph_embeddings\":{\"completed\":0,\"percent\":\"0.0\",\"status\":\"in_progress\",\"total\":64},\"indexed_files\":0,\"is_syncing\":false,\"lifecycle\":{\"projection\":{\"is_current\":false,\"state\":\"stale\"},\"semantic\":{\"generation\":0,\"is_caught_up\":false,\"is_ready\":false,\"state\":\"pending\"},\"structural\":{\"generation\":1,\"is_ready\":true,\"state\":\"ready\"}},\"overall_progress\":{\"is_complete\":false,\"percent\":\"0.0\"},\"parsing\":{\"current_file\":\"/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-2-recall-code-project-czjqr9m4/task-2-recall-code-fixture/src/codebase/indexer.rs\",\"progress\":\"0/5\",\"status\":\"in_progress\"},\"project_id\":\"task-2-recall-code-fixture\",\"started_at\":\"2026-04-25T02:31:44.482200Z\",\"status\":\"embedding_pending\",\"summary\":{\"counts\":{\"chunks\":74,\"files\":5,\"indexed_files\":0,\"symbols\":64},\"partial\":{\"is_partial\":true,\"message\":\"Indexing in progress. Status and counts may still change.\",\"reason\":\"progress:0.0\",\"reason_code\":\"partial\"},\"result_kind\":\"status\"},\"sync_queue_size\":0,\"total_files\":5,\"vector_embeddings\":{\"completed\":8,\"percent\":\"10.8\",\"status\":\"in_progress\",\"total\":74}}",
+                "type": "text"
+              }
+            ],
+            "isError": false
+          }
+        },
+        "benchmark_blocker": "index readiness timeout",
+        "completed_at": "2026-04-25T02:32:40.113835Z",
+        "contract": {
+          "compatibility": {
+            "clients_must_ignore_unknown_enum_values": true,
+            "clients_must_ignore_unknown_fields": true,
+            "db_shape_is_not_public_contract": true,
+            "mode": "additive_first"
+          },
+          "generated_at": "2026-04-25T02:34:42.870085Z",
+          "generation_basis": {
+            "lifecycle": {
+              "projection": {
+                "is_current": false,
+                "state": "stale"
+              },
+              "semantic": {
+                "generation": 0,
+                "is_caught_up": false,
+                "is_ready": false,
+                "state": "pending"
+              },
+              "structural": {
+                "generation": 1,
+                "is_ready": true,
+                "state": "ready"
+              }
+            },
+            "project_status": "embedding_pending",
+            "semantic_generation": 0,
+            "structural_generation": 1
+          },
+          "identity": {
+            "edge_id_semantics": "no_public_edge_ids",
+            "edge_ids_are_local_only": true,
+            "node_id_semantics": "stable_project_scoped_project_id",
+            "node_ids_are_project_scoped": true,
+            "project_id": "task-2-recall-code-fixture",
+            "stable_edge_ids": false,
+            "stable_node_ids": true
+          },
+          "projection": {
+            "basis": "semantic_generation",
+            "generation": 0,
+            "materialization": {
+              "addressability_semantics": "no_stable_external_read_target_is_promised_until_materialization_strategy_changes",
+              "consistent_with_projection_state": true,
+              "current_generation": 0,
+              "identity_basis": "project_id + semantic_generation",
+              "is_addressable": false,
+              "locator_can_be_persisted_by_clients": false,
+              "locator_is_opaque": true,
+              "locator_scope": "none_when_not_materialized",
+              "locator_semantics": "absent_when_not_materialized; when present it identifies the externally consumable projection instance",
+              "locator_stability": "not_stable_until_materialization_strategy_changes",
+              "locator_survives_generation_change": false,
+              "persistence": "ephemeral_contract_only",
+              "persistence_semantics": "contract is exposed on status surfaces only; no persisted projection artifact is promised yet",
+              "refresh_basis": "semantic_generation",
+              "shape_version": 1,
+              "shape_version_semantics": "materialized_projection_payload_shape_version",
+              "strategy": "not_materialized"
+            },
+            "state": "stale"
+          },
+          "projection_state": "stale",
+          "schema_version": 1,
+          "surface_guidance": {
+            "forbidden_to_depend_fields": [],
+            "legacy_compatibility_fields": [
+              "status",
+              "total_files",
+              "indexed_files",
+              "total_chunks",
+              "total_symbols"
+            ],
+            "preferred_response_fields": [
+              "lifecycle",
+              "contract"
+            ]
+          }
+        },
+        "error_message": null,
+        "failed_files": [],
+        "graph_embeddings": {
+          "completed": 0,
+          "percent": "0.0",
+          "status": "in_progress",
+          "total": 64
+        },
+        "indexed_files": 0,
+        "is_syncing": false,
+        "lifecycle": {
+          "projection": {
+            "is_current": false,
+            "state": "stale"
+          },
+          "semantic": {
+            "generation": 0,
+            "is_caught_up": false,
+            "is_ready": false,
+            "state": "pending"
+          },
+          "structural": {
+            "generation": 1,
+            "is_ready": true,
+            "state": "ready"
+          }
+        },
+        "overall_progress": {
+          "is_complete": false,
+          "percent": "0.0"
+        },
+        "parsing": {
+          "current_file": "/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-2-recall-code-project-czjqr9m4/task-2-recall-code-fixture/src/codebase/indexer.rs",
+          "progress": "0/5",
+          "status": "in_progress"
+        },
+        "project_id": "task-2-recall-code-fixture",
+        "started_at": "2026-04-25T02:31:44.482200Z",
+        "status": "embedding_pending",
+        "summary": {
+          "counts": {
+            "chunks": 74,
+            "files": 5,
+            "indexed_files": 0,
+            "symbols": 64
+          },
+          "partial": {
+            "is_partial": true,
+            "message": "Indexing in progress. Status and counts may still change.",
+            "reason": "progress:0.0",
+            "reason_code": "partial"
+          },
+          "result_kind": "status"
+        },
+        "sync_queue_size": 0,
+        "total_files": 5,
+        "vector_embeddings": {
+          "completed": 8,
+          "percent": "10.8",
+          "status": "in_progress",
+          "total": 74
+        }
+      },
+      "stage": "index_readiness"
+    }
+  ],
+  "data_dir_strategy": "temporary isolated DATA_DIR (/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-2-recall-code-data-a0nsyk2c) for baseline reproducibility",
+  "duration_seconds": 243.9,
+  "embedding_readiness": {
+    "_jsonrpc_response": {
+      "id": 14,
+      "jsonrpc": "2.0",
+      "result": {
+        "content": [
+          {
+            "text": "{\"embedding\":{\"dimensions\":384,\"model\":\"e5_small_384\",\"status\":\"ready\"},\"memories_count\":0,\"status\":\"healthy\",\"version\":\"0.8.2\"}",
+            "type": "text"
+          }
+        ],
+        "isError": false
+      }
+    },
+    "embedding": {
+      "dimensions": 384,
+      "model": "e5_small_384",
+      "status": "ready"
+    },
+    "memories_count": 0,
+    "status": "healthy",
+    "version": "0.8.2"
+  },
+  "fixture_project_path": "/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-2-recall-code-project-czjqr9m4/task-2-recall-code-fixture",
+  "fixture_source_paths": [
+    "src/graph/rrf.rs",
+    "src/graph/ppr.rs",
+    "src/server/logic/code/search.rs",
+    "src/codebase/indexer.rs",
+    "src/server/handler.rs"
+  ],
+  "generated_at_unix": 1777084514.107836,
+  "index_readiness": {
+    "_jsonrpc_response": {
+      "id": 75,
+      "jsonrpc": "2.0",
+      "result": {
+        "content": [
+          {
+            "text": "{\"completed_at\":\"2026-04-25T02:32:40.113835Z\",\"contract\":{\"compatibility\":{\"clients_must_ignore_unknown_enum_values\":true,\"clients_must_ignore_unknown_fields\":true,\"db_shape_is_not_public_contract\":true,\"mode\":\"additive_first\"},\"generated_at\":\"2026-04-25T02:34:42.870085Z\",\"generation_basis\":{\"lifecycle\":{\"projection\":{\"is_current\":false,\"state\":\"stale\"},\"semantic\":{\"generation\":0,\"is_caught_up\":false,\"is_ready\":false,\"state\":\"pending\"},\"structural\":{\"generation\":1,\"is_ready\":true,\"state\":\"ready\"}},\"project_status\":\"embedding_pending\",\"semantic_generation\":0,\"structural_generation\":1},\"identity\":{\"edge_id_semantics\":\"no_public_edge_ids\",\"edge_ids_are_local_only\":true,\"node_id_semantics\":\"stable_project_scoped_project_id\",\"node_ids_are_project_scoped\":true,\"project_id\":\"task-2-recall-code-fixture\",\"stable_edge_ids\":false,\"stable_node_ids\":true},\"projection\":{\"basis\":\"semantic_generation\",\"generation\":0,\"materialization\":{\"addressability_semantics\":\"no_stable_external_read_target_is_promised_until_materialization_strategy_changes\",\"consistent_with_projection_state\":true,\"current_generation\":0,\"identity_basis\":\"project_id + semantic_generation\",\"is_addressable\":false,\"locator_can_be_persisted_by_clients\":false,\"locator_is_opaque\":true,\"locator_scope\":\"none_when_not_materialized\",\"locator_semantics\":\"absent_when_not_materialized; when present it identifies the externally consumable projection instance\",\"locator_stability\":\"not_stable_until_materialization_strategy_changes\",\"locator_survives_generation_change\":false,\"persistence\":\"ephemeral_contract_only\",\"persistence_semantics\":\"contract is exposed on status surfaces only; no persisted projection artifact is promised yet\",\"refresh_basis\":\"semantic_generation\",\"shape_version\":1,\"shape_version_semantics\":\"materialized_projection_payload_shape_version\",\"strategy\":\"not_materialized\"},\"state\":\"stale\"},\"projection_state\":\"stale\",\"schema_version\":1,\"surface_guidance\":{\"forbidden_to_depend_fields\":[],\"legacy_compatibility_fields\":[\"status\",\"total_files\",\"indexed_files\",\"total_chunks\",\"total_symbols\"],\"preferred_response_fields\":[\"lifecycle\",\"contract\"]}},\"error_message\":null,\"failed_files\":[],\"graph_embeddings\":{\"completed\":0,\"percent\":\"0.0\",\"status\":\"in_progress\",\"total\":64},\"indexed_files\":0,\"is_syncing\":false,\"lifecycle\":{\"projection\":{\"is_current\":false,\"state\":\"stale\"},\"semantic\":{\"generation\":0,\"is_caught_up\":false,\"is_ready\":false,\"state\":\"pending\"},\"structural\":{\"generation\":1,\"is_ready\":true,\"state\":\"ready\"}},\"overall_progress\":{\"is_complete\":false,\"percent\":\"0.0\"},\"parsing\":{\"current_file\":\"/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-2-recall-code-project-czjqr9m4/task-2-recall-code-fixture/src/codebase/indexer.rs\",\"progress\":\"0/5\",\"status\":\"in_progress\"},\"project_id\":\"task-2-recall-code-fixture\",\"started_at\":\"2026-04-25T02:31:44.482200Z\",\"status\":\"embedding_pending\",\"summary\":{\"counts\":{\"chunks\":74,\"files\":5,\"indexed_files\":0,\"symbols\":64},\"partial\":{\"is_partial\":true,\"message\":\"Indexing in progress. Status and counts may still change.\",\"reason\":\"progress:0.0\",\"reason_code\":\"partial\"},\"result_kind\":\"status\"},\"sync_queue_size\":0,\"total_files\":5,\"vector_embeddings\":{\"completed\":8,\"percent\":\"10.8\",\"status\":\"in_progress\",\"total\":74}}",
+            "type": "text"
+          }
+        ],
+        "isError": false
+      }
+    },
+    "benchmark_blocker": "index readiness timeout",
+    "completed_at": "2026-04-25T02:32:40.113835Z",
+    "contract": {
+      "compatibility": {
+        "clients_must_ignore_unknown_enum_values": true,
+        "clients_must_ignore_unknown_fields": true,
+        "db_shape_is_not_public_contract": true,
+        "mode": "additive_first"
+      },
+      "generated_at": "2026-04-25T02:34:42.870085Z",
+      "generation_basis": {
+        "lifecycle": {
+          "projection": {
+            "is_current": false,
+            "state": "stale"
+          },
+          "semantic": {
+            "generation": 0,
+            "is_caught_up": false,
+            "is_ready": false,
+            "state": "pending"
+          },
+          "structural": {
+            "generation": 1,
+            "is_ready": true,
+            "state": "ready"
+          }
+        },
+        "project_status": "embedding_pending",
+        "semantic_generation": 0,
+        "structural_generation": 1
+      },
+      "identity": {
+        "edge_id_semantics": "no_public_edge_ids",
+        "edge_ids_are_local_only": true,
+        "node_id_semantics": "stable_project_scoped_project_id",
+        "node_ids_are_project_scoped": true,
+        "project_id": "task-2-recall-code-fixture",
+        "stable_edge_ids": false,
+        "stable_node_ids": true
+      },
+      "projection": {
+        "basis": "semantic_generation",
+        "generation": 0,
+        "materialization": {
+          "addressability_semantics": "no_stable_external_read_target_is_promised_until_materialization_strategy_changes",
+          "consistent_with_projection_state": true,
+          "current_generation": 0,
+          "identity_basis": "project_id + semantic_generation",
+          "is_addressable": false,
+          "locator_can_be_persisted_by_clients": false,
+          "locator_is_opaque": true,
+          "locator_scope": "none_when_not_materialized",
+          "locator_semantics": "absent_when_not_materialized; when present it identifies the externally consumable projection instance",
+          "locator_stability": "not_stable_until_materialization_strategy_changes",
+          "locator_survives_generation_change": false,
+          "persistence": "ephemeral_contract_only",
+          "persistence_semantics": "contract is exposed on status surfaces only; no persisted projection artifact is promised yet",
+          "refresh_basis": "semantic_generation",
+          "shape_version": 1,
+          "shape_version_semantics": "materialized_projection_payload_shape_version",
+          "strategy": "not_materialized"
+        },
+        "state": "stale"
+      },
+      "projection_state": "stale",
+      "schema_version": 1,
+      "surface_guidance": {
+        "forbidden_to_depend_fields": [],
+        "legacy_compatibility_fields": [
+          "status",
+          "total_files",
+          "indexed_files",
+          "total_chunks",
+          "total_symbols"
+        ],
+        "preferred_response_fields": [
+          "lifecycle",
+          "contract"
+        ]
+      }
+    },
+    "error_message": null,
+    "failed_files": [],
+    "graph_embeddings": {
+      "completed": 0,
+      "percent": "0.0",
+      "status": "in_progress",
+      "total": 64
+    },
+    "indexed_files": 0,
+    "is_syncing": false,
+    "lifecycle": {
+      "projection": {
+        "is_current": false,
+        "state": "stale"
+      },
+      "semantic": {
+        "generation": 0,
+        "is_caught_up": false,
+        "is_ready": false,
+        "state": "pending"
+      },
+      "structural": {
+        "generation": 1,
+        "is_ready": true,
+        "state": "ready"
+      }
+    },
+    "overall_progress": {
+      "is_complete": false,
+      "percent": "0.0"
+    },
+    "parsing": {
+      "current_file": "/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-2-recall-code-project-czjqr9m4/task-2-recall-code-fixture/src/codebase/indexer.rs",
+      "progress": "0/5",
+      "status": "in_progress"
+    },
+    "project_id": "task-2-recall-code-fixture",
+    "started_at": "2026-04-25T02:31:44.482200Z",
+    "status": "embedding_pending",
+    "summary": {
+      "counts": {
+        "chunks": 74,
+        "files": 5,
+        "indexed_files": 0,
+        "symbols": 64
+      },
+      "partial": {
+        "is_partial": true,
+        "message": "Indexing in progress. Status and counts may still change.",
+        "reason": "progress:0.0",
+        "reason_code": "partial"
+      },
+      "result_kind": "status"
+    },
+    "sync_queue_size": 0,
+    "total_files": 5,
+    "vector_embeddings": {
+      "completed": 8,
+      "percent": "10.8",
+      "status": "in_progress",
+      "total": 74
+    }
+  },
+  "index_response": {
+    "_jsonrpc_response": {
+      "id": 15,
+      "jsonrpc": "2.0",
+      "result": {
+        "content": [
+          {
+            "text": "{\"message\":\"Indexing started in background. Use get_index_status to check progress.\",\"project_id\":\"task-2-recall-code-fixture\",\"status\":\"indexing\"}",
+            "type": "text"
+          }
+        ],
+        "isError": false
+      }
+    },
+    "message": "Indexing started in background. Use get_index_status to check progress.",
+    "project_id": "task-2-recall-code-fixture",
+    "status": "indexing"
+  },
+  "model": "e5_small",
+  "per_query": [
+    {
+      "diagnostic_presence": {
+        "contract": true,
+        "indexing_diagnostics": true,
+        "partial_flag": true,
+        "score_breakdown": true,
+        "summary": true,
+        "weights": true
+      },
+      "expected_paths": [
+        "src/graph/rrf.rs"
+      ],
+      "expected_symbols": [
+        "rrf_merge"
+      ],
+      "latency_ms": 3055.01,
+      "mode": "hybrid",
+      "mrr": 1.0,
+      "precision_at_10": 0.6,
+      "precision_at_5": 1.0,
+      "query": "find the RRF merge function",
+      "query_id": "nl_rrf_merge",
+      "query_type": "natural_language",
+      "required_rrf_path_in_top_5": true,
+      "result_count": 10,
+      "top_10_names": [
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ],
+      "top_10_paths": [
+        "/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-2-recall-code-project-czjqr9m4/task-2-recall-code-fixture/src/graph/rrf.rs",
+        "/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-2-recall-code-project-czjqr9m4/task-2-recall-code-fixture/src/graph/rrf.rs",
+        "/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-2-recall-code-project-czjqr9m4/task-2-recall-code-fixture/src/graph/rrf.rs",
+        "/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-2-recall-code-project-czjqr9m4/task-2-recall-code-fixture/src/graph/rrf.rs",
+        "/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-2-recall-code-project-czjqr9m4/task-2-recall-code-fixture/src/graph/rrf.rs",
+        "/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-2-recall-code-project-czjqr9m4/task-2-recall-code-fixture/src/graph/rrf.rs",
+        "/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-2-recall-code-project-czjqr9m4/task-2-recall-code-fixture/src/server/handler.rs",
+        "/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-2-recall-code-project-czjqr9m4/task-2-recall-code-fixture/src/graph/ppr.rs",
+        "/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-2-recall-code-project-czjqr9m4/task-2-recall-code-fixture/src/graph/ppr.rs",
+        "/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-2-recall-code-project-czjqr9m4/task-2-recall-code-fixture/src/graph/ppr.rs"
+      ]
+    },
+    {
+      "diagnostic_presence": {
+        "contract": true,
+        "indexing_diagnostics": true,
+        "partial_flag": true,
+        "score_breakdown": true,
+        "summary": true,
+        "weights": true
+      },
+      "expected_paths": [
+        "src/graph/ppr.rs"
+      ],
+      "expected_symbols": [
+        "run_ppr",
+        "personalized_page_rank"
+      ],
+      "latency_ms": 638.5,
+      "mode": "hybrid",
+      "mrr": 1.0,
+      "precision_at_10": 0.5,
+      "precision_at_5": 0.8,
+      "query": "where is personalized page rank run for graph traversal",
+      "query_id": "nl_ppr_kernel",
+      "query_type": "natural_language",
+      "result_count": 10,
+      "top_10_names": [
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ],
+      "top_10_paths": [
+        "/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-2-recall-code-project-czjqr9m4/task-2-recall-code-fixture/src/graph/ppr.rs",
+        "/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-2-recall-code-project-czjqr9m4/task-2-recall-code-fixture/src/graph/ppr.rs",
+        "/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-2-recall-code-project-czjqr9m4/task-2-recall-code-fixture/src/graph/ppr.rs",
+        "/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-2-recall-code-project-czjqr9m4/task-2-recall-code-fixture/src/graph/ppr.rs",
+        "/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-2-recall-code-project-czjqr9m4/task-2-recall-code-fixture/src/graph/ppr.rs",
+        "/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-2-recall-code-project-czjqr9m4/task-2-recall-code-fixture/src/graph/ppr.rs",
+        "/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-2-recall-code-project-czjqr9m4/task-2-recall-code-fixture/src/graph/ppr.rs",
+        "/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-2-recall-code-project-czjqr9m4/task-2-recall-code-fixture/src/server/handler.rs",
+        "/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-2-recall-code-project-czjqr9m4/task-2-recall-code-fixture/src/server/handler.rs",
+        "/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-2-recall-code-project-czjqr9m4/task-2-recall-code-fixture/src/server/handler.rs"
+      ]
+    },
+    {
+      "diagnostic_presence": {
+        "contract": true,
+        "indexing_diagnostics": true,
+        "partial_flag": true,
+        "score_breakdown": true,
+        "summary": true,
+        "weights": true
+      },
+      "expected_paths": [
+        "src/server/logic/code/search.rs"
+      ],
+      "expected_symbols": [
+        "code_search_contract_json",
+        "lifecycle_view_from_status"
+      ],
+      "latency_ms": 560.51,
+      "mode": "hybrid",
+      "mrr": 1.0,
+      "precision_at_10": 0.1,
+      "precision_at_5": 0.2,
+      "query": "code search contract metadata lifecycle status",
+      "query_id": "nl_code_search_contract",
+      "query_type": "natural_language",
+      "result_count": 10,
+      "top_10_names": [
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ],
+      "top_10_paths": [
+        "/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-2-recall-code-project-czjqr9m4/task-2-recall-code-fixture/src/server/logic/code/search.rs",
+        "/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-2-recall-code-project-czjqr9m4/task-2-recall-code-fixture/src/server/handler.rs",
+        "/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-2-recall-code-project-czjqr9m4/task-2-recall-code-fixture/src/graph/ppr.rs",
+        "/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-2-recall-code-project-czjqr9m4/task-2-recall-code-fixture/src/server/handler.rs",
+        "/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-2-recall-code-project-czjqr9m4/task-2-recall-code-fixture/src/graph/ppr.rs",
+        "/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-2-recall-code-project-czjqr9m4/task-2-recall-code-fixture/src/graph/ppr.rs",
+        "/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-2-recall-code-project-czjqr9m4/task-2-recall-code-fixture/src/graph/ppr.rs",
+        "/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-2-recall-code-project-czjqr9m4/task-2-recall-code-fixture/src/graph/ppr.rs",
+        "/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-2-recall-code-project-czjqr9m4/task-2-recall-code-fixture/src/graph/ppr.rs",
+        "/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-2-recall-code-project-czjqr9m4/task-2-recall-code-fixture/src/graph/ppr.rs"
+      ]
+    },
+    {
+      "diagnostic_presence": {
+        "contract": true,
+        "indexing_diagnostics": true,
+        "partial_flag": true,
+        "score_breakdown": true,
+        "summary": true,
+        "weights": true
+      },
+      "expected_paths": [
+        "src/server/logic/code/search.rs"
+      ],
+      "expected_symbols": [
+        "recall_code"
+      ],
+      "latency_ms": 3714.35,
+      "mode": "hybrid",
+      "mrr": 0.1111111111111111,
+      "precision_at_10": 0.1,
+      "precision_at_5": 0.0,
+      "query": "hybrid code search vector BM25 symbol graph PageRank fusion",
+      "query_id": "nl_recall_code_hybrid",
+      "query_type": "natural_language",
+      "result_count": 10,
+      "top_10_names": [
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ],
+      "top_10_paths": [
+        "/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-2-recall-code-project-czjqr9m4/task-2-recall-code-fixture/src/server/handler.rs",
+        "/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-2-recall-code-project-czjqr9m4/task-2-recall-code-fixture/src/graph/ppr.rs",
+        "/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-2-recall-code-project-czjqr9m4/task-2-recall-code-fixture/src/graph/ppr.rs",
+        "/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-2-recall-code-project-czjqr9m4/task-2-recall-code-fixture/src/graph/ppr.rs",
+        "/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-2-recall-code-project-czjqr9m4/task-2-recall-code-fixture/src/graph/ppr.rs",
+        "/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-2-recall-code-project-czjqr9m4/task-2-recall-code-fixture/src/graph/ppr.rs",
+        "/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-2-recall-code-project-czjqr9m4/task-2-recall-code-fixture/src/server/logic/code/search.rs",
+        "/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-2-recall-code-project-czjqr9m4/task-2-recall-code-fixture/src/server/handler.rs",
+        "/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-2-recall-code-project-czjqr9m4/task-2-recall-code-fixture/src/server/logic/code/search.rs",
+        "/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-2-recall-code-project-czjqr9m4/task-2-recall-code-fixture/src/server/handler.rs"
+      ]
+    },
+    {
+      "diagnostic_presence": {
+        "contract": true,
+        "indexing_diagnostics": true,
+        "partial_flag": true,
+        "score_breakdown": true,
+        "summary": true,
+        "weights": true
+      },
+      "expected_paths": [
+        "src/codebase/indexer.rs"
+      ],
+      "expected_symbols": [
+        "index_project",
+        "do_index_project"
+      ],
+      "latency_ms": 789.74,
+      "mode": "hybrid",
+      "mrr": 1.0,
+      "precision_at_10": 0.2,
+      "precision_at_5": 0.2,
+      "query": "index project scans directory using spawn blocking and batches chunks",
+      "query_id": "nl_index_spawn_blocking",
+      "query_type": "natural_language",
+      "result_count": 10,
+      "top_10_names": [
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ],
+      "top_10_paths": [
+        "/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-2-recall-code-project-czjqr9m4/task-2-recall-code-fixture/src/codebase/indexer.rs",
+        "/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-2-recall-code-project-czjqr9m4/task-2-recall-code-fixture/src/codebase/indexer.rs",
+        "/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-2-recall-code-project-czjqr9m4/task-2-recall-code-fixture/src/graph/ppr.rs",
+        "/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-2-recall-code-project-czjqr9m4/task-2-recall-code-fixture/src/graph/ppr.rs",
+        "/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-2-recall-code-project-czjqr9m4/task-2-recall-code-fixture/src/graph/ppr.rs",
+        "/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-2-recall-code-project-czjqr9m4/task-2-recall-code-fixture/src/codebase/indexer.rs",
+        "/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-2-recall-code-project-czjqr9m4/task-2-recall-code-fixture/src/graph/ppr.rs",
+        "/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-2-recall-code-project-czjqr9m4/task-2-recall-code-fixture/src/codebase/indexer.rs",
+        "/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-2-recall-code-project-czjqr9m4/task-2-recall-code-fixture/src/graph/ppr.rs",
+        "/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-2-recall-code-project-czjqr9m4/task-2-recall-code-fixture/src/graph/ppr.rs"
+      ]
+    },
+    {
+      "diagnostic_presence": {
+        "contract": true,
+        "indexing_diagnostics": true,
+        "partial_flag": true,
+        "score_breakdown": true,
+        "summary": true,
+        "weights": true
+      },
+      "expected_paths": [
+        "src/server/handler.rs"
+      ],
+      "expected_symbols": [
+        "recall_code",
+        "search_code"
+      ],
+      "latency_ms": 1236.0,
+      "mode": "hybrid",
+      "mrr": 0.5,
+      "precision_at_10": 0.2,
+      "precision_at_5": 0.4,
+      "query": "handler dispatches recall_code vector mode to search_code",
+      "query_id": "nl_handler_mode_dispatch",
+      "query_type": "natural_language",
+      "result_count": 10,
+      "top_10_names": [
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ],
+      "top_10_paths": [
+        "/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-2-recall-code-project-czjqr9m4/task-2-recall-code-fixture/src/server/handler.rs",
+        "/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-2-recall-code-project-czjqr9m4/task-2-recall-code-fixture/src/server/handler.rs",
+        "/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-2-recall-code-project-czjqr9m4/task-2-recall-code-fixture/src/server/handler.rs",
+        "/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-2-recall-code-project-czjqr9m4/task-2-recall-code-fixture/src/server/handler.rs",
+        "/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-2-recall-code-project-czjqr9m4/task-2-recall-code-fixture/src/server/handler.rs",
+        "/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-2-recall-code-project-czjqr9m4/task-2-recall-code-fixture/src/graph/ppr.rs",
+        "/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-2-recall-code-project-czjqr9m4/task-2-recall-code-fixture/src/server/logic/code/search.rs",
+        "/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-2-recall-code-project-czjqr9m4/task-2-recall-code-fixture/src/server/handler.rs",
+        "/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-2-recall-code-project-czjqr9m4/task-2-recall-code-fixture/src/server/logic/code/search.rs",
+        "/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-2-recall-code-project-czjqr9m4/task-2-recall-code-fixture/src/server/handler.rs"
+      ]
+    },
+    {
+      "diagnostic_presence": {
+        "contract": true,
+        "indexing_diagnostics": true,
+        "partial_flag": true,
+        "score_breakdown": true,
+        "summary": true,
+        "weights": true
+      },
+      "expected_paths": [
+        "src/server/logic/code/search.rs"
+      ],
+      "expected_symbols": [
+        "symbol_exactness_score",
+        "symbol_chunk_overlap_bonus"
+      ],
+      "latency_ms": 3048.15,
+      "mode": "hybrid",
+      "mrr": 0.0,
+      "precision_at_10": 0.0,
+      "precision_at_5": 0.0,
+      "query": "exact symbol channel maps matched symbols back to chunks",
+      "query_id": "nl_symbol_exact_channel",
+      "query_type": "natural_language",
+      "result_count": 10,
+      "top_10_names": [
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ],
+      "top_10_paths": [
+        "/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-2-recall-code-project-czjqr9m4/task-2-recall-code-fixture/src/server/handler.rs",
+        "/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-2-recall-code-project-czjqr9m4/task-2-recall-code-fixture/src/graph/ppr.rs",
+        "/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-2-recall-code-project-czjqr9m4/task-2-recall-code-fixture/src/graph/ppr.rs",
+        "/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-2-recall-code-project-czjqr9m4/task-2-recall-code-fixture/src/server/handler.rs",
+        "/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-2-recall-code-project-czjqr9m4/task-2-recall-code-fixture/src/graph/ppr.rs",
+        "/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-2-recall-code-project-czjqr9m4/task-2-recall-code-fixture/src/graph/rrf.rs",
+        "/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-2-recall-code-project-czjqr9m4/task-2-recall-code-fixture/src/graph/ppr.rs",
+        "/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-2-recall-code-project-czjqr9m4/task-2-recall-code-fixture/src/graph/ppr.rs",
+        "/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-2-recall-code-project-czjqr9m4/task-2-recall-code-fixture/src/graph/rrf.rs",
+        "/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-2-recall-code-project-czjqr9m4/task-2-recall-code-fixture/src/graph/ppr.rs"
+      ]
+    },
+    {
+      "diagnostic_presence": {
+        "contract": true,
+        "indexing_diagnostics": true,
+        "partial_flag": true,
+        "score_breakdown": true,
+        "summary": true,
+        "weights": true
+      },
+      "expected_paths": [
+        "src/graph/ppr.rs"
+      ],
+      "expected_symbols": [
+        "apply_hub_dampening"
+      ],
+      "latency_ms": 657.1,
+      "mode": "hybrid",
+      "mrr": 1.0,
+      "precision_at_10": 0.4,
+      "precision_at_5": 0.6,
+      "query": "hub dampening for personalized pagerank graph scores",
+      "query_id": "nl_hub_dampening",
+      "query_type": "natural_language",
+      "result_count": 10,
+      "top_10_names": [
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ],
+      "top_10_paths": [
+        "/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-2-recall-code-project-czjqr9m4/task-2-recall-code-fixture/src/graph/ppr.rs",
+        "/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-2-recall-code-project-czjqr9m4/task-2-recall-code-fixture/src/graph/ppr.rs",
+        "/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-2-recall-code-project-czjqr9m4/task-2-recall-code-fixture/src/graph/ppr.rs",
+        "/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-2-recall-code-project-czjqr9m4/task-2-recall-code-fixture/src/graph/ppr.rs",
+        "/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-2-recall-code-project-czjqr9m4/task-2-recall-code-fixture/src/graph/rrf.rs",
+        "/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-2-recall-code-project-czjqr9m4/task-2-recall-code-fixture/src/graph/ppr.rs",
+        "/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-2-recall-code-project-czjqr9m4/task-2-recall-code-fixture/src/graph/ppr.rs",
+        "/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-2-recall-code-project-czjqr9m4/task-2-recall-code-fixture/src/graph/ppr.rs",
+        "/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-2-recall-code-project-czjqr9m4/task-2-recall-code-fixture/src/graph/rrf.rs",
+        "/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-2-recall-code-project-czjqr9m4/task-2-recall-code-fixture/src/server/handler.rs"
+      ]
+    },
+    {
+      "diagnostic_presence": {
+        "contract": true,
+        "indexing_diagnostics": true,
+        "partial_flag": true,
+        "score_breakdown": true,
+        "summary": true,
+        "weights": true
+      },
+      "expected_paths": [
+        "src/graph/rrf.rs"
+      ],
+      "expected_symbols": [
+        "rrf_merge"
+      ],
+      "latency_ms": 3961.1,
+      "mode": "hybrid",
+      "mrr": 1.0,
+      "precision_at_10": 0.6,
+      "precision_at_5": 0.8,
+      "query": "rrf_merge(vector_results, bm25_results, ppr_results)",
+      "query_id": "code_rrf_merge_symbol",
+      "query_type": "codeish_symbol",
+      "result_count": 10,
+      "top_10_names": [
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ],
+      "top_10_paths": [
+        "/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-2-recall-code-project-czjqr9m4/task-2-recall-code-fixture/src/graph/rrf.rs",
+        "/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-2-recall-code-project-czjqr9m4/task-2-recall-code-fixture/src/graph/rrf.rs",
+        "/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-2-recall-code-project-czjqr9m4/task-2-recall-code-fixture/src/graph/rrf.rs",
+        "/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-2-recall-code-project-czjqr9m4/task-2-recall-code-fixture/src/graph/rrf.rs",
+        "/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-2-recall-code-project-czjqr9m4/task-2-recall-code-fixture/src/graph/rrf.rs",
+        "/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-2-recall-code-project-czjqr9m4/task-2-recall-code-fixture/src/graph/rrf.rs",
+        "/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-2-recall-code-project-czjqr9m4/task-2-recall-code-fixture/src/graph/rrf.rs",
+        "/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-2-recall-code-project-czjqr9m4/task-2-recall-code-fixture/src/graph/ppr.rs",
+        "/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-2-recall-code-project-czjqr9m4/task-2-recall-code-fixture/src/graph/ppr.rs",
+        "/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-2-recall-code-project-czjqr9m4/task-2-recall-code-fixture/src/graph/ppr.rs"
+      ]
+    },
+    {
+      "diagnostic_presence": {
+        "contract": true,
+        "indexing_diagnostics": true,
+        "partial_flag": true,
+        "score_breakdown": true,
+        "summary": true,
+        "weights": true
+      },
+      "expected_paths": [
+        "src/graph/ppr.rs"
+      ],
+      "expected_symbols": [
+        "run_ppr"
+      ],
+      "latency_ms": 916.06,
+      "mode": "hybrid",
+      "mrr": 0.5,
+      "precision_at_10": 0.1,
+      "precision_at_5": 0.2,
+      "query": "run_ppr(&graph, &seed_nodes)",
+      "query_id": "code_run_ppr",
+      "query_type": "codeish_symbol",
+      "result_count": 10,
+      "top_10_names": [
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ],
+      "top_10_paths": [
+        "/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-2-recall-code-project-czjqr9m4/task-2-recall-code-fixture/src/graph/ppr.rs",
+        "/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-2-recall-code-project-czjqr9m4/task-2-recall-code-fixture/src/graph/ppr.rs",
+        "/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-2-recall-code-project-czjqr9m4/task-2-recall-code-fixture/src/graph/ppr.rs",
+        "/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-2-recall-code-project-czjqr9m4/task-2-recall-code-fixture/src/graph/ppr.rs",
+        "/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-2-recall-code-project-czjqr9m4/task-2-recall-code-fixture/src/graph/ppr.rs",
+        "/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-2-recall-code-project-czjqr9m4/task-2-recall-code-fixture/src/graph/rrf.rs",
+        "/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-2-recall-code-project-czjqr9m4/task-2-recall-code-fixture/src/graph/ppr.rs",
+        "/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-2-recall-code-project-czjqr9m4/task-2-recall-code-fixture/src/graph/ppr.rs",
+        "/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-2-recall-code-project-czjqr9m4/task-2-recall-code-fixture/src/graph/rrf.rs",
+        "/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-2-recall-code-project-czjqr9m4/task-2-recall-code-fixture/src/graph/ppr.rs"
+      ]
+    },
+    {
+      "diagnostic_presence": {
+        "contract": true,
+        "indexing_diagnostics": true,
+        "partial_flag": true,
+        "score_breakdown": true,
+        "summary": true,
+        "weights": true
+      },
+      "expected_paths": [
+        "src/graph/ppr.rs"
+      ],
+      "expected_symbols": [
+        "personalized_page_rank"
+      ],
+      "latency_ms": 781.32,
+      "mode": "hybrid",
+      "mrr": 1.0,
+      "precision_at_10": 0.6,
+      "precision_at_5": 1.0,
+      "query": "personalized_page_rank graph seed_nodes damping tolerance",
+      "query_id": "code_personalized_page_rank",
+      "query_type": "codeish_symbol",
+      "result_count": 10,
+      "top_10_names": [
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ],
+      "top_10_paths": [
+        "/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-2-recall-code-project-czjqr9m4/task-2-recall-code-fixture/src/graph/ppr.rs",
+        "/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-2-recall-code-project-czjqr9m4/task-2-recall-code-fixture/src/graph/ppr.rs",
+        "/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-2-recall-code-project-czjqr9m4/task-2-recall-code-fixture/src/graph/ppr.rs",
+        "/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-2-recall-code-project-czjqr9m4/task-2-recall-code-fixture/src/graph/ppr.rs",
+        "/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-2-recall-code-project-czjqr9m4/task-2-recall-code-fixture/src/graph/ppr.rs",
+        "/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-2-recall-code-project-czjqr9m4/task-2-recall-code-fixture/src/graph/ppr.rs",
+        "/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-2-recall-code-project-czjqr9m4/task-2-recall-code-fixture/src/graph/rrf.rs",
+        "/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-2-recall-code-project-czjqr9m4/task-2-recall-code-fixture/src/graph/ppr.rs",
+        "/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-2-recall-code-project-czjqr9m4/task-2-recall-code-fixture/src/graph/rrf.rs",
+        "/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-2-recall-code-project-czjqr9m4/task-2-recall-code-fixture/src/graph/ppr.rs"
+      ]
+    },
+    {
+      "diagnostic_presence": {
+        "contract": true,
+        "indexing_diagnostics": true,
+        "partial_flag": true,
+        "score_breakdown": true,
+        "summary": true,
+        "weights": true
+      },
+      "expected_paths": [
+        "src/server/logic/code/search.rs"
+      ],
+      "expected_symbols": [
+        "recall_code"
+      ],
+      "latency_ms": 3423.71,
+      "mode": "hybrid",
+      "mrr": 0.0,
+      "precision_at_10": 0.0,
+      "precision_at_5": 0.0,
+      "query": "pub async fn recall_code",
+      "query_id": "code_recall_code_fn",
+      "query_type": "codeish_symbol",
+      "result_count": 10,
+      "top_10_names": [
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ],
+      "top_10_paths": [
+        "/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-2-recall-code-project-czjqr9m4/task-2-recall-code-fixture/src/graph/ppr.rs",
+        "/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-2-recall-code-project-czjqr9m4/task-2-recall-code-fixture/src/graph/ppr.rs",
+        "/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-2-recall-code-project-czjqr9m4/task-2-recall-code-fixture/src/graph/rrf.rs",
+        "/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-2-recall-code-project-czjqr9m4/task-2-recall-code-fixture/src/graph/ppr.rs",
+        "/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-2-recall-code-project-czjqr9m4/task-2-recall-code-fixture/src/graph/rrf.rs",
+        "/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-2-recall-code-project-czjqr9m4/task-2-recall-code-fixture/src/server/handler.rs",
+        "/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-2-recall-code-project-czjqr9m4/task-2-recall-code-fixture/src/server/logic/code/search.rs",
+        "/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-2-recall-code-project-czjqr9m4/task-2-recall-code-fixture/src/codebase/indexer.rs",
+        "/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-2-recall-code-project-czjqr9m4/task-2-recall-code-fixture/src/server/handler.rs",
+        "/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-2-recall-code-project-czjqr9m4/task-2-recall-code-fixture/src/codebase/indexer.rs"
+      ]
+    },
+    {
+      "diagnostic_presence": {
+        "contract": true,
+        "indexing_diagnostics": true,
+        "partial_flag": true,
+        "score_breakdown": true,
+        "summary": true,
+        "weights": true
+      },
+      "expected_paths": [
+        "src/codebase/indexer.rs"
+      ],
+      "expected_symbols": [
+        "index_project"
+      ],
+      "latency_ms": 945.06,
+      "mode": "hybrid",
+      "mrr": 0.2,
+      "precision_at_10": 0.3,
+      "precision_at_5": 0.2,
+      "query": "pub async fn index_project(state Arc AppState project_path Path)",
+      "query_id": "code_index_project_fn",
+      "query_type": "codeish_symbol",
+      "result_count": 10,
+      "top_10_names": [
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ],
+      "top_10_paths": [
+        "/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-2-recall-code-project-czjqr9m4/task-2-recall-code-fixture/src/graph/ppr.rs",
+        "/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-2-recall-code-project-czjqr9m4/task-2-recall-code-fixture/src/graph/ppr.rs",
+        "/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-2-recall-code-project-czjqr9m4/task-2-recall-code-fixture/src/graph/ppr.rs",
+        "/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-2-recall-code-project-czjqr9m4/task-2-recall-code-fixture/src/server/logic/code/search.rs",
+        "/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-2-recall-code-project-czjqr9m4/task-2-recall-code-fixture/src/codebase/indexer.rs",
+        "/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-2-recall-code-project-czjqr9m4/task-2-recall-code-fixture/src/codebase/indexer.rs",
+        "/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-2-recall-code-project-czjqr9m4/task-2-recall-code-fixture/src/server/handler.rs",
+        "/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-2-recall-code-project-czjqr9m4/task-2-recall-code-fixture/src/codebase/indexer.rs",
+        "/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-2-recall-code-project-czjqr9m4/task-2-recall-code-fixture/src/server/logic/code/search.rs",
+        "/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-2-recall-code-project-czjqr9m4/task-2-recall-code-fixture/src/server/handler.rs"
+      ]
+    },
+    {
+      "diagnostic_presence": {
+        "contract": true,
+        "indexing_diagnostics": true,
+        "partial_flag": true,
+        "score_breakdown": true,
+        "summary": true,
+        "weights": true
+      },
+      "expected_paths": [],
+      "expected_symbols": [],
+      "latency_ms": 1010.32,
+      "mode": "hybrid",
+      "mrr": 0.0,
+      "negative_no_match_behavior": "returned_potentially_misleading_results",
+      "precision_at_10": 0.0,
+      "precision_at_5": 0.0,
+      "query": "find the Kubernetes YAML deployment for billing service",
+      "query_id": "negative_kubernetes_billing",
+      "query_type": "negative_no_match",
+      "result_count": 10,
+      "top_10_names": [
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ],
+      "top_10_paths": [
+        "/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-2-recall-code-project-czjqr9m4/task-2-recall-code-fixture/src/graph/ppr.rs",
+        "/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-2-recall-code-project-czjqr9m4/task-2-recall-code-fixture/src/graph/rrf.rs",
+        "/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-2-recall-code-project-czjqr9m4/task-2-recall-code-fixture/src/graph/ppr.rs",
+        "/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-2-recall-code-project-czjqr9m4/task-2-recall-code-fixture/src/graph/ppr.rs",
+        "/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-2-recall-code-project-czjqr9m4/task-2-recall-code-fixture/src/graph/ppr.rs",
+        "/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-2-recall-code-project-czjqr9m4/task-2-recall-code-fixture/src/graph/ppr.rs",
+        "/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-2-recall-code-project-czjqr9m4/task-2-recall-code-fixture/src/graph/ppr.rs",
+        "/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-2-recall-code-project-czjqr9m4/task-2-recall-code-fixture/src/graph/ppr.rs",
+        "/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-2-recall-code-project-czjqr9m4/task-2-recall-code-fixture/src/graph/rrf.rs",
+        "/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-2-recall-code-project-czjqr9m4/task-2-recall-code-fixture/src/server/logic/code/search.rs"
+      ]
+    },
+    {
+      "diagnostic_presence": {
+        "contract": true,
+        "indexing_diagnostics": true,
+        "partial_flag": true,
+        "score_breakdown": true,
+        "summary": true,
+        "weights": true
+      },
+      "expected_paths": [],
+      "expected_symbols": [],
+      "latency_ms": 3267.27,
+      "mode": "hybrid",
+      "mrr": 0.0,
+      "precision_at_10": 0.0,
+      "precision_at_5": 0.0,
+      "query": "React checkout button component with Stripe payment intent",
+      "query_id": "negative_react_checkout",
+      "query_type": "negative_no_match",
+      "result_count": 10,
+      "top_10_names": [
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ],
+      "top_10_paths": [
+        "/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-2-recall-code-project-czjqr9m4/task-2-recall-code-fixture/src/graph/ppr.rs",
+        "/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-2-recall-code-project-czjqr9m4/task-2-recall-code-fixture/src/graph/ppr.rs",
+        "/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-2-recall-code-project-czjqr9m4/task-2-recall-code-fixture/src/graph/ppr.rs",
+        "/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-2-recall-code-project-czjqr9m4/task-2-recall-code-fixture/src/graph/ppr.rs",
+        "/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-2-recall-code-project-czjqr9m4/task-2-recall-code-fixture/src/graph/rrf.rs",
+        "/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-2-recall-code-project-czjqr9m4/task-2-recall-code-fixture/src/graph/ppr.rs",
+        "/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-2-recall-code-project-czjqr9m4/task-2-recall-code-fixture/src/graph/ppr.rs",
+        "/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-2-recall-code-project-czjqr9m4/task-2-recall-code-fixture/src/graph/ppr.rs",
+        "/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-2-recall-code-project-czjqr9m4/task-2-recall-code-fixture/src/graph/rrf.rs",
+        "/var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-2-recall-code-project-czjqr9m4/task-2-recall-code-fixture/src/server/logic/code/search.rs"
+      ]
+    }
+  ],
+  "project_id": "task-2-recall-code-fixture",
+  "project_stats": {
+    "_jsonrpc_response": {
+      "id": 76,
+      "jsonrpc": "2.0",
+      "result": {
+        "content": [
+          {
+            "text": "{\"chunks\":{\"embedded\":8,\"progress_percent\":\"10.8\",\"total\":74},\"completed_at\":\"2026-04-25T02:32:40.113835Z\",\"contract\":{\"compatibility\":{\"clients_must_ignore_unknown_enum_values\":true,\"clients_must_ignore_unknown_fields\":true,\"db_shape_is_not_public_contract\":true,\"mode\":\"additive_first\"},\"generated_at\":\"2026-04-25T02:34:45.900972Z\",\"generation_basis\":{\"lifecycle\":{\"projection\":{\"is_current\":false,\"state\":\"stale\"},\"semantic\":{\"generation\":0,\"is_caught_up\":false,\"is_ready\":false,\"state\":\"pending\"},\"structural\":{\"generation\":1,\"is_ready\":true,\"state\":\"ready\"}},\"project_status\":\"embedding_pending\",\"semantic_generation\":0,\"structural_generation\":1},\"identity\":{\"edge_id_semantics\":\"no_public_edge_ids\",\"edge_ids_are_local_only\":true,\"node_id_semantics\":\"stable_project_scoped_project_id\",\"node_ids_are_project_scoped\":true,\"project_id\":\"task-2-recall-code-fixture\",\"stable_edge_ids\":false,\"stable_node_ids\":true},\"projection\":{\"basis\":\"semantic_generation\",\"generation\":0,\"materialization\":{\"addressability_semantics\":\"no_stable_external_read_target_is_promised_until_materialization_strategy_changes\",\"consistent_with_projection_state\":true,\"current_generation\":0,\"identity_basis\":\"project_id + semantic_generation\",\"is_addressable\":false,\"locator_can_be_persisted_by_clients\":false,\"locator_is_opaque\":true,\"locator_scope\":\"none_when_not_materialized\",\"locator_semantics\":\"absent_when_not_materialized; when present it identifies the externally consumable projection instance\",\"locator_stability\":\"not_stable_until_materialization_strategy_changes\",\"locator_survives_generation_change\":false,\"persistence\":\"ephemeral_contract_only\",\"persistence_semantics\":\"contract is exposed on status surfaces only; no persisted projection artifact is promised yet\",\"refresh_basis\":\"semantic_generation\",\"shape_version\":1,\"shape_version_semantics\":\"materialized_projection_payload_shape_version\",\"strategy\":\"not_materialized\"},\"state\":\"stale\"},\"projection_state\":\"stale\",\"schema_version\":1,\"surface_guidance\":{\"forbidden_to_depend_fields\":[],\"legacy_compatibility_fields\":[\"status\",\"total_files\",\"indexed_files\",\"total_chunks\",\"total_symbols\"],\"preferred_response_fields\":[\"lifecycle\",\"contract\"]}},\"failed_files\":[],\"files\":{\"indexed\":0,\"parse_percent\":\"0.0\",\"total\":5},\"is_syncing\":false,\"lifecycle\":{\"projection\":{\"is_current\":false,\"state\":\"stale\"},\"semantic\":{\"generation\":0,\"is_caught_up\":false,\"is_ready\":false,\"state\":\"pending\"},\"structural\":{\"generation\":1,\"is_ready\":true,\"state\":\"ready\"}},\"overall_progress_percent\":\"0.0\",\"project_id\":\"task-2-recall-code-fixture\",\"started_at\":\"2026-04-25T02:31:44.482200Z\",\"status\":\"embedding_pending\",\"summary\":{\"counts\":{\"chunks\":74,\"files\":5,\"indexed_files\":0,\"symbols\":64},\"partial\":{\"is_partial\":true,\"message\":\"Indexing in progress. Project stats may still change.\",\"reason\":\"progress:0.0\",\"reason_code\":\"partial\"},\"result_kind\":\"status\"},\"symbols\":{\"embedded\":0,\"progress_percent\":\"0.0\",\"total\":64},\"sync_queue_size\":0}",
+            "type": "text"
+          }
+        ],
+        "isError": false
+      }
+    },
+    "chunks": {
+      "embedded": 8,
+      "progress_percent": "10.8",
+      "total": 74
+    },
+    "completed_at": "2026-04-25T02:32:40.113835Z",
+    "contract": {
+      "compatibility": {
+        "clients_must_ignore_unknown_enum_values": true,
+        "clients_must_ignore_unknown_fields": true,
+        "db_shape_is_not_public_contract": true,
+        "mode": "additive_first"
+      },
+      "generated_at": "2026-04-25T02:34:45.900972Z",
+      "generation_basis": {
+        "lifecycle": {
+          "projection": {
+            "is_current": false,
+            "state": "stale"
+          },
+          "semantic": {
+            "generation": 0,
+            "is_caught_up": false,
+            "is_ready": false,
+            "state": "pending"
+          },
+          "structural": {
+            "generation": 1,
+            "is_ready": true,
+            "state": "ready"
+          }
+        },
+        "project_status": "embedding_pending",
+        "semantic_generation": 0,
+        "structural_generation": 1
+      },
+      "identity": {
+        "edge_id_semantics": "no_public_edge_ids",
+        "edge_ids_are_local_only": true,
+        "node_id_semantics": "stable_project_scoped_project_id",
+        "node_ids_are_project_scoped": true,
+        "project_id": "task-2-recall-code-fixture",
+        "stable_edge_ids": false,
+        "stable_node_ids": true
+      },
+      "projection": {
+        "basis": "semantic_generation",
+        "generation": 0,
+        "materialization": {
+          "addressability_semantics": "no_stable_external_read_target_is_promised_until_materialization_strategy_changes",
+          "consistent_with_projection_state": true,
+          "current_generation": 0,
+          "identity_basis": "project_id + semantic_generation",
+          "is_addressable": false,
+          "locator_can_be_persisted_by_clients": false,
+          "locator_is_opaque": true,
+          "locator_scope": "none_when_not_materialized",
+          "locator_semantics": "absent_when_not_materialized; when present it identifies the externally consumable projection instance",
+          "locator_stability": "not_stable_until_materialization_strategy_changes",
+          "locator_survives_generation_change": false,
+          "persistence": "ephemeral_contract_only",
+          "persistence_semantics": "contract is exposed on status surfaces only; no persisted projection artifact is promised yet",
+          "refresh_basis": "semantic_generation",
+          "shape_version": 1,
+          "shape_version_semantics": "materialized_projection_payload_shape_version",
+          "strategy": "not_materialized"
+        },
+        "state": "stale"
+      },
+      "projection_state": "stale",
+      "schema_version": 1,
+      "surface_guidance": {
+        "forbidden_to_depend_fields": [],
+        "legacy_compatibility_fields": [
+          "status",
+          "total_files",
+          "indexed_files",
+          "total_chunks",
+          "total_symbols"
+        ],
+        "preferred_response_fields": [
+          "lifecycle",
+          "contract"
+        ]
+      }
+    },
+    "failed_files": [],
+    "files": {
+      "indexed": 0,
+      "parse_percent": "0.0",
+      "total": 5
+    },
+    "is_syncing": false,
+    "lifecycle": {
+      "projection": {
+        "is_current": false,
+        "state": "stale"
+      },
+      "semantic": {
+        "generation": 0,
+        "is_caught_up": false,
+        "is_ready": false,
+        "state": "pending"
+      },
+      "structural": {
+        "generation": 1,
+        "is_ready": true,
+        "state": "ready"
+      }
+    },
+    "overall_progress_percent": "0.0",
+    "project_id": "task-2-recall-code-fixture",
+    "started_at": "2026-04-25T02:31:44.482200Z",
+    "status": "embedding_pending",
+    "summary": {
+      "counts": {
+        "chunks": 74,
+        "files": 5,
+        "indexed_files": 0,
+        "symbols": 64
+      },
+      "partial": {
+        "is_partial": true,
+        "message": "Indexing in progress. Project stats may still change.",
+        "reason": "progress:0.0",
+        "reason_code": "partial"
+      },
+      "result_kind": "status"
+    },
+    "symbols": {
+      "embedded": 0,
+      "progress_percent": "0.0",
+      "total": 64
+    },
+    "sync_queue_size": 0
+  },
+  "query_set": [
+    {
+      "expected_paths": [
+        "src/graph/rrf.rs"
+      ],
+      "expected_symbols": [
+        "rrf_merge"
+      ],
+      "limit": 10,
+      "mode": "hybrid",
+      "query": "find the RRF merge function",
+      "query_id": "nl_rrf_merge",
+      "query_type": "natural_language"
+    },
+    {
+      "expected_paths": [
+        "src/graph/ppr.rs"
+      ],
+      "expected_symbols": [
+        "run_ppr",
+        "personalized_page_rank"
+      ],
+      "limit": 10,
+      "mode": "hybrid",
+      "query": "where is personalized page rank run for graph traversal",
+      "query_id": "nl_ppr_kernel",
+      "query_type": "natural_language"
+    },
+    {
+      "expected_paths": [
+        "src/server/logic/code/search.rs"
+      ],
+      "expected_symbols": [
+        "code_search_contract_json",
+        "lifecycle_view_from_status"
+      ],
+      "limit": 10,
+      "mode": "hybrid",
+      "query": "code search contract metadata lifecycle status",
+      "query_id": "nl_code_search_contract",
+      "query_type": "natural_language"
+    },
+    {
+      "expected_paths": [
+        "src/server/logic/code/search.rs",
+        "src/graph/rrf.rs",
+        "src/graph/ppr.rs"
+      ],
+      "expected_symbols": [
+        "recall_code"
+      ],
+      "limit": 10,
+      "mode": "hybrid",
+      "query": "hybrid code search vector BM25 symbol graph PageRank fusion",
+      "query_id": "nl_recall_code_hybrid",
+      "query_type": "natural_language",
+      "benchmark_note": "Clarified in task 6: query describes the hybrid recall_code orchestration plus BM25/vector/PPR/RRF fusion behavior, so graph fusion implementation files are valid expected targets alongside the recall_code orchestration file."
+    },
+    {
+      "expected_paths": [
+        "src/codebase/indexer.rs"
+      ],
+      "expected_symbols": [
+        "index_project",
+        "do_index_project"
+      ],
+      "limit": 10,
+      "mode": "hybrid",
+      "query": "index project scans directory using spawn blocking and batches chunks",
+      "query_id": "nl_index_spawn_blocking",
+      "query_type": "natural_language"
+    },
+    {
+      "expected_paths": [
+        "src/server/handler.rs"
+      ],
+      "expected_symbols": [
+        "recall_code",
+        "search_code"
+      ],
+      "limit": 10,
+      "mode": "hybrid",
+      "query": "handler dispatches recall_code vector mode to search_code",
+      "query_id": "nl_handler_mode_dispatch",
+      "query_type": "natural_language"
+    },
+    {
+      "expected_paths": [
+        "src/server/logic/code/search.rs"
+      ],
+      "expected_symbols": [
+        "symbol_exactness_score",
+        "symbol_chunk_overlap_bonus"
+      ],
+      "limit": 10,
+      "mode": "hybrid",
+      "query": "exact symbol channel maps matched symbols back to chunks",
+      "query_id": "nl_symbol_exact_channel",
+      "query_type": "natural_language"
+    },
+    {
+      "expected_paths": [
+        "src/graph/ppr.rs"
+      ],
+      "expected_symbols": [
+        "apply_hub_dampening"
+      ],
+      "limit": 10,
+      "mode": "hybrid",
+      "query": "hub dampening for personalized pagerank graph scores",
+      "query_id": "nl_hub_dampening",
+      "query_type": "natural_language"
+    },
+    {
+      "expected_paths": [
+        "src/graph/rrf.rs"
+      ],
+      "expected_symbols": [
+        "rrf_merge"
+      ],
+      "limit": 10,
+      "mode": "hybrid",
+      "query": "rrf_merge(vector_results, bm25_results, ppr_results)",
+      "query_id": "code_rrf_merge_symbol",
+      "query_type": "codeish_symbol"
+    },
+    {
+      "expected_paths": [
+        "src/graph/ppr.rs"
+      ],
+      "expected_symbols": [
+        "run_ppr"
+      ],
+      "limit": 10,
+      "mode": "hybrid",
+      "query": "run_ppr(&graph, &seed_nodes)",
+      "query_id": "code_run_ppr",
+      "query_type": "codeish_symbol"
+    },
+    {
+      "expected_paths": [
+        "src/graph/ppr.rs"
+      ],
+      "expected_symbols": [
+        "personalized_page_rank"
+      ],
+      "limit": 10,
+      "mode": "hybrid",
+      "query": "personalized_page_rank graph seed_nodes damping tolerance",
+      "query_id": "code_personalized_page_rank",
+      "query_type": "codeish_symbol"
+    },
+    {
+      "expected_paths": [
+        "src/server/logic/code/search.rs",
+        "src/server/handler.rs"
+      ],
+      "expected_symbols": [
+        "recall_code"
+      ],
+      "limit": 10,
+      "mode": "hybrid",
+      "query": "pub async fn recall_code",
+      "query_id": "code_recall_code_fn",
+      "query_type": "codeish_symbol",
+      "benchmark_note": "Clarified in task 6: the exact code-ish query \"pub async fn recall_code\" is ambiguous because both the MCP handler wrapper and logic implementation define async recall_code functions in the fixture."
+    },
+    {
+      "expected_paths": [
+        "src/codebase/indexer.rs"
+      ],
+      "expected_symbols": [
+        "index_project"
+      ],
+      "limit": 10,
+      "mode": "hybrid",
+      "query": "pub async fn index_project(state Arc AppState project_path Path)",
+      "query_id": "code_index_project_fn",
+      "query_type": "codeish_symbol"
+    },
+    {
+      "expected_paths": [],
+      "expected_symbols": [],
+      "limit": 10,
+      "mode": "hybrid",
+      "query": "find the Kubernetes YAML deployment for billing service",
+      "query_id": "negative_kubernetes_billing",
+      "query_type": "negative_no_match"
+    },
+    {
+      "expected_paths": [],
+      "expected_symbols": [],
+      "limit": 10,
+      "mode": "hybrid",
+      "query": "React checkout button component with Stripe payment intent",
+      "query_id": "negative_react_checkout",
+      "query_type": "negative_no_match"
+    }
+  ],
+  "root": "/Users/xiayiming1/Documents/Workspace/memory-mcp-1file",
+  "server_command": [
+    "/Users/xiayiming1/Documents/Workspace/memory-mcp-1file/target/debug/memory-mcp",
+    "--stdio"
+  ],
+  "server_stderr_tail": [
+    "[memory-mcp] Auto-configured block cache: 14 MB (available RAM: 71 MB)"
+  ],
+  "startup_status": {
+    "_jsonrpc_response": {
+      "id": 2,
+      "jsonrpc": "2.0",
+      "result": {
+        "content": [
+          {
+            "text": "{\"embedding\":{\"cached\":false,\"dimensions\":384,\"elapsed_seconds\":0,\"eta_seconds\":null,\"model\":\"e5_small_384\",\"phase\":\"Fetching config...\",\"status\":\"loading\"},\"memories_count\":0,\"status\":\"loading\",\"version\":\"0.8.2\"}",
+            "type": "text"
+          }
+        ],
+        "isError": false
+      }
+    },
+    "embedding": {
+      "cached": false,
+      "dimensions": 384,
+      "elapsed_seconds": 0,
+      "eta_seconds": null,
+      "model": "e5_small_384",
+      "phase": "Fetching config...",
+      "status": "loading"
+    },
+    "memories_count": 0,
+    "status": "loading",
+    "version": "0.8.2"
+  },
+  "task": "2. Build recall_code benchmark query set and baseline metrics"
+}

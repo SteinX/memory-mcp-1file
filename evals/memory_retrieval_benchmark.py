@@ -42,6 +42,7 @@ except ModuleNotFoundError:  # pragma: no cover - supports `python3 evals/...` d
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent
+BENCHMARK_RESULTS_DIR = ROOT / "benchmark-results"
 FIXTURE_CORPUS_PATH = HERE / "fixtures" / "memory_corpus.json"
 FIXTURE_GRAPH_PATH = HERE / "fixtures" / "memory_graph.json"
 GOLDEN_QUERIES_PATH = HERE / "golden" / "memory_retrieval_queries.json"
@@ -51,8 +52,8 @@ MEDIUM_FIXTURE_CORPUS_PATH = HERE / "fixtures" / "memory_corpus_medium_long_memo
 MEDIUM_GOLDEN_QUERIES_PATH = HERE / "golden" / "memory_retrieval_queries_medium_long_memory.json"
 STRESS_FIXTURE_MANIFEST_PATH = HERE / "fixtures" / "memory_corpus_stress_manifest.json"
 STRESS_GOLDEN_MANIFEST_PATH = HERE / "golden" / "memory_retrieval_queries_stress_manifest.json"
-EVIDENCE_DIR = ROOT / ".sisyphus" / "evidence" / "evals"
-V2_EVIDENCE_DIR = ROOT / ".sisyphus" / "evidence" / "benchmark-v2"
+EVIDENCE_DIR = BENCHMARK_RESULTS_DIR / "evals"
+V2_EVIDENCE_DIR = BENCHMARK_RESULTS_DIR / "benchmark-v2"
 OUTPUT_JSON = EVIDENCE_DIR / "memory-retrieval-baseline.json"
 OUTPUT_MD = EVIDENCE_DIR / "memory-retrieval-baseline.md"
 BENCHMARK_NAME = "memory_retrieval_baseline"

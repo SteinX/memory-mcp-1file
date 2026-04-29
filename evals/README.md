@@ -66,8 +66,8 @@ python3 evals/code_retrieval_benchmark.py --tier medium
 
 ### 🔄 Baseline Refresh Workflow
 Normal benchmark runs **never** overwrite canonical baseline artifacts. Refresh is an intentional, explicit workflow.
-- **Default Evidence Path**: `.sisyphus/evidence/benchmark-v2/runs/`
-- **Canonical Baseline Paths**: `.sisyphus/evidence/evals/memory-retrieval-baseline.json` (and `.md`)
+- **Default Results Path**: `benchmark-results/benchmark-v2/runs/`
+- **Canonical Baseline Paths**: `benchmark-results/evals/memory-retrieval-baseline.json` (and `.md`)
 
 To perform an intentional refresh:
 ```bash
@@ -83,7 +83,7 @@ Compare current results against canonical baselines:
 ```bash
 python3 -m evals.lib.metrics --baseline-diff
 ```
-Diff outputs default to `.sisyphus/evidence/benchmark-v2/baseline-diff/`.
+Diff outputs default to `benchmark-results/benchmark-v2/baseline-diff/`.
 
 ---
 
@@ -154,7 +154,7 @@ They use outdated tool names and unsafe patterns.
 | `version` (V1) | `schema_version` |
 | Legacy memory queries | Tiered files (`small`, `medium`, `stress`) |
 | `task-2-recall-code-baseline.json` | `evals/golden/code_retrieval_queries_v2.json` |
-| `.sisyphus/evidence/evals/` | `.sisyphus/evidence/benchmark-v2/` (New) |
+| Legacy Sisyphus eval evidence directory | `benchmark-results/benchmark-v2/` (New) |
 
 ### V1 Baseline Context (V1 Baseline)
 Historical V1 implementation focused on baseline data collection without gates. V2 preserves this continuity by using `small` tier as the V1 baseline bridge.

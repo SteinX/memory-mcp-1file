@@ -1,0 +1,11 @@
+Evidence: evals/README.md correctly describes the MemPalace-inspired fixture as synthetic.
+
+[Wording Check]
+- "synthetic": FOUND at line 87
+- "inspired": FOUND at line 87
+- "evaluation shape": FOUND at line 87
+- "not directly comparable": FOUND at line 86, 87
+
+[Actual README Content (Lines 86-87)]
+- **Comparability Note**: These local benchmarks use specific deterministic fixtures and are not directly comparable with external or public benchmark numbers (e.g., MemPalace) due to different corpus and query distributions.
+- **Mini Long-Memory Fixture**: The `evals/fixtures/memory_corpus_mini_long_memory.json` is a **synthetic** fixture inspired by the **evaluation shape** (temporal, person/project/topic, namespace) of public long-memory benchmarks like MemPalace. It is designed for lightweight local validation only; performance scores on this fixture do **not** reflect or correlate with public MemPalace benchmark scores.

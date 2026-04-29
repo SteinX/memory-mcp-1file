@@ -1,0 +1,28 @@
+{
+  "assertion": "fallback is visible and degraded, not a blocker, with elapsed time",
+  "markdown_assertions": [
+    "section present",
+    "status present",
+    "elapsed time present"
+  ],
+  "readiness_fallback": {
+    "classification": "degraded",
+    "elapsed_s": 3.217,
+    "explanation": "Readiness used fallback settling because no direct ready signal was available; results can still be valid but should be reviewed with elapsed time.",
+    "fallback_sleep_s": 3.0,
+    "fallback_used": true,
+    "impact": "degraded",
+    "poll_attempts": 3,
+    "readiness_signal": "none",
+    "reason": "no_direct_readiness_signal",
+    "status": "fallback_after_no_signal"
+  },
+  "settle_readiness": {
+    "elapsed_s": 3.217,
+    "fallback_sleep_s": 3.0,
+    "poll_attempts": 3,
+    "readiness_signal": "none",
+    "reason": "no_direct_readiness_signal",
+    "status": "fallback_after_no_signal"
+  }
+}

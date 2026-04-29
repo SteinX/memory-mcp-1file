@@ -1,0 +1,40 @@
+Task 3 negative query classification verification
+Timestamp (UTC): 2026-04-27T00:00:00Z
+
+Command:
+python3 - <<'PY'
+import json
+from pathlib import Path
+p = Path('.sisyphus/evidence/evals/memory-retrieval-baseline.json')
+data = json.loads(p.read_text())
+rows = data.get('per_query', [])
+agg = data.get('aggregate_metrics', {})
+neg = [r for r in rows if r.get('query_type') == 'negative_no_match']
+bad = []
+for r in neg:
+    if r.get('result_count', 0) == 0 and r.get('failure_type') not in {'none','expected_no_match'}:
+        bad.append({'query_id': r.get('query_id'), 'failure_type': r.get('failure_type'), 'result_count': r.get('result_count')})
+summary = {
+    'negative_query_count': len(neg),
+    'negative_zero_result_count': sum(1 for r in neg if r.get('result_count', 0) == 0),
+    'negative_zero_result_bad_classifications': bad,
+    'positive_query_count': agg.get('positive_query_count'),
+    'status': 'pass' if agg.get('positive_query_count') == 8 and not bad else 'fail'
+}
+print(json.dumps(summary, indent=2, sort_keys=True))
+if summary['status'] != 'pass':
+    raise SystemExit(1)
+PY
+
+Output:
+{
+  "negative_query_count": 2,
+  "negative_zero_result_bad_classifications": [],
+  "negative_zero_result_count": 0,
+  "positive_query_count": 8,
+  "status": "pass"
+}
+
+Note:
+- In this run, negative queries returned non-zero results, so the stricter zero-result classification guard was not activated.
+- Verification still proves positive aggregates remain scoped to positive queries (`positive_query_count=8`) and no invalid zero-result failure labeling occurred.

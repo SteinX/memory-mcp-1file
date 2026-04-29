@@ -1,0 +1,4 @@
+baseline_path=/Users/xiayiming1/Documents/Workspace/memory-mcp-1file/.sisyphus/evidence/evals/memory-retrieval-baseline.json
+sha256_before=885b0c12af5d0e01912923e7efd7f2f5ff4ff24bfa1757ff864a1aa9671868c1
+sha256_after=885b0c12af5d0e01912923e7efd7f2f5ff4ff24bfa1757ff864a1aa9671868c1
+status=UNCHANGED

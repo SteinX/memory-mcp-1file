@@ -628,10 +628,11 @@ def write_markdown_report(
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-EVAL_EVIDENCE_DIR = REPO_ROOT / ".sisyphus" / "evidence" / "evals"
-V2_EVIDENCE_DIR = REPO_ROOT / ".sisyphus" / "evidence" / "benchmark-v2"
+BENCHMARK_RESULTS_DIR = REPO_ROOT / "benchmark-results"
+EVAL_EVIDENCE_DIR = BENCHMARK_RESULTS_DIR / "evals"
+V2_EVIDENCE_DIR = BENCHMARK_RESULTS_DIR / "benchmark-v2"
 V2_BASELINE_DIFF_DIR = V2_EVIDENCE_DIR / "baseline-diff"
-LEGACY_CODE_BASELINE_JSON = REPO_ROOT / ".sisyphus" / "evidence" / "task-2-recall-code-baseline.json"
+LEGACY_CODE_BASELINE_JSON = BENCHMARK_RESULTS_DIR / "legacy" / "task-2-recall-code-baseline.json"
 
 
 def _load_json_report(path: str | Path | None) -> dict[str, Any] | None:
