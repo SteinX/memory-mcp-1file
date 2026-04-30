@@ -210,7 +210,7 @@ pub struct RecallParams {
 #[schemars(title = "")]
 pub struct RecallCodeParams {
     pub query: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none", alias = "project_id")]
     pub project_id: Option<String>,
     /// Default: 10
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -584,7 +584,7 @@ pub struct IndexProjectParams {
 #[schemars(title = "")]
 pub struct SearchCodeParams {
     pub query: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none", alias = "projectId")]
     pub project_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub limit: Option<usize>,
@@ -596,7 +596,7 @@ pub struct ProjectInfoParams {
     /// list|status|stats|projection|projection_by_locator
     pub action: String,
     /// For: status, stats, projection (required)
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none", alias = "projectId")]
     pub project_id: Option<String>,
     /// For: projection_by_locator (required)
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -632,7 +632,7 @@ pub struct DetectCommunitiesParams {
 #[schemars(title = "")]
 pub struct SearchSymbolsParams {
     pub query: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none", alias = "projectId")]
     pub project_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub limit: Option<usize>,
@@ -722,7 +722,7 @@ pub struct HowToUseParams {
 
 #[cfg(test)]
 mod tests {
-    use super::{normalize_project_id, ProjectInfoParams};
+    use super::{normalize_project_id, ProjectInfoParams, RecallCodeParams, SearchSymbolsParams};
 
     #[test]
     fn normalize_project_id_converts_empty_and_whitespace_to_none() {
@@ -741,10 +741,8 @@ mod tests {
 
     #[test]
     fn project_info_params_deserialize_projection_without_options() {
-        let params: ProjectInfoParams = serde_json::from_str(
-            r#"{"action":"projection","project_id":"proj"}"#,
-        )
-        .unwrap();
+        let params: ProjectInfoParams =
+            serde_json::from_str(r#"{"action":"projection","project_id":"proj"}"#).unwrap();
 
         assert_eq!(params.action, "projection");
         assert_eq!(params.project_id, Some("proj".to_string()));
@@ -793,5 +791,35 @@ mod tests {
         assert_eq!(params.locator, Some("projection:demo:123".to_string()));
         assert_eq!(params.relation_scope, None);
         assert_eq!(params.sort_mode, None);
+    }
+
+    #[test]
+    fn recall_code_params_accept_snake_case_project_id_alias() {
+        let params: RecallCodeParams = serde_json::from_str(
+            r#"{"query":"Container","project_id":"reddoc_true_dev","limit":5}"#,
+        )
+        .unwrap();
+
+        assert_eq!(params.project_id, Some("reddoc_true_dev".to_string()));
+        assert_eq!(params.limit, Some(5));
+    }
+
+    #[test]
+    fn project_info_params_accept_camel_case_project_id_alias() {
+        let params: ProjectInfoParams =
+            serde_json::from_str(r#"{"action":"stats","projectId":"reddoc_true_dev"}"#).unwrap();
+
+        assert_eq!(params.action, "stats");
+        assert_eq!(params.project_id, Some("reddoc_true_dev".to_string()));
+    }
+
+    #[test]
+    fn search_symbols_params_accept_camel_case_project_id_alias() {
+        let params: SearchSymbolsParams =
+            serde_json::from_str(r#"{"query":"RCChatViewModel","projectId":"reddoc_true_dev"}"#)
+                .unwrap();
+
+        assert_eq!(params.query, "RCChatViewModel");
+        assert_eq!(params.project_id, Some("reddoc_true_dev".to_string()));
     }
 }

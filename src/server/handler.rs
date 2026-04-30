@@ -13,6 +13,14 @@ use crate::config::AppState;
 use crate::server::logic;
 use crate::server::params::*;
 
+fn require_project_id(project_id: Option<String>, action: &str) -> Result<String, ErrorData> {
+    normalize_project_id(project_id).ok_or_else(|| ErrorData {
+        code: ErrorCode(-32602),
+        message: format!("project_id required for {} action", action).into(),
+        data: None,
+    })
+}
+
 #[derive(Clone)]
 pub struct MemoryMcpServer {
     state: Arc<AppState>,
@@ -47,7 +55,9 @@ impl MemoryMcpServer {
             .map_err(to_rpc_error)
     }
 
-    #[tool(description = "Get full memory by ID. Memory IDs are stable public identities; response includes additive contract and summary metadata.")]
+    #[tool(
+        description = "Get full memory by ID. Memory IDs are stable public identities; response includes additive contract and summary metadata."
+    )]
     async fn get_memory(
         &self,
         params: Parameters<GetMemoryParams>,
@@ -77,7 +87,9 @@ impl MemoryMcpServer {
             .map_err(to_rpc_error)
     }
 
-    #[tool(description = "Store a new memory and explicitly supersede exact duplicates within the same optional scope/type boundary.")]
+    #[tool(
+        description = "Store a new memory and explicitly supersede exact duplicates within the same optional scope/type boundary."
+    )]
     async fn consolidate_memory(
         &self,
         params: Parameters<ConsolidateMemoryParams>,
@@ -87,7 +99,9 @@ impl MemoryMcpServer {
             .map_err(to_rpc_error)
     }
 
-    #[tool(description = "Preview exact-duplicate consolidation within the same optional scope/type boundary without writing any changes.")]
+    #[tool(
+        description = "Preview exact-duplicate consolidation within the same optional scope/type boundary without writing any changes."
+    )]
     async fn preview_consolidate_memory(
         &self,
         params: Parameters<PreviewConsolidateMemoryParams>,
@@ -97,7 +111,9 @@ impl MemoryMcpServer {
             .map_err(to_rpc_error)
     }
 
-    #[tool(description = "List memories (newest first) with optional scope/type/metadata/time filters. Scope remains optional for forward compatibility. Response includes additive contract and summary metadata.")]
+    #[tool(
+        description = "List memories (newest first) with optional scope/type/metadata/time filters. Scope remains optional for forward compatibility. Response includes additive contract and summary metadata."
+    )]
     async fn list_memories(
         &self,
         params: Parameters<ListMemoriesParams>,
@@ -120,16 +136,16 @@ impl MemoryMcpServer {
                 params.0,
                 Some(&self.state.access_tracker),
             )
-                .await
-                .map_err(to_rpc_error)
+            .await
+            .map_err(to_rpc_error)
         } else {
             logic::search::search_with_access_tracking(
                 &self.state,
                 params.0,
                 Some(&self.state.access_tracker),
             )
-                .await
-                .map_err(to_rpc_error)
+            .await
+            .map_err(to_rpc_error)
         }
     }
 
@@ -142,8 +158,8 @@ impl MemoryMcpServer {
             params.0,
             Some(&self.state.access_tracker),
         )
-            .await
-            .map_err(to_rpc_error)
+        .await
+        .map_err(to_rpc_error)
     }
 
     #[tool(
@@ -310,7 +326,9 @@ impl MemoryMcpServer {
         }
     }
 
-    #[tool(description = "Project indexing information. Actions: list() | status(project_id) | stats(project_id) | projection(project_id) | projection_by_locator(). Status/stats/list responses include additive contract and normalized summary metadata, including lifecycle, generation, and projection/materialization contract fields. Projection returns an on-demand, export-only project projection document built from current canonical data.")]
+    #[tool(
+        description = "Project indexing information. Actions: list() | status(project_id) | stats(project_id) | projection(project_id) | projection_by_locator(). Status/stats/list responses include additive contract and normalized summary metadata, including lifecycle, generation, and projection/materialization contract fields. Projection returns an on-demand, export-only project projection document built from current canonical data."
+    )]
     async fn project_info(
         &self,
         params: Parameters<ProjectInfoParams>,
@@ -325,11 +343,7 @@ impl MemoryMcpServer {
                     .map_err(to_rpc_error)
             }
             "status" => {
-                let project_id = params.0.project_id.ok_or_else(|| ErrorData {
-                    code: ErrorCode(-32602),
-                    message: "project_id required for status action".into(),
-                    data: None,
-                })?;
+                let project_id = require_project_id(params.0.project_id, "status")?;
                 let status_params = GetIndexStatusParams { project_id };
                 let status = logic::code::get_index_status(&self.state, status_params)
                     .await
@@ -337,22 +351,14 @@ impl MemoryMcpServer {
                 Ok(status)
             }
             "stats" => {
-                let project_id = params.0.project_id.ok_or_else(|| ErrorData {
-                    code: ErrorCode(-32602),
-                    message: "project_id required for stats action".into(),
-                    data: None,
-                })?;
+                let project_id = require_project_id(params.0.project_id, "stats")?;
                 let stats_params = GetProjectStatsParams { project_id };
                 logic::code::get_project_stats(&self.state, stats_params)
                     .await
                     .map_err(to_rpc_error)
             }
             "projection" => {
-                let project_id = params.0.project_id.ok_or_else(|| ErrorData {
-                    code: ErrorCode(-32602),
-                    message: "project_id required for projection action".into(),
-                    data: None,
-                })?;
+                let project_id = require_project_id(params.0.project_id, "projection")?;
                 let projection_params = crate::server::params::GetProjectProjectionParams {
                     project_id,
                     relation_scope: params.0.relation_scope.clone(),
@@ -393,7 +399,9 @@ impl MemoryMcpServer {
             .map_err(to_rpc_error)
     }
 
-    #[tool(description = "Fast by-name code lookup. Symbol IDs are stable project-scoped symbol identities; responses include additive contract and summary metadata.")]
+    #[tool(
+        description = "Fast by-name code lookup. Symbol IDs are stable project-scoped symbol identities; responses include additive contract and summary metadata."
+    )]
     async fn search_symbols(
         &self,
         params: Parameters<SearchSymbolsParams>,
@@ -425,7 +433,9 @@ impl MemoryMcpServer {
             .map_err(to_rpc_error)
     }
 
-    #[tool(description = "Meta-help tool. Returns concise usage guidance for the MCP tool surface.")]
+    #[tool(
+        description = "Meta-help tool. Returns concise usage guidance for the MCP tool surface."
+    )]
     async fn how_to_use(
         &self,
         _params: Parameters<HowToUseParams>,
