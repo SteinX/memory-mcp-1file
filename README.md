@@ -136,6 +136,11 @@ To use this MCP server with any client (**Claude Code**, **OpenCode**, **Cline**
 
 When using the server over HTTP (e.g., for a remote agent or a containerized backend), ensure your project files are mounted into the container so the server can index them.
 
+**Important Security & Scope Notes:**
+1. **Server-Visible Paths**: The server process must be able to see the paths you request to index. You must mount the project directory and specify its location using `PROJECT_PATH` or `--project-path`.
+2. **No Remote Uploads**: The server does not support uploading client-local files or indexing client-side paths over the network. All indexed code must be visible to the server's local filesystem (or mounted volume).
+3. **No Header/Query Binding**: Project binding is currently only supported via explicit `project_info` tool actions. Binding via HTTP headers or query parameters is not supported.
+
 ```bash
 docker run -d \
   --name memory-mcp \
@@ -328,7 +333,7 @@ Or with Docker:
 
 ## ✨ Key Features
 
-- **Semantic Memory**: Stores text with vector embeddings (`gemma` by default, `qwen3` available) for "vibe-based" retrieval.
+- **Session-Scoped Code Scoping**: The server now supports binding an HTTP MCP session to a specific project. Once bound, code-intelligence tools (`recall_code`, `search_symbols`) automatically scope their operations to that project unless an explicit `project_id` is provided. This state is stored in process memory only and does not survive server restarts.
 - **Governed Memory Retrieval**: Memory APIs now share first-class optional filters for `user_id`, `agent_id`, `run_id`, `namespace`, `memory_type`, metadata, and time windows. `list_memories` uses the same governance path and returns a filtered `total`.
 - **Memory Lexical Engine**: Memory BM25-style retrieval now uses a reusable in-memory lexical index that is warmed from DB at startup and kept in sync by memory CRUD / invalidation flows, instead of rebuilding the lexical model on every request.
 - **Layered Diagnostics**: Memory search/recall diagnostics expose retrieved candidates, post-filter hits, and returned hits; `metadata_filter` is explicitly reported as post-query subset matching.
@@ -337,6 +342,11 @@ Or with Docker:
 - **Consolidation Preview**: `preview_consolidate_memory` shows exact-duplicate matches, replacement scope, and supersede reason before any write occurs.
 - **Graph Memory**: Tracks entities (`User`, `Project`, `Tech`) and their relations (`uses`, `likes`). Supports PageRank-based traversal.
 - **Code Intelligence**: Indexes local project directories (AST-based chunking) for Rust, Python, TypeScript, JavaScript, Go, Java, and **Dart/Flutter**. Tracks **calls, imports, extends, implements, and mixin** relationships between symbols.
+- **Deterministic Code Scoping**: Code intelligence tools use a strict project resolution order:
+  1. **Explicit `project_id`**: Always takes highest priority if provided in the tool arguments.
+  2. **Session Binding**: If no explicit `project_id` is provided, the server uses the project bound to the current HTTP MCP session.
+  3. **Breadth Fallback**: If neither an explicit ID nor a session binding exists, the server performs a cross-project search (if `project_id=None` behavior is supported by the tool).
+  *Note: Stale session bindings (e.g., project deleted) return empty success with `reason_code="stale"` and `binding_state="stale_binding"` without broadening to cross-project search.*
 - **Plugin-Facing Contract Freeze**: Code/project read surfaces expose additive `contract` + `summary` metadata with a machine-readable `reason_code` taxonomy (`missing`, `stale`, `partial`, `degraded`, `invalid_locator`, `generation_mismatch`, `unsupported`) while preserving legacy string `reason` fields for compatibility.
 - **Explicit Projection Locator Lifecycle**: `project_info(action="projection")` returns an ephemeral locator record with typed lifecycle and lookup metadata, and `project_info(action="projection_by_locator")` returns the same contract on resolve/miss without promoting locators to stable public IDs.
 - **Temporal Validity**: Memories can have `valid_from` and `valid_until` dates.
@@ -380,7 +390,7 @@ The server exposes **21 tools** to the AI model, organized into logical categori
 | `recall_code` | Hybrid code retrieval (vector+BM25+graph) with additive `contract`/`summary` metadata. `results[].id` is a local chunk-record reference; stable refind locator is `project_id + file_path + start_line + end_line`. |
 | `search_symbols` | Symbol lookup by name with additive contract/summary metadata. |
 | `symbol_graph` | Symbol relationship traversal with additive contract/summary metadata; `frontier` is an unexpanded boundary hint, not a cursor. |
-| `project_info` | Project indexing information. Actions: list() \| status(project_id) \| stats(project_id) \| projection(project_id) \| projection_by_locator(). Responses include additive contract/summary metadata, including lifecycle, generation, and projection/materialization fields. |
+| `project_info` | Project indexing information. Actions: list() \| status(project_id) \| stats(project_id) \| projection(project_id) \| projection_by_locator() \| bind(project_id) \| unbind() \| binding_status(). bind/unbind/status actions manage session-scoped project binding for HTTP MCP clients. Responses include additive contract/summary metadata, including lifecycle, generation, and projection/materialization fields. |
 
 ### Contract compatibility notes for plugin / MCP integrators
 
@@ -390,6 +400,14 @@ The server exposes **21 tools** to the AI model, organized into logical categori
 - `project_info(action="list")` discovers projects from the union of index status metadata, code chunks, code symbols, and file manifests, so partially indexed or degraded projects remain operator-visible.
 - `project_info(action="stats")` returns degraded diagnostics when code intelligence rows exist but `index_status` metadata is missing; it only returns `Project not found` when no status, chunks, symbols, or manifest entries exist for that project.
 - `project_info(action="projection")` returns `locator.lookup.state = "created"`; `project_info(action="projection_by_locator")` returns `locator.lookup.state = "resolved"` on success and `"missing"` on miss.
+- **Session-Bound Project Resolution**:
+  - `project_info(action="bind", project_id="...")` binds the current HTTP MCP session to a project.
+  - `project_info(action="unbind")` clears the binding.
+  - `project_info(action="binding_status")` returns the current binding or `null`.
+  - **Lifetime**: Binding is keyed by the HTTP MCP `mcp-session-id`, stored in process memory only, and does not survive server restart.
+  - **Transport Support**: Stdio mode returns `reason_code="unsupported"` for binding actions as it lacks session context.
+  - **Auto-binding**: `index_project` does not automatically bind the session; use an explicit `bind` action after indexing if session-scoping is desired.
+  - **Diagnostics**: If a session-bound project is deleted or becomes unavailable, tools return a success JSON with empty results, `project_resolution.source="session_binding"`, `reason_code="stale"`, and `binding_state="stale_binding"`. No cross-project fallback occurs for stale bindings.
 - Projection locators are **opaque, same-process, non-persistable, and not generation-stable**. They are convenience handles for immediate readback, not stable public identities.
 - Stable identities remain unchanged:
   - memory read/list/search surfaces → public memory IDs
