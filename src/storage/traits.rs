@@ -10,8 +10,8 @@ use std::pin::Pin;
 use chrono::{DateTime, Utc};
 
 use crate::types::{
-    CodeChunk, CodeSymbol, Direction, Entity, IndexStatus, ManifestEntry, Memory, MemoryUpdate,
-    MemoryQuery, MemoryType, Relation, ScoredCodeChunk, SearchResult, SymbolRelation,
+    CodeChunk, CodeSymbol, Direction, Entity, IndexStatus, ManifestEntry, Memory, MemoryQuery,
+    MemoryType, MemoryUpdate, Relation, ScoredCodeChunk, SearchResult, SymbolRelation,
 };
 use crate::Result;
 
@@ -61,9 +61,7 @@ where
         id: String,
         accessed_at: DateTime<Utc>,
     ) -> Pin<Box<dyn Future<Output = Result<()>> + Send + '_>> {
-        Box::pin(async move {
-            StorageBackend::record_memory_access(self, &id, accessed_at).await
-        })
+        Box::pin(async move { StorageBackend::record_memory_access(self, &id, accessed_at).await })
     }
 
     fn count_valid_memories(&self) -> Pin<Box<dyn Future<Output = Result<usize>> + Send + '_>> {
@@ -88,7 +86,9 @@ where
         id: String,
         reason: Option<String>,
     ) -> Pin<Box<dyn Future<Output = Result<bool>> + Send + '_>> {
-        Box::pin(async move { StorageBackend::invalidate(self, &id, reason.as_deref(), None).await })
+        Box::pin(
+            async move { StorageBackend::invalidate(self, &id, reason.as_deref(), None).await },
+        )
     }
 }
 
@@ -249,11 +249,7 @@ pub trait StorageBackend: Send + Sync {
     async fn get_valid(&self, filters: &MemoryQuery, limit: usize) -> Result<Vec<Memory>>;
 
     /// Get memories that were valid at a specific point in time
-    async fn get_valid_at(
-        &self,
-        filters: &MemoryQuery,
-        limit: usize,
-    ) -> Result<Vec<Memory>>;
+    async fn get_valid_at(&self, filters: &MemoryQuery, limit: usize) -> Result<Vec<Memory>>;
 
     /// Invalidate a memory (soft delete by setting valid_until)
     fn invalidate(

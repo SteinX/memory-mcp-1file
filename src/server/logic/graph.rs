@@ -11,15 +11,15 @@ use crate::server::params::{
 };
 use crate::storage::StorageBackend;
 use crate::types::{
-    ConfidenceClass, Datetime, Direction, Entity, ExportIdentity, RecordId, Relation, RelationClass,
-    RelationProvenance, StalenessState, ThingId,
+    ConfidenceClass, Datetime, Direction, Entity, ExportIdentity, RecordId, Relation,
+    RelationClass, RelationProvenance, StalenessState, ThingId,
 };
 
-use super::{error_response, strip_entity_embeddings, success_json};
 use super::contracts::{
     export_contract_meta, exported_graph_edges, exported_graph_nodes, summary_graph_response,
     with_frontier_contract, with_surface_guidance, with_traversal_defaults,
 };
+use super::{error_response, strip_entity_embeddings, success_json};
 
 fn graph_contract_json(entity_id: Option<&str>) -> serde_json::Value {
     let contract = with_traversal_defaults(
@@ -59,8 +59,7 @@ fn graph_contract_json(entity_id: Option<&str>) -> serde_json::Value {
         false,
     );
 
-    serde_json::to_value(contract)
-    .unwrap_or_else(|_| json!({}))
+    serde_json::to_value(contract).unwrap_or_else(|_| json!({}))
 }
 
 pub async fn create_entity(
@@ -279,20 +278,59 @@ mod tests {
 
         assert_eq!(json_related["contract"]["schema_version"], 1);
         assert_eq!(json_related["contract"]["identity"]["entity_id"], id1);
-        assert_eq!(json_related["contract"]["identity"]["stable_node_ids"], true);
-        assert_eq!(json_related["contract"]["identity"]["node_ids_are_project_scoped"], false);
-        assert_eq!(json_related["contract"]["identity"]["edge_ids_are_local_only"], true);
-        assert_eq!(json_related["contract"]["identity"]["node_id_semantics"], "stable_public_node_id");
-        assert_eq!(json_related["contract"]["identity"]["edge_id_semantics"], "local_only_edge_reference");
+        assert_eq!(
+            json_related["contract"]["identity"]["stable_node_ids"],
+            true
+        );
+        assert_eq!(
+            json_related["contract"]["identity"]["node_ids_are_project_scoped"],
+            false
+        );
+        assert_eq!(
+            json_related["contract"]["identity"]["edge_ids_are_local_only"],
+            true
+        );
+        assert_eq!(
+            json_related["contract"]["identity"]["node_id_semantics"],
+            "stable_public_node_id"
+        );
+        assert_eq!(
+            json_related["contract"]["identity"]["edge_id_semantics"],
+            "local_only_edge_reference"
+        );
         assert_eq!(json_related["contract"]["projection_state"], "missing");
-        assert_eq!(json_related["contract"]["surface_guidance"]["preferred_response_fields"][0], "nodes");
-        assert_eq!(json_related["contract"]["surface_guidance"]["legacy_compatibility_fields"][0], "entities");
-        assert_eq!(json_related["contract"]["surface_guidance"]["forbidden_to_depend_fields"][0], "relations[].id");
-        assert_eq!(json_related["contract"]["traversal_defaults"]["frontier_semantics"], "unexpanded_boundary_for_manual_follow_up");
-        assert_eq!(json_related["contract"]["traversal_defaults"]["frontier_items_identity_basis"], "stable_public_node_id");
-        assert_eq!(json_related["contract"]["traversal_defaults"]["frontier_items_are_stable_node_ids"], true);
-        assert_eq!(json_related["contract"]["traversal_defaults"]["frontier_items_are_project_scoped"], false);
-        assert_eq!(json_related["contract"]["traversal_defaults"]["frontier_is_cursor"], false);
+        assert_eq!(
+            json_related["contract"]["surface_guidance"]["preferred_response_fields"][0],
+            "nodes"
+        );
+        assert_eq!(
+            json_related["contract"]["surface_guidance"]["legacy_compatibility_fields"][0],
+            "entities"
+        );
+        assert_eq!(
+            json_related["contract"]["surface_guidance"]["forbidden_to_depend_fields"][0],
+            "relations[].id"
+        );
+        assert_eq!(
+            json_related["contract"]["traversal_defaults"]["frontier_semantics"],
+            "unexpanded_boundary_for_manual_follow_up"
+        );
+        assert_eq!(
+            json_related["contract"]["traversal_defaults"]["frontier_items_identity_basis"],
+            "stable_public_node_id"
+        );
+        assert_eq!(
+            json_related["contract"]["traversal_defaults"]["frontier_items_are_stable_node_ids"],
+            true
+        );
+        assert_eq!(
+            json_related["contract"]["traversal_defaults"]["frontier_items_are_project_scoped"],
+            false
+        );
+        assert_eq!(
+            json_related["contract"]["traversal_defaults"]["frontier_is_cursor"],
+            false
+        );
         assert_eq!(json_related["entity_count"].as_u64().unwrap(), 1);
         assert_eq!(json_related["nodes"][0]["id"], id2);
         assert_eq!(json_related["edges"][0]["relation_type"], "knows");

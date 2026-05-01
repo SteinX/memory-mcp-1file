@@ -8,12 +8,12 @@ use crate::server::params::{normalize_project_id, SearchSymbolsParams, SymbolGra
 use crate::storage::StorageBackend;
 use crate::types::ExportIdentity;
 
-use super::super::{error_response, strip_symbol_embeddings, success_json};
 use super::super::contracts::{
     export_contract_meta, exported_symbol_edges, exported_symbol_nodes,
     summary_collection_response, summary_symbol_graph_response, with_frontier_contract,
     with_surface_guidance, with_traversal_defaults,
 };
+use super::super::{error_response, strip_symbol_embeddings, success_json};
 
 fn symbol_contract_json(symbol_id: &str) -> serde_json::Value {
     let contract = with_traversal_defaults(
@@ -107,6 +107,12 @@ pub async fn search_symbols(
 
             if let Some(degradation) = super::get_degradation_info(state).await {
                 response["_indexing"] = degradation;
+            }
+
+            let missing_project_diagnostic =
+                super::missing_project_binding_diagnostic(state, project_id.as_deref()).await;
+            if let Some(diagnostic) = missing_project_diagnostic.as_ref() {
+                super::apply_missing_project_binding_diagnostic(&mut response, diagnostic);
             }
 
             Ok(success_json(response))

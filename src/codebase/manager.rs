@@ -7,7 +7,7 @@ use tracing::{debug, error, info, warn};
 use crate::config::AppState;
 use crate::embedding::{EmbeddingRequest, EmbeddingTarget};
 use crate::storage::StorageBackend;
-use crate::types::IndexState;
+use crate::types::{derive_project_id, IndexState};
 use crate::Result;
 
 use super::index_worker::{IndexJob, IndexJobSender};
@@ -30,20 +30,21 @@ pub struct CodebaseManager {
 }
 
 impl CodebaseManager {
-    pub fn new(state: Arc<AppState>, project_path: PathBuf, index_tx: IndexJobSender) -> Self {
-        let project_id = project_path
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("unknown")
-            .to_string();
+    pub fn new(
+        state: Arc<AppState>,
+        project_path: PathBuf,
+        index_tx: IndexJobSender,
+    ) -> Result<Self> {
+        let project_id = derive_project_id(&project_path)
+            .map_err(|error| crate::AppError::InvalidPath(error.to_string()))?;
 
-        Self {
+        Ok(Self {
             state,
             project_path,
             project_id,
             watcher: RwLock::new(None),
             index_tx,
-        }
+        })
     }
 
     pub fn project_id(&self) -> &str {
@@ -215,7 +216,10 @@ impl CodebaseManager {
                         };
                         match mgr.resume_embeddings().await {
                             Ok(count) => {
-                                info!(count, "Embedding migration: enqueued items for re-embedding");
+                                info!(
+                                    count,
+                                    "Embedding migration: enqueued items for re-embedding"
+                                );
                             }
                             Err(e) => {
                                 error!("Embedding migration resume failed: {}", e);
@@ -253,10 +257,15 @@ impl CodebaseManager {
                                 info!(count, "Resumed orphaned embeddings from previous run");
                                 // Set status to EmbeddingPending so completion_monitor
                                 // detects when all embeddings finish and rebuilds HNSW.
-                                if let Ok(Some(mut st)) = state.storage.get_index_status(&project_id).await {
+                                if let Ok(Some(mut st)) =
+                                    state.storage.get_index_status(&project_id).await
+                                {
                                     st.status = IndexState::EmbeddingPending;
                                     if let Err(e) = state.storage.update_index_status(st).await {
-                                        error!("Failed to set EmbeddingPending after resume: {}", e);
+                                        error!(
+                                            "Failed to set EmbeddingPending after resume: {}",
+                                            e
+                                        );
                                     }
                                 }
                             }
@@ -300,7 +309,9 @@ impl CodebaseManager {
                             }
                             // Set to EmbeddingPending so completion_monitor picks it up
                             resume_status.status = IndexState::EmbeddingPending;
-                            if let Err(e) = mgr.state.storage.update_index_status(resume_status).await {
+                            if let Err(e) =
+                                mgr.state.storage.update_index_status(resume_status).await
+                            {
                                 error!("Failed to update index status: {}", e);
                             }
                         }

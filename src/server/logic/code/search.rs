@@ -445,7 +445,10 @@ pub async fn search_code(
         }
     }
 
-    Ok(success_json(json!({
+    let missing_project_diagnostic =
+        super::missing_project_binding_diagnostic(state, project_id).await;
+
+    let mut response = json!({
         "results": merged,
         "count": merged.len(),
         "summary": summary_collection_response(
@@ -461,7 +464,13 @@ pub async fn search_code(
         "bm25_hits": bm25_results.len(),
         "is_partial": is_partial,
         "message": indexing_message
-    })))
+    });
+
+    if let Some(diagnostic) = missing_project_diagnostic.as_ref() {
+        super::apply_missing_project_binding_diagnostic(&mut response, diagnostic);
+    }
+
+    Ok(success_json(response))
 }
 
 /// Hybrid code search: Vector + BM25 + Symbol Graph PageRank → RRF merge
@@ -1199,6 +1208,12 @@ pub async fn recall_code(
 
     if let Some(degradation) = super::get_degradation_info(state).await {
         response["_indexing"] = degradation;
+    }
+
+    let missing_project_diagnostic =
+        super::missing_project_binding_diagnostic(state, project_id).await;
+    if let Some(diagnostic) = missing_project_diagnostic.as_ref() {
+        super::apply_missing_project_binding_diagnostic(&mut response, diagnostic);
     }
 
     let results_count = response["count"].as_u64().unwrap_or(0) as usize;

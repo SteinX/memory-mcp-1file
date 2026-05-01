@@ -12,7 +12,9 @@ use crate::forgetting::decay::{
     apply_decay_scoring, compute_decay, decay_factor, effective_age_days, reinforcement_bonus,
 };
 use crate::storage::{StorageBackend, SurrealStorage};
-use crate::types::{record_key_to_string, Datetime, Memory, MemoryQuery, MemoryType, ScoredMemory, SearchResult};
+use crate::types::{
+    record_key_to_string, Datetime, Memory, MemoryQuery, MemoryType, ScoredMemory, SearchResult,
+};
 
 fn approx_eq(left: f32, right: f32, epsilon: f32) {
     assert!(
@@ -237,7 +239,10 @@ async fn ac5_capacity_controller_invalidates_and_preserves_historical_validity()
     let _ = shutdown_tx.send(true);
     task.await.unwrap();
 
-    let current_valid = storage.get_valid(&MemoryQuery::default(), 10).await.unwrap();
+    let current_valid = storage
+        .get_valid(&MemoryQuery::default(), 10)
+        .await
+        .unwrap();
     let current_ids: Vec<String> = current_valid
         .into_iter()
         .filter_map(|memory| memory.id.map(|id| record_key_to_string(&id.key)))

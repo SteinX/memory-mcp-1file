@@ -8,9 +8,9 @@ use serde_json::json;
 use crate::config::AppState;
 use crate::embedding::ContentHasher;
 use crate::server::params::{
-    ConsolidateMemoryParams, DeleteMemoryParams, GetMemoryParams, GetValidAtParams,
-    GetValidParams, InvalidateParams, ListMemoriesParams, PreviewConsolidateMemoryParams,
-    StoreMemoryParams, UpdateMemoryParams,
+    ConsolidateMemoryParams, DeleteMemoryParams, GetMemoryParams, GetValidAtParams, GetValidParams,
+    InvalidateParams, ListMemoriesParams, PreviewConsolidateMemoryParams, StoreMemoryParams,
+    UpdateMemoryParams,
 };
 use crate::storage::StorageBackend;
 use crate::types::EmbeddingState;
@@ -123,7 +123,9 @@ fn build_consolidation_plan_fingerprint(
         }
     });
 
-    blake3::hash(payload.to_string().as_bytes()).to_hex().to_string()
+    blake3::hash(payload.to_string().as_bytes())
+        .to_hex()
+        .to_string()
 }
 
 fn plan_diagnostics(
@@ -236,8 +238,12 @@ async fn find_duplicate_matches(
 
     if matches.is_empty() {
         let total = state.storage.count_memories_filtered(filters).await?;
-        let existing = state.storage.list_memories(filters, total.max(1), 0).await?;
-        matches = exact_duplicate_matches(existing, content, content_hash, "exact_content_fallback");
+        let existing = state
+            .storage
+            .list_memories(filters, total.max(1), 0)
+            .await?;
+        matches =
+            exact_duplicate_matches(existing, content, content_hash, "exact_content_fallback");
         let fallback_match_count = matches.len();
         return Ok((
             matches,
@@ -253,8 +259,13 @@ async fn find_duplicate_matches(
     let mut fallback_match_count = 0;
     if !seen_ids.is_empty() {
         let total = state.storage.count_memories_filtered(filters).await?;
-        let existing = state.storage.list_memories(filters, total.max(1), 0).await?;
-        for candidate in exact_duplicate_matches(existing, content, content_hash, "exact_content_fallback") {
+        let existing = state
+            .storage
+            .list_memories(filters, total.max(1), 0)
+            .await?;
+        for candidate in
+            exact_duplicate_matches(existing, content, content_hash, "exact_content_fallback")
+        {
             if let Some(id) = candidate["id"].as_str() {
                 if seen_ids.insert(id.to_string()) {
                     fallback_match_count += 1;
@@ -460,14 +471,7 @@ async fn memory_with_trace(state: &Arc<AppState>, memory: &Memory) -> serde_json
         map.insert("attention_summary".to_string(), attention.clone());
         map.insert(
             "operator_summary".to_string(),
-            operator_summary(
-                "read",
-                &attention,
-                None,
-                None,
-                Some(&trace),
-                Some(&lineage),
-            ),
+            operator_summary("read", &attention, None, None, Some(&trace), Some(&lineage)),
         );
     }
     value
@@ -546,10 +550,11 @@ pub async fn consolidate_memory(
     };
     let content_hash = ContentHasher::hash(&params.content);
 
-    let (duplicate_matches, lookup_diagnostics) = match find_duplicate_matches(state, &filters, &params.content, &content_hash).await {
-        Ok(value) => value,
-        Err(e) => return Ok(error_response(e)),
-    };
+    let (duplicate_matches, lookup_diagnostics) =
+        match find_duplicate_matches(state, &filters, &params.content, &content_hash).await {
+            Ok(value) => value,
+            Err(e) => return Ok(error_response(e)),
+        };
     let duplicate_ids = duplicate_ids_from_matches(&duplicate_matches);
 
     let reason = resolved_consolidation_reason(params.reason.as_deref());
@@ -635,7 +640,9 @@ pub async fn consolidate_memory(
             skipped_ids.push(duplicate_id);
             continue;
         }
-        match invalidate_and_sync_memory(state, &duplicate_id, Some(reason), Some(&replacement_id)).await {
+        match invalidate_and_sync_memory(state, &duplicate_id, Some(reason), Some(&replacement_id))
+            .await
+        {
             Ok(true) => superseded_ids.push(duplicate_id),
             Ok(false) => {}
             Err(e) => return Ok(error_response(e)),
@@ -698,10 +705,11 @@ pub async fn preview_consolidate_memory(
         Err(e) => return Ok(error_response(e)),
     };
     let content_hash = ContentHasher::hash(&params.content);
-    let (matched_summary, lookup_diagnostics) = match find_duplicate_matches(state, &filters, &params.content, &content_hash).await {
-        Ok(value) => value,
-        Err(e) => return Ok(error_response(e)),
-    };
+    let (matched_summary, lookup_diagnostics) =
+        match find_duplicate_matches(state, &filters, &params.content, &content_hash).await {
+            Ok(value) => value,
+            Err(e) => return Ok(error_response(e)),
+        };
     let matched_ids = duplicate_ids_from_matches(&matched_summary);
     let reason = resolved_consolidation_reason(params.reason.as_deref());
     let plan_fingerprint = build_consolidation_plan_fingerprint(
@@ -786,10 +794,9 @@ pub async fn get_memory(
                 "contract": memory_contract_json(Some(&params.id))
             });
 
-            if let (Some(response_map), Some(memory_map)) = (
-                response.as_object_mut(),
-                memory_json.as_object(),
-            ) {
+            if let (Some(response_map), Some(memory_map)) =
+                (response.as_object_mut(), memory_json.as_object())
+            {
                 for (key, value) in memory_map {
                     response_map.insert(key.clone(), value.clone());
                 }
@@ -998,9 +1005,7 @@ pub async fn invalidate(
     )
     .await
     {
-        Ok(success) => {
-            Ok(success_json(json!({ "invalidated": success })))
-        }
+        Ok(success) => Ok(success_json(json!({ "invalidated": success }))),
         Err(e) => Ok(error_response(e)),
     }
 }
@@ -1053,16 +1058,31 @@ mod tests {
         assert_eq!(memory_json["memory"]["agent_id"], "agent-a");
         assert_eq!(memory_json["memory"]["namespace"], "project-alpha");
         assert_eq!(memory_json["memory"]["importance_score"], 2.5);
-        assert_eq!(memory_json["memory"]["consolidation_trace"]["status"], "active");
+        assert_eq!(
+            memory_json["memory"]["consolidation_trace"]["status"],
+            "active"
+        );
         assert_eq!(memory_json["memory"]["operator_summary"]["stage"], "read");
-        assert_eq!(memory_json["memory"]["operator_summary"]["primary_signal"], "consolidation_trace");
-        assert_eq!(memory_json["contract"]["compatibility"]["mode"], "additive_first");
-        assert_eq!(memory_json["contract"]["compatibility"]["clients_must_ignore_unknown_fields"], true);
+        assert_eq!(
+            memory_json["memory"]["operator_summary"]["primary_signal"],
+            "consolidation_trace"
+        );
+        assert_eq!(
+            memory_json["contract"]["compatibility"]["mode"],
+            "additive_first"
+        );
+        assert_eq!(
+            memory_json["contract"]["compatibility"]["clients_must_ignore_unknown_fields"],
+            true
+        );
         assert_eq!(memory_json["summary"]["result_kind"], "memory");
         assert!(memory_json["summary"]["partial"]["reason_code"].is_null());
         assert!(memory_json["summary"]["partial"]["reason"].is_null());
         assert_eq!(memory_json["contract"]["identity"]["stable_memory_id"], id);
-        assert_eq!(memory_json["contract"]["identity"]["node_id_semantics"], "stable_public_memory_id");
+        assert_eq!(
+            memory_json["contract"]["identity"]["node_id_semantics"],
+            "stable_public_memory_id"
+        );
 
         // 2.1 Invalidate with superseded_by and verify read model preserves it
         let invalidate_params = InvalidateParams {
@@ -1072,20 +1092,52 @@ mod tests {
         };
         let _ = invalidate(&ctx.state, invalidate_params).await.unwrap();
 
-        let result = get_memory(&ctx.state, GetMemoryParams { id: id.clone() }).await.unwrap();
+        let result = get_memory(&ctx.state, GetMemoryParams { id: id.clone() })
+            .await
+            .unwrap();
         let val = serde_json::to_value(&result).unwrap();
         let text = val["content"][0]["text"].as_str().unwrap();
         let invalidated_json: serde_json::Value = serde_json::from_str(text).unwrap();
-        assert_eq!(invalidated_json["memory"]["superseded_by"], "replacement-123");
-        assert_eq!(invalidated_json["memory"]["consolidation_trace"]["status"], "superseded");
-        assert_eq!(invalidated_json["memory"]["consolidation_trace"]["has_replacement"], true);
-        assert_eq!(invalidated_json["memory"]["replacement_lineage"]["depth"], 1);
-        assert_eq!(invalidated_json["memory"]["replacement_lineage"]["terminal_replacement_id"], "replacement-123");
-        assert_eq!(invalidated_json["memory"]["attention_summary"]["lineage_depth"], 1);
-        assert_eq!(invalidated_json["memory"]["attention_summary"]["requires_operator_attention"], false);
-        assert_eq!(invalidated_json["memory"]["operator_summary"]["stage"], "read");
-        assert_eq!(invalidated_json["memory"]["operator_summary"]["lifecycle_status"], "superseded");
-        assert_eq!(lineage_ids(&invalidated_json["memory"]), vec!["replacement-123".to_string()]);
+        assert_eq!(
+            invalidated_json["memory"]["superseded_by"],
+            "replacement-123"
+        );
+        assert_eq!(
+            invalidated_json["memory"]["consolidation_trace"]["status"],
+            "superseded"
+        );
+        assert_eq!(
+            invalidated_json["memory"]["consolidation_trace"]["has_replacement"],
+            true
+        );
+        assert_eq!(
+            invalidated_json["memory"]["replacement_lineage"]["depth"],
+            1
+        );
+        assert_eq!(
+            invalidated_json["memory"]["replacement_lineage"]["terminal_replacement_id"],
+            "replacement-123"
+        );
+        assert_eq!(
+            invalidated_json["memory"]["attention_summary"]["lineage_depth"],
+            1
+        );
+        assert_eq!(
+            invalidated_json["memory"]["attention_summary"]["requires_operator_attention"],
+            false
+        );
+        assert_eq!(
+            invalidated_json["memory"]["operator_summary"]["stage"],
+            "read"
+        );
+        assert_eq!(
+            invalidated_json["memory"]["operator_summary"]["lifecycle_status"],
+            "superseded"
+        );
+        assert_eq!(
+            lineage_ids(&invalidated_json["memory"]),
+            vec!["replacement-123".to_string()]
+        );
 
         // 3. List
         let list_params = ListMemoriesParams {
@@ -1110,11 +1162,17 @@ mod tests {
         assert_eq!(list_json["memories"].as_array().unwrap().len(), 0);
         assert_eq!(list_json["total"], 0);
         assert_eq!(list_json["filters"]["userId"], "user1");
-        assert_eq!(list_json["contract"]["compatibility"]["mode"], "additive_first");
+        assert_eq!(
+            list_json["contract"]["compatibility"]["mode"],
+            "additive_first"
+        );
         assert_eq!(list_json["summary"]["result_kind"], "collection");
         assert!(list_json["summary"]["partial"]["reason_code"].is_null());
         assert!(list_json["summary"]["partial"]["reason"].is_null());
-        assert_eq!(list_json["contract"]["identity"]["node_id_semantics"], "stable_public_memory_id");
+        assert_eq!(
+            list_json["contract"]["identity"]["node_id_semantics"],
+            "stable_public_memory_id"
+        );
     }
 
     #[tokio::test]
@@ -1141,14 +1199,22 @@ mod tests {
         let store_json: serde_json::Value = serde_json::from_str(store_text).unwrap();
         let id = store_json["id"].as_str().unwrap().to_string();
 
-        let get_result = get_memory(&ctx.state, GetMemoryParams { id: id.clone() }).await.unwrap();
+        let get_result = get_memory(&ctx.state, GetMemoryParams { id: id.clone() })
+            .await
+            .unwrap();
         let get_val = serde_json::to_value(&get_result).unwrap();
         let get_text = get_val["content"][0]["text"].as_str().unwrap();
         let get_json: serde_json::Value = serde_json::from_str(get_text).unwrap();
         assert_eq!(get_json["contract"]["schema_version"], 1);
         assert_eq!(get_json["contract"]["identity"]["stable_memory_id"], id);
-        assert_eq!(get_json["contract"]["identity"]["node_id_semantics"], "stable_public_memory_id");
-        assert_eq!(get_json["contract"]["compatibility"]["mode"], "additive_first");
+        assert_eq!(
+            get_json["contract"]["identity"]["node_id_semantics"],
+            "stable_public_memory_id"
+        );
+        assert_eq!(
+            get_json["contract"]["compatibility"]["mode"],
+            "additive_first"
+        );
         assert!(get_json["summary"]["partial"]["reason_code"].is_null());
         assert!(get_json["summary"]["partial"]["reason"].is_null());
         assert_eq!(get_json["summary"]["result_kind"], "memory");
@@ -1178,9 +1244,18 @@ mod tests {
         let list_json: serde_json::Value = serde_json::from_str(list_text).unwrap();
         assert_eq!(list_json["contract"]["schema_version"], 1);
         assert_eq!(list_json["contract"]["identity"]["stable_node_ids"], true);
-        assert_eq!(list_json["contract"]["identity"]["node_ids_are_project_scoped"], false);
-        assert_eq!(list_json["contract"]["identity"]["node_id_semantics"], "stable_public_memory_id");
-        assert_eq!(list_json["contract"]["compatibility"]["clients_must_ignore_unknown_fields"], true);
+        assert_eq!(
+            list_json["contract"]["identity"]["node_ids_are_project_scoped"],
+            false
+        );
+        assert_eq!(
+            list_json["contract"]["identity"]["node_id_semantics"],
+            "stable_public_memory_id"
+        );
+        assert_eq!(
+            list_json["contract"]["compatibility"]["clients_must_ignore_unknown_fields"],
+            true
+        );
         assert_eq!(list_json["summary"]["result_kind"], "collection");
         assert_eq!(list_json["summary"]["counts"]["results"], 1);
 
@@ -1206,7 +1281,10 @@ mod tests {
         let valid_val = serde_json::to_value(&valid_result).unwrap();
         let valid_text = valid_val["content"][0]["text"].as_str().unwrap();
         let valid_json: serde_json::Value = serde_json::from_str(valid_text).unwrap();
-        assert_eq!(valid_json["contract"]["identity"]["node_id_semantics"], "stable_public_memory_id");
+        assert_eq!(
+            valid_json["contract"]["identity"]["node_id_semantics"],
+            "stable_public_memory_id"
+        );
         assert_eq!(valid_json["summary"]["result_kind"], "collection");
     }
 
@@ -1242,7 +1320,9 @@ mod tests {
             expected_plan_fingerprint: None,
             metadata: Some(json!({"source": "consolidated"})),
         };
-        let result = consolidate_memory(&ctx.state, consolidate_params).await.unwrap();
+        let result = consolidate_memory(&ctx.state, consolidate_params)
+            .await
+            .unwrap();
         let val = serde_json::to_value(&result).unwrap();
         let text = val["content"][0]["text"].as_str().unwrap();
         let consolidate_json: serde_json::Value = serde_json::from_str(text).unwrap();
@@ -1256,10 +1336,7 @@ mod tests {
             consolidate_json["plan_diagnostics"]["content_hash"],
             consolidate_json["content_hash"]
         );
-        assert_eq!(
-            consolidate_json["plan_diagnostics"]["matched_count"],
-            1
-        );
+        assert_eq!(consolidate_json["plan_diagnostics"]["matched_count"], 1);
         assert_eq!(
             consolidate_json["plan_diagnostics"]["matched_ids"][0],
             original_id
@@ -1269,32 +1346,69 @@ mod tests {
             "semantic"
         );
         assert_eq!(consolidate_json["matched_summary"][0]["id"], original_id);
-        assert!(consolidate_json["matched_summary"][0]["matched_by"]
-            .as_array()
-            .unwrap()
-            .len()
-            >= 1);
-        assert_eq!(consolidate_json["execution_summary"]["replacement_id"], replacement_id);
-        assert_eq!(consolidate_json["execution_summary"]["used_plan_fingerprint"], consolidate_json["plan_fingerprint"]);
-        assert_eq!(consolidate_json["attention_summary"]["requires_operator_attention"], false);
-        assert_eq!(consolidate_json["attention_summary"]["fingerprint_checked"], false);
-        assert_eq!(consolidate_json["lookup_diagnostics"]["used_hash_first"], true);
-        assert_eq!(consolidate_json["lookup_diagnostics"]["used_exact_content_fallback"], false);
+        assert!(
+            consolidate_json["matched_summary"][0]["matched_by"]
+                .as_array()
+                .unwrap()
+                .len()
+                >= 1
+        );
+        assert_eq!(
+            consolidate_json["execution_summary"]["replacement_id"],
+            replacement_id
+        );
+        assert_eq!(
+            consolidate_json["execution_summary"]["used_plan_fingerprint"],
+            consolidate_json["plan_fingerprint"]
+        );
+        assert_eq!(
+            consolidate_json["attention_summary"]["requires_operator_attention"],
+            false
+        );
+        assert_eq!(
+            consolidate_json["attention_summary"]["fingerprint_checked"],
+            false
+        );
+        assert_eq!(
+            consolidate_json["lookup_diagnostics"]["used_hash_first"],
+            true
+        );
+        assert_eq!(
+            consolidate_json["lookup_diagnostics"]["used_exact_content_fallback"],
+            false
+        );
         assert_eq!(consolidate_json["operator_summary"]["stage"], "apply");
-        assert_eq!(consolidate_json["operator_summary"]["primary_signal"], "plan_diagnostics");
+        assert_eq!(
+            consolidate_json["operator_summary"]["primary_signal"],
+            "plan_diagnostics"
+        );
 
-        let result = get_memory(&ctx.state, GetMemoryParams { id: original_id.clone() })
-            .await
-            .unwrap();
+        let result = get_memory(
+            &ctx.state,
+            GetMemoryParams {
+                id: original_id.clone(),
+            },
+        )
+        .await
+        .unwrap();
         let val = serde_json::to_value(&result).unwrap();
         let text = val["content"][0]["text"].as_str().unwrap();
         let old_memory_json: serde_json::Value = serde_json::from_str(text).unwrap();
         assert_eq!(old_memory_json["superseded_by"], replacement_id);
         assert_eq!(old_memory_json["invalidation_reason"], "deduplicated");
-        assert_eq!(old_memory_json["consolidation_trace"]["status"], "superseded");
+        assert_eq!(
+            old_memory_json["consolidation_trace"]["status"],
+            "superseded"
+        );
         assert_eq!(old_memory_json["replacement_lineage"]["depth"], 1);
-        assert_eq!(old_memory_json["replacement_lineage"]["terminal_replacement_id"], replacement_id);
-        assert_eq!(old_memory_json["operator_summary"]["lifecycle_status"], "superseded");
+        assert_eq!(
+            old_memory_json["replacement_lineage"]["terminal_replacement_id"],
+            replacement_id
+        );
+        assert_eq!(
+            old_memory_json["operator_summary"]["lifecycle_status"],
+            "superseded"
+        );
         assert_eq!(lineage_ids(&old_memory_json), vec![replacement_id.clone()]);
 
         let list_params = ListMemoriesParams {
@@ -1324,7 +1438,10 @@ mod tests {
             .or_else(|| memories[0]["id"].as_str())
             .expect("list memory id should be readable");
         assert_eq!(listed_id, replacement_id);
-        assert_eq!(memories[0]["content_hash"], consolidate_json["content_hash"]);
+        assert_eq!(
+            memories[0]["content_hash"],
+            consolidate_json["content_hash"]
+        );
         assert_eq!(memories[0]["consolidation_trace"]["status"], "active");
         assert_eq!(memories[0]["replacement_lineage"]["depth"], 0);
         assert_eq!(memories[0]["operator_summary"]["stage"], "read");
@@ -1362,7 +1479,9 @@ mod tests {
             metadata: Some(json!({"source": "preview"})),
         };
 
-        let result = preview_consolidate_memory(&ctx.state, preview_params).await.unwrap();
+        let result = preview_consolidate_memory(&ctx.state, preview_params)
+            .await
+            .unwrap();
         let val = serde_json::to_value(&result).unwrap();
         let text = val["content"][0]["text"].as_str().unwrap();
         let preview_json: serde_json::Value = serde_json::from_str(text).unwrap();
@@ -1374,22 +1493,48 @@ mod tests {
         let matched_by = preview_json["matched_summary"][0]["matched_by"]
             .as_array()
             .unwrap();
-        assert!(matched_by.iter().any(|value| value == "content_hash" || value == "exact_content"));
+        assert!(matched_by
+            .iter()
+            .any(|value| value == "content_hash" || value == "exact_content"));
         assert_eq!(preview_json["reason"], "deduplicated");
-        let fingerprint = preview_json["plan_fingerprint"].as_str().unwrap().to_string();
+        let fingerprint = preview_json["plan_fingerprint"]
+            .as_str()
+            .unwrap()
+            .to_string();
         assert_eq!(preview_json["lookup_diagnostics"]["used_hash_first"], true);
-        assert_eq!(preview_json["lookup_diagnostics"]["used_exact_content_fallback"], false);
-        assert_eq!(preview_json["plan_diagnostics"]["content_hash"], preview_json["content_hash"]);
+        assert_eq!(
+            preview_json["lookup_diagnostics"]["used_exact_content_fallback"],
+            false
+        );
+        assert_eq!(
+            preview_json["plan_diagnostics"]["content_hash"],
+            preview_json["content_hash"]
+        );
         assert_eq!(preview_json["plan_diagnostics"]["matched_count"], 1);
-        assert_eq!(preview_json["plan_diagnostics"]["matched_ids"][0], original_id);
-        assert_eq!(preview_json["plan_diagnostics"]["replacement"]["memory_type"], "semantic");
-        assert_eq!(preview_json["plan_diagnostics"]["replacement"]["importance_score"], 2.0);
+        assert_eq!(
+            preview_json["plan_diagnostics"]["matched_ids"][0],
+            original_id
+        );
+        assert_eq!(
+            preview_json["plan_diagnostics"]["replacement"]["memory_type"],
+            "semantic"
+        );
+        assert_eq!(
+            preview_json["plan_diagnostics"]["replacement"]["importance_score"],
+            2.0
+        );
         assert_eq!(preview_json["replacement"]["memory_type"], "semantic");
         assert_eq!(preview_json["replacement"]["importance_score"], 2.0);
-        assert_eq!(preview_json["attention_summary"]["requires_operator_attention"], false);
+        assert_eq!(
+            preview_json["attention_summary"]["requires_operator_attention"],
+            false
+        );
         assert_eq!(preview_json["attention_summary"]["multiple_matches"], false);
         assert_eq!(preview_json["operator_summary"]["stage"], "preview");
-        assert_eq!(preview_json["operator_summary"]["primary_signal"], "plan_diagnostics");
+        assert_eq!(
+            preview_json["operator_summary"]["primary_signal"],
+            "plan_diagnostics"
+        );
 
         let preview_list_result = list_memories(
             &ctx.state,
@@ -1416,16 +1561,29 @@ mod tests {
         let preview_list_json: serde_json::Value = serde_json::from_str(preview_list_text).unwrap();
         assert_eq!(preview_list_json["total"], 1);
 
-        let preview_get_result =
-            get_memory(&ctx.state, GetMemoryParams { id: original_id.clone() }).await.unwrap();
+        let preview_get_result = get_memory(
+            &ctx.state,
+            GetMemoryParams {
+                id: original_id.clone(),
+            },
+        )
+        .await
+        .unwrap();
         let preview_get_val = serde_json::to_value(&preview_get_result).unwrap();
         let preview_get_text = preview_get_val["content"][0]["text"].as_str().unwrap();
-        let original_after_preview: serde_json::Value = serde_json::from_str(preview_get_text).unwrap();
+        let original_after_preview: serde_json::Value =
+            serde_json::from_str(preview_get_text).unwrap();
         assert!(original_after_preview["superseded_by"].is_null());
         assert!(original_after_preview["invalidation_reason"].is_null());
-        assert_eq!(original_after_preview["consolidation_trace"]["status"], "active");
+        assert_eq!(
+            original_after_preview["consolidation_trace"]["status"],
+            "active"
+        );
         assert_eq!(original_after_preview["replacement_lineage"]["depth"], 0);
-        assert_eq!(original_after_preview["operator_summary"]["lifecycle_status"], "active");
+        assert_eq!(
+            original_after_preview["operator_summary"]["lifecycle_status"],
+            "active"
+        );
 
         let execute_result = consolidate_memory(
             &ctx.state,
@@ -1448,12 +1606,27 @@ mod tests {
         let execute_text = execute_val["content"][0]["text"].as_str().unwrap();
         let execute_json: serde_json::Value = serde_json::from_str(execute_text).unwrap();
         assert_eq!(execute_json["plan_fingerprint"], fingerprint);
-        assert_eq!(execute_json["execution_summary"]["used_plan_fingerprint"], fingerprint);
-        assert_eq!(execute_json["execution_summary"]["superseded_ids"][0], original_id);
-        assert_eq!(execute_json["attention_summary"]["fingerprint_checked"], true);
-        assert_eq!(execute_json["attention_summary"]["requires_operator_attention"], false);
+        assert_eq!(
+            execute_json["execution_summary"]["used_plan_fingerprint"],
+            fingerprint
+        );
+        assert_eq!(
+            execute_json["execution_summary"]["superseded_ids"][0],
+            original_id
+        );
+        assert_eq!(
+            execute_json["attention_summary"]["fingerprint_checked"],
+            true
+        );
+        assert_eq!(
+            execute_json["attention_summary"]["requires_operator_attention"],
+            false
+        );
         assert_eq!(execute_json["operator_summary"]["stage"], "apply");
-        assert_eq!(execute_json["operator_summary"]["primary_signal"], "plan_diagnostics");
+        assert_eq!(
+            execute_json["operator_summary"]["primary_signal"],
+            "plan_diagnostics"
+        );
 
         let stale_result = consolidate_memory(
             &ctx.state,
@@ -1501,16 +1674,30 @@ mod tests {
         let list_json: serde_json::Value = serde_json::from_str(text).unwrap();
         assert_eq!(list_json["total"], 1);
 
-        let result = get_memory(&ctx.state, GetMemoryParams { id: original_id }).await.unwrap();
+        let result = get_memory(&ctx.state, GetMemoryParams { id: original_id })
+            .await
+            .unwrap();
         let val = serde_json::to_value(&result).unwrap();
         let text = val["content"][0]["text"].as_str().unwrap();
         let original_after_preview: serde_json::Value = serde_json::from_str(text).unwrap();
         assert!(original_after_preview["superseded_by"].is_string());
-        assert_eq!(original_after_preview["invalidation_reason"], "deduplicated");
-        assert_eq!(original_after_preview["consolidation_trace"]["status"], "superseded");
+        assert_eq!(
+            original_after_preview["invalidation_reason"],
+            "deduplicated"
+        );
+        assert_eq!(
+            original_after_preview["consolidation_trace"]["status"],
+            "superseded"
+        );
         assert_eq!(original_after_preview["replacement_lineage"]["depth"], 1);
-        assert_eq!(original_after_preview["replacement_lineage"]["terminal_replacement_id"], execute_json["id"]);
-        assert_eq!(original_after_preview["operator_summary"]["lifecycle_status"], "superseded");
+        assert_eq!(
+            original_after_preview["replacement_lineage"]["terminal_replacement_id"],
+            execute_json["id"]
+        );
+        assert_eq!(
+            original_after_preview["operator_summary"]["lifecycle_status"],
+            "superseded"
+        );
     }
 
     #[tokio::test]
@@ -1587,7 +1774,10 @@ mod tests {
         let preview_val = serde_json::to_value(&preview_result).unwrap();
         let preview_text = preview_val["content"][0]["text"].as_str().unwrap();
         let preview_json: serde_json::Value = serde_json::from_str(preview_text).unwrap();
-        let fingerprint = preview_json["plan_fingerprint"].as_str().unwrap().to_string();
+        let fingerprint = preview_json["plan_fingerprint"]
+            .as_str()
+            .unwrap()
+            .to_string();
         assert_eq!(preview_json["content_hash"], updated_hash);
         assert_eq!(preview_json["matched_count"], 1);
         assert_eq!(preview_json["matched_ids"][0], id);
@@ -1641,7 +1831,9 @@ mod tests {
             ..Default::default()
         };
 
-        let legacy_id = create_and_sync_memory(&ctx.state, legacy_memory).await.unwrap();
+        let legacy_id = create_and_sync_memory(&ctx.state, legacy_memory)
+            .await
+            .unwrap();
 
         let result = consolidate_memory(
             &ctx.state,
@@ -1667,19 +1859,36 @@ mod tests {
 
         assert_eq!(consolidate_json["superseded_count"], 1);
         assert_eq!(consolidate_json["superseded_ids"][0], legacy_id);
-        assert_eq!(consolidate_json["lookup_diagnostics"]["used_hash_first"], false);
-        assert_eq!(consolidate_json["lookup_diagnostics"]["used_exact_content_fallback"], true);
-        assert_eq!(consolidate_json["lookup_diagnostics"]["exact_content_fallback_match_count"], 1);
-        assert_eq!(consolidate_json["operator_summary"]["primary_signal"], "plan_diagnostics");
+        assert_eq!(
+            consolidate_json["lookup_diagnostics"]["used_hash_first"],
+            false
+        );
+        assert_eq!(
+            consolidate_json["lookup_diagnostics"]["used_exact_content_fallback"],
+            true
+        );
+        assert_eq!(
+            consolidate_json["lookup_diagnostics"]["exact_content_fallback_match_count"],
+            1
+        );
+        assert_eq!(
+            consolidate_json["operator_summary"]["primary_signal"],
+            "plan_diagnostics"
+        );
         assert!(consolidate_json["matched_summary"][0]["matched_by"]
             .as_array()
             .unwrap()
             .iter()
             .any(|value| value == "exact_content"));
 
-        let legacy_after = get_memory(&ctx.state, GetMemoryParams { id: legacy_id.clone() })
-            .await
-            .unwrap();
+        let legacy_after = get_memory(
+            &ctx.state,
+            GetMemoryParams {
+                id: legacy_id.clone(),
+            },
+        )
+        .await
+        .unwrap();
         let legacy_after_val = serde_json::to_value(&legacy_after).unwrap();
         let legacy_after_text = legacy_after_val["content"][0]["text"].as_str().unwrap();
         let legacy_after_json: serde_json::Value = serde_json::from_str(legacy_after_text).unwrap();
@@ -1717,23 +1926,36 @@ mod tests {
 
         assert_ne!(first_id, second_id);
 
-        let first_get = get_memory(&ctx.state, GetMemoryParams { id: first_id.clone() })
-            .await
-            .unwrap();
+        let first_get = get_memory(
+            &ctx.state,
+            GetMemoryParams {
+                id: first_id.clone(),
+            },
+        )
+        .await
+        .unwrap();
         let first_get_val = serde_json::to_value(&first_get).unwrap();
         let first_get_text = first_get_val["content"][0]["text"].as_str().unwrap();
         let first_memory_json: serde_json::Value = serde_json::from_str(first_get_text).unwrap();
 
-        let second_get = get_memory(&ctx.state, GetMemoryParams { id: second_id.clone() })
-            .await
-            .unwrap();
+        let second_get = get_memory(
+            &ctx.state,
+            GetMemoryParams {
+                id: second_id.clone(),
+            },
+        )
+        .await
+        .unwrap();
         let second_get_val = serde_json::to_value(&second_get).unwrap();
         let second_get_text = second_get_val["content"][0]["text"].as_str().unwrap();
         let second_memory_json: serde_json::Value = serde_json::from_str(second_get_text).unwrap();
 
         assert_eq!(first_memory_json["content"], "store duplicate behavior");
         assert_eq!(second_memory_json["content"], "store duplicate behavior");
-        assert_eq!(first_memory_json["content_hash"], second_memory_json["content_hash"]);
+        assert_eq!(
+            first_memory_json["content_hash"],
+            second_memory_json["content_hash"]
+        );
 
         let list_result = list_memories(
             &ctx.state,
@@ -1833,7 +2055,13 @@ mod tests {
 
         assert_eq!(consolidate_json["superseded_count"], 1);
         assert_eq!(consolidate_json["superseded_ids"][0], original_id);
-        assert_eq!(consolidate_json["lookup_diagnostics"]["used_hash_first"], true);
-        assert_eq!(consolidate_json["lookup_diagnostics"]["used_exact_content_fallback"], false);
+        assert_eq!(
+            consolidate_json["lookup_diagnostics"]["used_hash_first"],
+            true
+        );
+        assert_eq!(
+            consolidate_json["lookup_diagnostics"]["used_exact_content_fallback"],
+            false
+        );
     }
 }

@@ -1,6 +1,4 @@
-use super::entity::{
-    ConfidenceClass, RelationClass, RelationProvenance, StalenessState,
-};
+use super::entity::{ConfidenceClass, RelationClass, RelationProvenance, StalenessState};
 use super::{Datetime, SurrealValue, Thing};
 use serde::{Deserialize, Serialize};
 

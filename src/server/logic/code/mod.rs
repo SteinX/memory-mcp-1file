@@ -8,6 +8,14 @@ mod indexing;
 mod search;
 mod symbols;
 
+use std::sync::Arc;
+
+use serde_json::json;
+
+use crate::config::AppState;
+use crate::storage::StorageBackend;
+use crate::types::{CodeIntelligenceDiagnostic, ContractReasonCode};
+
 // Re-export everything so external callers see the same flat API as before.
 pub use indexing::{
     delete_project, get_degradation_info, get_index_status, get_project_projection,
@@ -16,12 +24,78 @@ pub use indexing::{
 pub use search::{recall_code, search_code};
 pub use symbols::{search_symbols, symbol_graph};
 
+pub(crate) struct MissingProjectBindingDiagnostic {
+    pub code_intelligence: serde_json::Value,
+    pub project_binding: serde_json::Value,
+    pub reason_code: ContractReasonCode,
+    pub reason: String,
+    pub message: String,
+}
+
+pub(crate) async fn missing_project_binding_diagnostic(
+    state: &Arc<AppState>,
+    project_id: Option<&str>,
+) -> Option<MissingProjectBindingDiagnostic> {
+    let project_id = project_id?;
+
+    if state.project_registry.get(project_id).await.is_some() {
+        return None;
+    }
+
+    let has_status = matches!(state.storage.get_index_status(project_id).await, Ok(Some(_)));
+    if has_status {
+        return None;
+    }
+
+    let has_index_rows = state.storage.count_chunks(project_id).await.unwrap_or(0) > 0
+        || state.storage.count_symbols(project_id).await.unwrap_or(0) > 0
+        || state.storage.count_manifest_entries(project_id).await.unwrap_or(0) > 0;
+    if has_index_rows {
+        return None;
+    }
+
+    let message = format!(
+        "Requested project_id '{project_id}' is not registered on this server and has no usable index status. Mount a server-visible project root, then register/index it via index_project (or startup PROJECT_PATH/--project-path). Client-local paths are not server-visible unless mounted."
+    );
+
+    Some(MissingProjectBindingDiagnostic {
+        code_intelligence: CodeIntelligenceDiagnostic::degraded(message.clone()).as_json(),
+        project_binding: json!({
+            "project_id": project_id,
+            "state": "missing",
+            "reason_code": ContractReasonCode::Missing,
+            "remediation": {
+                "mount_server_visible_root": true,
+                "register_or_index": "run index_project with a server-visible path (or set PROJECT_PATH/--project-path)",
+                "note": "client-local absolute paths are not visible to the server unless mounted"
+            }
+        }),
+        reason_code: ContractReasonCode::Missing,
+        reason: "project_missing".to_string(),
+        message,
+    })
+}
+
+pub(crate) fn apply_missing_project_binding_diagnostic(
+    response: &mut serde_json::Value,
+    diagnostic: &MissingProjectBindingDiagnostic,
+) {
+    response["code_intelligence"] = diagnostic.code_intelligence.clone();
+    response["project_binding"] = diagnostic.project_binding.clone();
+    response["reason_code"] = json!(diagnostic.reason_code);
+
+    let partial = &mut response["summary"]["partial"];
+    partial["is_partial"] = json!(true);
+    partial["reason_code"] = json!(diagnostic.reason_code);
+    partial["reason"] = json!(diagnostic.reason);
+    partial["message"] = json!(diagnostic.message);
+}
+
 #[cfg(test)]
 mod tests {
     use crate::server::params::{
         GetIndexStatusParams, GetProjectProjectionParams, GetProjectionByLocatorParams,
-        IndexProjectParams, SearchCodeParams,
-        SearchSymbolsParams, SymbolGraphParams,
+        IndexProjectParams, SearchCodeParams, SearchSymbolsParams, SymbolGraphParams,
     };
     use crate::storage::StorageBackend;
     use crate::test_utils::TestContext;
@@ -252,6 +326,108 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn search_code_reports_missing_project_binding_for_unregistered_project_id() {
+        let ctx = TestContext::new().await;
+
+        let search_res = super::search_code(
+            &ctx.state,
+            SearchCodeParams {
+                query: "missing project".to_string(),
+                project_id: Some("unregistered_project_binding".to_string()),
+                limit: Some(5),
+            },
+        )
+        .await
+        .unwrap();
+
+        if let rmcp::model::RawContent::Text(t) = &search_res.content[0].raw {
+            let json: serde_json::Value = serde_json::from_str(&t.text).unwrap();
+            assert_eq!(json["reason_code"], "missing");
+            assert_eq!(json["summary"]["partial"]["reason_code"], "missing");
+            assert_eq!(json["summary"]["partial"]["reason"], "project_missing");
+            assert_eq!(json["project_binding"]["state"], "missing");
+            assert_eq!(json["project_binding"]["project_id"], "unregistered_project_binding");
+            assert_eq!(json["code_intelligence"]["status"], "degraded");
+            assert_eq!(json["code_intelligence"]["reason_code"], "degraded");
+            assert!(json["summary"]["partial"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("server-visible"));
+        } else {
+            panic!("Expected text content");
+        }
+    }
+
+    #[tokio::test]
+    async fn search_symbols_skips_missing_project_binding_when_project_is_registered() {
+        let ctx = TestContext::new().await;
+        let unique_id = format!("test_registered_symbols_{}", uuid::Uuid::new_v4().simple());
+        let project_path = ctx._temp_dir.path().join(&unique_id);
+        fs::create_dir_all(&project_path).unwrap();
+        fs::write(project_path.join("lib.rs"), "fn registered_symbol() {}\n").unwrap();
+
+        super::index_project(
+            &ctx.state,
+            IndexProjectParams {
+                path: project_path.to_string_lossy().to_string(),
+                force: None,
+                confirm_failed_restart: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        let status_params = GetIndexStatusParams {
+            project_id: unique_id.clone(),
+        };
+
+        let mut retries = 0;
+        loop {
+            tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
+            let res = super::get_index_status(&ctx.state, status_params.clone())
+                .await
+                .unwrap();
+            if let rmcp::model::RawContent::Text(t) = &res.content[0].raw {
+                let indexing_done = t.text.contains("\"status\":\"completed\"")
+                    || t.text.contains("\"status\":\"embedding_pending\"");
+                if indexing_done {
+                    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+                    break;
+                }
+            }
+            retries += 1;
+            assert!(
+                retries <= 100,
+                "Indexing timed out for registered project diagnostic test"
+            );
+        }
+
+        let symbol_res = super::search_symbols(
+            &ctx.state,
+            SearchSymbolsParams {
+                query: "registered_symbol".to_string(),
+                project_id: Some(unique_id.clone()),
+                limit: Some(10),
+                offset: Some(0),
+                symbol_type: None,
+                path_prefix: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        if let rmcp::model::RawContent::Text(t) = &symbol_res.content[0].raw {
+            let json: serde_json::Value = serde_json::from_str(&t.text).unwrap();
+            assert_eq!(json["filters"]["project_id"], unique_id);
+            assert!(json.get("project_binding").is_none());
+            assert!(json.get("reason_code").is_none());
+            assert_ne!(json["summary"]["partial"]["reason_code"], "missing");
+        } else {
+            panic!("Expected text content");
+        }
+    }
+
+    #[tokio::test]
     async fn symbol_graph_exposes_contract_metadata() {
         let ctx = TestContext::new().await;
         let unique_id = format!("test_symbols_contract_{}", uuid::Uuid::new_v4().simple());
@@ -293,7 +469,10 @@ mod tests {
                 }
             }
             retries += 1;
-            assert!(retries <= 100, "Indexing timed out for symbol graph contract test");
+            assert!(
+                retries <= 100,
+                "Indexing timed out for symbol graph contract test"
+            );
         }
 
         let symbols = ctx
@@ -328,18 +507,51 @@ mod tests {
 
         assert_eq!(json["contract"]["schema_version"], 1);
         assert_eq!(json["contract"]["identity"]["stable_symbol_id"], caller_id);
-        assert_eq!(json["contract"]["compatibility"]["db_shape_is_not_public_contract"], true);
+        assert_eq!(
+            json["contract"]["compatibility"]["db_shape_is_not_public_contract"],
+            true
+        );
         assert_eq!(json["contract"]["identity"]["stable_node_ids"], true);
-        assert_eq!(json["contract"]["identity"]["edge_ids_are_local_only"], true);
-        assert_eq!(json["contract"]["identity"]["node_id_semantics"], "stable_project_scoped_symbol_id");
-        assert_eq!(json["contract"]["identity"]["edge_id_semantics"], "local_only_edge_reference");
-        assert_eq!(json["contract"]["surface_guidance"]["preferred_response_fields"][0], "nodes");
-        assert_eq!(json["contract"]["surface_guidance"]["legacy_compatibility_fields"][0], "symbols");
-        assert_eq!(json["contract"]["traversal_defaults"]["frontier_semantics"], "unexpanded_symbol_boundary_for_manual_follow_up");
-        assert_eq!(json["contract"]["traversal_defaults"]["frontier_items_identity_basis"], "stable_project_scoped_symbol_id");
-        assert_eq!(json["contract"]["traversal_defaults"]["frontier_items_are_stable_node_ids"], true);
-        assert_eq!(json["contract"]["traversal_defaults"]["frontier_items_are_project_scoped"], true);
-        assert_eq!(json["contract"]["traversal_defaults"]["frontier_is_cursor"], false);
+        assert_eq!(
+            json["contract"]["identity"]["edge_ids_are_local_only"],
+            true
+        );
+        assert_eq!(
+            json["contract"]["identity"]["node_id_semantics"],
+            "stable_project_scoped_symbol_id"
+        );
+        assert_eq!(
+            json["contract"]["identity"]["edge_id_semantics"],
+            "local_only_edge_reference"
+        );
+        assert_eq!(
+            json["contract"]["surface_guidance"]["preferred_response_fields"][0],
+            "nodes"
+        );
+        assert_eq!(
+            json["contract"]["surface_guidance"]["legacy_compatibility_fields"][0],
+            "symbols"
+        );
+        assert_eq!(
+            json["contract"]["traversal_defaults"]["frontier_semantics"],
+            "unexpanded_symbol_boundary_for_manual_follow_up"
+        );
+        assert_eq!(
+            json["contract"]["traversal_defaults"]["frontier_items_identity_basis"],
+            "stable_project_scoped_symbol_id"
+        );
+        assert_eq!(
+            json["contract"]["traversal_defaults"]["frontier_items_are_stable_node_ids"],
+            true
+        );
+        assert_eq!(
+            json["contract"]["traversal_defaults"]["frontier_items_are_project_scoped"],
+            true
+        );
+        assert_eq!(
+            json["contract"]["traversal_defaults"]["frontier_is_cursor"],
+            false
+        );
         assert_eq!(json["contract"]["projection_state"], "missing");
         assert_eq!(json["nodes"][0]["kind"], "function");
         assert_eq!(json["edges"][0]["relation_type"], "calls");
@@ -348,7 +560,10 @@ mod tests {
     #[tokio::test]
     async fn code_search_exposes_contract_metadata() {
         let ctx = TestContext::new().await;
-        let unique_id = format!("test_code_search_contract_{}", uuid::Uuid::new_v4().simple());
+        let unique_id = format!(
+            "test_code_search_contract_{}",
+            uuid::Uuid::new_v4().simple()
+        );
         let project_path = ctx._temp_dir.path().join(&unique_id);
         fs::create_dir_all(&project_path).unwrap();
         fs::write(
@@ -387,7 +602,10 @@ mod tests {
                 }
             }
             retries += 1;
-            assert!(retries <= 100, "Indexing timed out for code search contract test");
+            assert!(
+                retries <= 100,
+                "Indexing timed out for code search contract test"
+            );
         }
 
         let search_res = super::search_code(
@@ -409,11 +627,23 @@ mod tests {
             search_json["contract"]["compatibility"]["db_shape_is_not_public_contract"],
             true
         );
-        assert_eq!(search_json["contract"]["identity"]["stable_node_ids"], false);
-        assert_eq!(search_json["contract"]["identity"]["node_ids_are_project_scoped"], false);
+        assert_eq!(
+            search_json["contract"]["identity"]["stable_node_ids"],
+            false
+        );
+        assert_eq!(
+            search_json["contract"]["identity"]["node_ids_are_project_scoped"],
+            false
+        );
         assert_eq!(search_json["contract"]["identity"]["node_id_semantics"], "local_only_chunk_record_id; stable_local_locator_is_project_id_plus_file_path_plus_start_line_plus_end_line");
-        assert_eq!(search_json["contract"]["identity"]["edge_id_semantics"], "local_only_result_edge_reference");
-        assert_eq!(search_json["contract"]["surface_guidance"]["preferred_response_fields"][0], "results[].file_path");
+        assert_eq!(
+            search_json["contract"]["identity"]["edge_id_semantics"],
+            "local_only_result_edge_reference"
+        );
+        assert_eq!(
+            search_json["contract"]["surface_guidance"]["preferred_response_fields"][0],
+            "results[].file_path"
+        );
 
         let recall_res = super::recall_code(
             &ctx.state,
@@ -441,12 +671,27 @@ mod tests {
             recall_json["contract"]["compatibility"]["db_shape_is_not_public_contract"],
             true
         );
-        assert_eq!(recall_json["contract"]["identity"]["stable_node_ids"], false);
-        assert_eq!(recall_json["contract"]["identity"]["node_ids_are_project_scoped"], false);
+        assert_eq!(
+            recall_json["contract"]["identity"]["stable_node_ids"],
+            false
+        );
+        assert_eq!(
+            recall_json["contract"]["identity"]["node_ids_are_project_scoped"],
+            false
+        );
         assert_eq!(recall_json["contract"]["identity"]["node_id_semantics"], "local_only_chunk_record_id; stable_local_locator_is_project_id_plus_file_path_plus_start_line_plus_end_line");
-        assert_eq!(recall_json["contract"]["identity"]["edge_id_semantics"], "local_only_result_edge_reference");
-        assert_eq!(recall_json["contract"]["surface_guidance"]["forbidden_to_depend_fields"][0], "results[].id");
-        assert_eq!(recall_json["contract"]["surface_guidance"]["preferred_response_fields"][0], "results[].file_path");
+        assert_eq!(
+            recall_json["contract"]["identity"]["edge_id_semantics"],
+            "local_only_result_edge_reference"
+        );
+        assert_eq!(
+            recall_json["contract"]["surface_guidance"]["forbidden_to_depend_fields"][0],
+            "results[].id"
+        );
+        assert_eq!(
+            recall_json["contract"]["surface_guidance"]["preferred_response_fields"][0],
+            "results[].file_path"
+        );
     }
 
     #[tokio::test]
@@ -491,7 +736,10 @@ mod tests {
                 }
             }
             retries += 1;
-            assert!(retries <= 100, "Indexing timed out for projection builder test");
+            assert!(
+                retries <= 100,
+                "Indexing timed out for projection builder test"
+            );
         }
 
         let projection_res = super::get_project_projection(
@@ -513,17 +761,41 @@ mod tests {
         assert_eq!(json["projection"]["project_id"], json["project_id"]);
         assert_eq!(json["projection"]["request"]["relation_scope"], "all");
         assert_eq!(json["projection"]["request"]["sort_mode"], "canonical");
-        assert_eq!(json["projection"]["shaping"]["relation_scope_applied"], "all");
-        assert_eq!(json["projection"]["shaping"]["sort_mode_applied"], "canonical");
-        assert_eq!(json["projection"]["shaping"]["node_selection_basis"], "relation_endpoint_induced_subgraph");
-        assert_eq!(json["projection"]["shaping"]["edge_selection_basis"], "all_relation_edges");
-        assert_eq!(json["projection"]["shaping"]["output_kind"], "induced_symbol_graph");
+        assert_eq!(
+            json["projection"]["shaping"]["relation_scope_applied"],
+            "all"
+        );
+        assert_eq!(
+            json["projection"]["shaping"]["sort_mode_applied"],
+            "canonical"
+        );
+        assert_eq!(
+            json["projection"]["shaping"]["node_selection_basis"],
+            "relation_endpoint_induced_subgraph"
+        );
+        assert_eq!(
+            json["projection"]["shaping"]["edge_selection_basis"],
+            "all_relation_edges"
+        );
+        assert_eq!(
+            json["projection"]["shaping"]["output_kind"],
+            "induced_symbol_graph"
+        );
         assert_eq!(json["projection"]["contract"]["schema_version"], 1);
-        assert_eq!(json["projection"]["contract"]["projection"]["basis"], "semantic_generation");
+        assert_eq!(
+            json["projection"]["contract"]["projection"]["basis"],
+            "semantic_generation"
+        );
         assert_eq!(json["projection"]["summary"]["result_kind"], "graph");
         assert_eq!(json["projection"]["summary"]["partial"]["is_partial"], true);
-        assert_eq!(json["projection"]["summary"]["partial"]["reason_code"], "stale");
-        assert_eq!(json["projection"]["summary"]["partial"]["reason"], "projection_stale");
+        assert_eq!(
+            json["projection"]["summary"]["partial"]["reason_code"],
+            "stale"
+        );
+        assert_eq!(
+            json["projection"]["summary"]["partial"]["reason"],
+            "projection_stale"
+        );
         assert_eq!(json["locator"]["lookup"]["state"], "created");
         assert_eq!(json["locator"]["lookup"]["found"], true);
         assert!(json["locator"]["lookup"]["reason_code"].is_null());
@@ -602,7 +874,10 @@ mod tests {
                 }
             }
             retries += 1;
-            assert!(retries <= 100, "Indexing timed out for projection options test");
+            assert!(
+                retries <= 100,
+                "Indexing timed out for projection options test"
+            );
         }
 
         let projection_res = super::get_project_projection(
@@ -622,20 +897,41 @@ mod tests {
 
         assert_eq!(json["projection"]["request"]["relation_scope"], "none");
         assert_eq!(json["projection"]["request"]["sort_mode"], "canonical");
-        assert_eq!(json["projection"]["shaping"]["relation_scope_applied"], "none");
-        assert_eq!(json["projection"]["shaping"]["node_selection_basis"], "empty_graph_when_no_edges_retained");
-        assert_eq!(json["projection"]["shaping"]["edge_selection_basis"], "no_edges_retained");
+        assert_eq!(
+            json["projection"]["shaping"]["relation_scope_applied"],
+            "none"
+        );
+        assert_eq!(
+            json["projection"]["shaping"]["node_selection_basis"],
+            "empty_graph_when_no_edges_retained"
+        );
+        assert_eq!(
+            json["projection"]["shaping"]["edge_selection_basis"],
+            "no_edges_retained"
+        );
         assert_eq!(json["projection"]["shaping"]["output_kind"], "empty_graph");
         assert_eq!(json["projection"]["nodes"].as_array().unwrap().len(), 0);
         assert_eq!(json["projection"]["edges"].as_array().unwrap().len(), 0);
         assert_eq!(json["projection"]["counts"]["nodes"].as_u64().unwrap(), 0);
         assert_eq!(json["projection"]["counts"]["edges"].as_u64().unwrap(), 0);
         assert_eq!(json["projection"]["contract"]["schema_version"], 1);
-        assert_eq!(json["projection"]["contract"]["identity"]["project_id"], unique_id);
-        assert_eq!(json["projection"]["contract"]["projection"]["basis"], "semantic_generation");
+        assert_eq!(
+            json["projection"]["contract"]["identity"]["project_id"],
+            unique_id
+        );
+        assert_eq!(
+            json["projection"]["contract"]["projection"]["basis"],
+            "semantic_generation"
+        );
         assert_eq!(json["projection"]["summary"]["partial"]["is_partial"], true);
-        assert_eq!(json["projection"]["summary"]["partial"]["reason_code"], "stale");
-        assert_eq!(json["projection"]["summary"]["partial"]["reason"], "projection_stale");
+        assert_eq!(
+            json["projection"]["summary"]["partial"]["reason_code"],
+            "stale"
+        );
+        assert_eq!(
+            json["projection"]["summary"]["partial"]["reason"],
+            "projection_stale"
+        );
     }
 
     #[tokio::test]
@@ -680,7 +976,10 @@ mod tests {
                 }
             }
             retries += 1;
-            assert!(retries <= 100, "Indexing timed out for projection imports test");
+            assert!(
+                retries <= 100,
+                "Indexing timed out for projection imports test"
+            );
         }
 
         let projection_res = super::get_project_projection(
@@ -700,15 +999,33 @@ mod tests {
 
         assert_eq!(json["projection"]["request"]["relation_scope"], "imports");
         assert_eq!(json["projection"]["request"]["sort_mode"], "canonical");
-        assert_eq!(json["projection"]["shaping"]["relation_scope_applied"], "imports");
-        assert_eq!(json["projection"]["shaping"]["node_selection_basis"], "relation_endpoint_induced_subgraph");
-        assert_eq!(json["projection"]["shaping"]["edge_selection_basis"], "only_import_edges");
-        assert_eq!(json["projection"]["shaping"]["output_kind"], "induced_symbol_graph");
+        assert_eq!(
+            json["projection"]["shaping"]["relation_scope_applied"],
+            "imports"
+        );
+        assert_eq!(
+            json["projection"]["shaping"]["node_selection_basis"],
+            "relation_endpoint_induced_subgraph"
+        );
+        assert_eq!(
+            json["projection"]["shaping"]["edge_selection_basis"],
+            "only_import_edges"
+        );
+        assert_eq!(
+            json["projection"]["shaping"]["output_kind"],
+            "induced_symbol_graph"
+        );
         let edges = json["projection"]["edges"].as_array().unwrap();
         assert!(edges.iter().all(|edge| edge["relation_type"] == "imports"));
-        assert_eq!(json["projection"]["counts"]["edges"].as_u64().unwrap(), edges.len() as u64);
+        assert_eq!(
+            json["projection"]["counts"]["edges"].as_u64().unwrap(),
+            edges.len() as u64
+        );
         let nodes = json["projection"]["nodes"].as_array().unwrap();
-        assert_eq!(json["projection"]["counts"]["nodes"].as_u64().unwrap(), nodes.len() as u64);
+        assert_eq!(
+            json["projection"]["counts"]["nodes"].as_u64().unwrap(),
+            nodes.len() as u64
+        );
         let edge_node_ids: std::collections::HashSet<String> = edges
             .iter()
             .flat_map(|edge| {
@@ -724,10 +1041,19 @@ mod tests {
             .collect();
         assert_eq!(node_ids, edge_node_ids);
         assert_eq!(json["projection"]["contract"]["schema_version"], 1);
-        assert_eq!(json["projection"]["contract"]["identity"]["project_id"], unique_id);
+        assert_eq!(
+            json["projection"]["contract"]["identity"]["project_id"],
+            unique_id
+        );
         assert_eq!(json["projection"]["summary"]["partial"]["is_partial"], true);
-        assert_eq!(json["projection"]["summary"]["partial"]["reason_code"], "stale");
-        assert_eq!(json["projection"]["summary"]["partial"]["reason"], "projection_stale");
+        assert_eq!(
+            json["projection"]["summary"]["partial"]["reason_code"],
+            "stale"
+        );
+        assert_eq!(
+            json["projection"]["summary"]["partial"]["reason"],
+            "projection_stale"
+        );
     }
 
     #[tokio::test]
@@ -772,7 +1098,10 @@ mod tests {
                 }
             }
             retries += 1;
-            assert!(retries <= 100, "Indexing timed out for locator projection test");
+            assert!(
+                retries <= 100,
+                "Indexing timed out for locator projection test"
+            );
         }
 
         let projection_res = super::get_project_projection(
@@ -791,18 +1120,32 @@ mod tests {
         let json: serde_json::Value = serde_json::from_str(text).unwrap();
         let locator = json["locator"]["locator"].as_str().unwrap().to_string();
 
-        assert_eq!(json["locator"]["locator_kind"], "ephemeral_projection_handle");
+        assert_eq!(
+            json["locator"]["locator_kind"],
+            "ephemeral_projection_handle"
+        );
         assert_eq!(json["locator"]["project_id"], unique_id);
         assert_eq!(json["locator"]["lookup"]["state"], "created");
         assert_eq!(json["locator"]["lookup"]["found"], true);
         assert_eq!(json["locator"]["lifecycle"]["same_process_only"], true);
-        assert_eq!(json["locator"]["lifecycle"]["survives_process_restart"], false);
-        assert_eq!(json["locator"]["lifecycle"]["survives_generation_change"], false);
-        assert_eq!(json["projection"]["contract"]["projection"]["materialization"]["is_addressable"], false);
+        assert_eq!(
+            json["locator"]["lifecycle"]["survives_process_restart"],
+            false
+        );
+        assert_eq!(
+            json["locator"]["lifecycle"]["survives_generation_change"],
+            false
+        );
+        assert_eq!(
+            json["projection"]["contract"]["projection"]["materialization"]["is_addressable"],
+            false
+        );
 
         let readback_res = super::get_project_projection_by_locator(
             &ctx.state,
-            GetProjectionByLocatorParams { locator: locator.clone() },
+            GetProjectionByLocatorParams {
+                locator: locator.clone(),
+            },
         )
         .await
         .unwrap();
@@ -812,16 +1155,37 @@ mod tests {
         let readback_json: serde_json::Value = serde_json::from_str(readback_text).unwrap();
 
         assert_eq!(readback_json["locator"]["locator"], locator);
-        assert_eq!(readback_json["locator"]["locator_kind"], "ephemeral_projection_handle");
+        assert_eq!(
+            readback_json["locator"]["locator_kind"],
+            "ephemeral_projection_handle"
+        );
         assert_eq!(readback_json["locator"]["lookup"]["state"], "resolved");
         assert_eq!(readback_json["locator"]["lookup"]["found"], true);
         assert!(readback_json["locator"]["lookup"]["reason_code"].is_null());
-        assert_eq!(readback_json["projection"]["project_id"], json["projection"]["project_id"]);
-        assert_eq!(readback_json["projection"]["request"], json["projection"]["request"]);
-        assert_eq!(readback_json["projection"]["summary"], json["projection"]["summary"]);
-        assert_eq!(readback_json["projection"]["counts"], json["projection"]["counts"]);
-        assert_eq!(readback_json["projection"]["nodes"], json["projection"]["nodes"]);
-        assert_eq!(readback_json["projection"]["edges"], json["projection"]["edges"]);
+        assert_eq!(
+            readback_json["projection"]["project_id"],
+            json["projection"]["project_id"]
+        );
+        assert_eq!(
+            readback_json["projection"]["request"],
+            json["projection"]["request"]
+        );
+        assert_eq!(
+            readback_json["projection"]["summary"],
+            json["projection"]["summary"]
+        );
+        assert_eq!(
+            readback_json["projection"]["counts"],
+            json["projection"]["counts"]
+        );
+        assert_eq!(
+            readback_json["projection"]["nodes"],
+            json["projection"]["nodes"]
+        );
+        assert_eq!(
+            readback_json["projection"]["edges"],
+            json["projection"]["edges"]
+        );
     }
 
     #[tokio::test]

@@ -1,7 +1,7 @@
 pub mod codebase;
 pub mod config;
-pub mod forgetting;
 pub mod embedding;
+pub mod forgetting;
 pub mod graph;
 pub mod lifecycle;
 pub mod search;

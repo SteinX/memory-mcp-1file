@@ -297,7 +297,9 @@ impl IndexWorker {
 
                     // Trigger BM25 rebuild if anything actually changed.
                     if result.updated_files > 0 || !result.new_chunks.is_empty() {
-                        if let Ok(Some(mut status)) = self.state.storage.get_index_status(project_id).await {
+                        if let Ok(Some(mut status)) =
+                            self.state.storage.get_index_status(project_id).await
+                        {
                             status.mark_structural_generation_advanced();
                             status.status = crate::types::IndexState::EmbeddingPending;
                             if let Err(e) = self.state.storage.update_index_status(status).await {

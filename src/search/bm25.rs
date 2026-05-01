@@ -1529,8 +1529,8 @@ mod tests {
     /// `storage/surrealdb` would not receive the exact-match IDF boost.
     /// After the fix both the raw and normalised forms are emitted.
     #[tokio::test]
-    async fn test_exact_path_scoring() {
-        let engine = CodeSearchEngine::new();
+        async fn test_exact_path_scoring() {
+            let engine = CodeSearchEngine::new();
 
         let chunks = vec![
             make_chunk_pair(
@@ -1587,11 +1587,70 @@ mod tests {
         assert_eq!(
             results3[0].id, "c_surreal",
             "path query must rank SurrealStorage first"
-        );
-    }
+            );
+        }
 
-    /// Verify make_document_text emits both raw and normalised forms.
-    #[test]
+        #[tokio::test]
+        async fn test_code_search_engine_project_id_none_searches_all_projects_without_leakage() {
+            let engine = CodeSearchEngine::new();
+
+            engine
+                .rebuild_project(
+                    "alpha-root",
+                    vec![make_chunk_pair(
+                        "alpha_chunk",
+                        "src/alpha.rs",
+                        "fn shared_probe() { let alpha_marker = true; }",
+                        Some("shared_probe"),
+                        "alpha-root",
+                    )],
+                )
+                .await;
+            engine
+                .rebuild_project(
+                    "beta-root",
+                    vec![make_chunk_pair(
+                        "beta_chunk",
+                        "src/beta.rs",
+                        "fn shared_probe() { let beta_marker = true; }",
+                        Some("shared_probe"),
+                        "beta-root",
+                    )],
+                )
+                .await;
+
+            let mock_storage = MockStorage::new(vec![
+                MockStorage::make_chunk(
+                    "alpha_chunk",
+                    "fn shared_probe() { let alpha_marker = true; }",
+                ),
+                MockStorage::make_chunk(
+                    "beta_chunk",
+                    "fn shared_probe() { let beta_marker = true; }",
+                ),
+            ]);
+
+            let alpha_results = engine
+                .search("shared_probe", Some("alpha-root"), 10, &mock_storage)
+                .await;
+            assert_eq!(alpha_results.len(), 1);
+            assert_eq!(alpha_results[0].id, "alpha_chunk");
+
+            let beta_results = engine
+                .search("shared_probe", Some("beta-root"), 10, &mock_storage)
+                .await;
+            assert_eq!(beta_results.len(), 1);
+            assert_eq!(beta_results[0].id, "beta_chunk");
+
+            let all_results = engine
+                .search("shared_probe", None, 10, &mock_storage)
+                .await;
+            let ids: HashSet<_> = all_results.iter().map(|result| result.id.as_str()).collect();
+            assert_eq!(ids, HashSet::from(["alpha_chunk", "beta_chunk"]));
+        }
+
+        /// Verify make_document_text emits both raw and normalised forms.
+        #[test]
     fn test_make_document_text_includes_raw_path() {
         let chunk = ChunkMeta {
             id: "x".to_string(),

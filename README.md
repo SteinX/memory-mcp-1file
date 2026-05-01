@@ -127,9 +127,37 @@ To use this MCP server with any client (**Claude Code**, **OpenCode**, **Cline**
 1.  **Memory Volume**: `-v mcp-data:/data` (Persists your graph, embeddings, **and cached model weights**)
 2.  **Project Volume**: `-v $(pwd):/project:ro` (Allows the server to read and index your code)
 3.  **Init Process**: `--init` (Ensures the server shuts down cleanly)
+4.  **HTTP Server-Visible Paths**: When running in HTTP mode (default), the server can only index paths that are mounted into the container or otherwise visible to the server process. Local paths on the client machine are not automatically accessible.
 
 > [!TIP]
 > **One volume persists everything**: The single `-v mcp-data:/data` mount covers both the SurrealDB database **and** the ~1.2 GB embedding model (stored under `/data/models/`). There is no need for a separate volume for `/data/models` — it is already a subdirectory of `/data` and is preserved automatically. Without a named volume, Docker creates a new anonymous volume on each `docker run`, causing the model to re-download (~1.2 GB) every time.
+
+#### HTTP Mode (Default / Remote)
+
+When using the server over HTTP (e.g., for a remote agent or a containerized backend), ensure your project files are mounted into the container so the server can index them.
+
+```bash
+docker run -d \
+  --name memory-mcp \
+  --memory=3g \
+  -p 8080:8080 \
+  -v mcp-data:/data \
+  -v /absolute/path/to/host/project:/project:ro \
+  -e PROJECT_PATH=/project \
+  ghcr.io/pomazanbohdan/memory-mcp-1file:latest
+```
+
+> [!IMPORTANT]
+> **HTTP Server-Visible Paths**: The server process must be able to see the paths you request to index. When running in Docker, you must mount the project directory and specify its location using `PROJECT_PATH` or `--project-path`.
+
+#### Code Intelligence Startup Behavior
+
+The server uses a deterministic priority matrix to establish the primary project root for code intelligence:
+
+1.  **Explicit Configuration**: If `--project-path` or `PROJECT_PATH` is set and the path exists, it is used as the primary root.
+2.  **Missing Root**: If a path is explicitly configured but missing, the server continues startup but reports **missing-root** or **degraded** diagnostics. It will **not** silently fall back to other paths.
+3.  **Default Fallback**: If no path is configured and `/project` exists, the server uses `/project` and preserves the legacy `project_id="project"` for compatibility.
+4.  **Disabled**: If no path is configured and `/project` is missing, code intelligence is disabled (reported in diagnostics), but the server remains functional for other memory tools.
 
 #### JSON Configuration (Claude Desktop, etc.)
 
@@ -400,6 +428,9 @@ Environment variables or CLI args:
 | *(None)* | `INDEX_BATCH_SIZE` | `20` | How many files to process in one incremental chunk |
 | *(None)* | `INDEX_DEBOUNCE_MS` | `2000` | MS to wait before flushing index events (debounce) |
 | *(None)* | `MANIFEST_DIFF_INTERVAL_MINS` | `10` | Minutes between periodic missing file checks |
+| `--project-path` | `PROJECT_PATH` | *(None)* | Primary project root for code intelligence. Fallback is `/project`. |
+| `--allowed-project-roots` | `ALLOWED_PROJECT_ROOTS` | *(None)* | Optional comma-delimited allowlist for server-visible project roots. When set, startup/manual registration rejects roots outside this allowlist with `reason_code=path_not_allowed`. |
+| `--max-managed-projects` | `MAX_MANAGED_PROJECTS` | `5` | Maximum number of managed lifecycle projects in registry. Additional registrations are rejected with `reason_code=max_project_limit`. |
 
 ### 🧠 Available Models
 
@@ -512,6 +543,17 @@ Based on analysis of advanced memory systems like [Hindsight](https://hindsight.
     *   Retrieval tools can filter out low-confidence memories when answering factual questions.
 
 ---
+
+## 🔍 Troubleshooting
+
+### Empty `recall_code` or `search_symbols` results
+If you receive empty results when searching code, check the following:
+
+1.  **Mount Path**: Ensure your project directory is correctly mounted into the container (e.g., `-v /host/path:/project:ro`).
+2.  **Project Root Configuration**: Verify `PROJECT_PATH` or `--project-path` matches the mounted path inside the container.
+3.  **Indexing Status**: Run `project_info(action="stats", project_id="...")` to check if indexing is still in progress or if there are errors.
+4.  **Diagnostic Info**: Use `project_info(action="list")` to see which projects the server has discovered and their current state (e.g., `degraded`, `missing`).
+5.  **Server-Visible Paths**: Remember that HTTP clients must provide paths that are **visible to the server**. The server cannot access paths that exist only on your local client machine unless they are mounted.
 
 ## License
 

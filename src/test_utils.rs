@@ -2,11 +2,11 @@ use std::sync::Arc;
 use tempfile::TempDir;
 
 use crate::config::{AppConfig, AppState};
-use crate::forgetting::{create_access_channel, ForgettingConfig};
 use crate::embedding::{
     AdaptiveEmbeddingQueue, EmbeddingConfig, EmbeddingMetrics, EmbeddingService, EmbeddingStore,
     ModelType,
 };
+use crate::forgetting::{create_access_channel, ForgettingConfig};
 use crate::search::{CodeSearchEngine, MemorySearchEngine};
 use crate::storage::SurrealStorage;
 
@@ -17,6 +17,12 @@ pub struct TestContext {
 
 impl TestContext {
     pub async fn new() -> Self {
+        Self::new_with_registry_policy(crate::codebase::ProjectRegistryPolicy::default()).await
+    }
+
+    pub async fn new_with_registry_policy(
+        project_registry_policy: crate::codebase::ProjectRegistryPolicy,
+    ) -> Self {
         let temp_dir = tempfile::tempdir().expect("Failed to create temp dir");
         let db_path = temp_dir.path();
 
@@ -68,6 +74,8 @@ impl TestContext {
             index_batch_size: 20,
             index_debounce_ms: 2_000,
             manifest_diff_interval_mins: 10,
+            allowed_project_roots: None,
+            max_managed_projects: 5,
         };
 
         let (shutdown_tx, _) = tokio::sync::watch::channel(false);
@@ -85,7 +93,12 @@ impl TestContext {
             indexing_projects: Arc::new(std::sync::Mutex::new(std::collections::HashSet::new())),
             shutdown_tx,
             index_pending: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
-            projection_registry: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
+            project_registry: Arc::new(crate::codebase::ProjectRegistry::with_policy(
+                project_registry_policy,
+            )),
+            projection_registry: Arc::new(tokio::sync::RwLock::new(
+                std::collections::HashMap::new(),
+            )),
             forgetting_config: ForgettingConfig::default(),
             access_tracker: {
                 let (tracker, _writer) = create_access_channel(ForgettingConfig::default());
@@ -97,5 +110,17 @@ impl TestContext {
             state,
             _temp_dir: temp_dir,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_context_app_state_owns_project_registry() {
+        let context = TestContext::new().await;
+
+        assert!(context.state.project_registry.is_empty().await);
     }
 }

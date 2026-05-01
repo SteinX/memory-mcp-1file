@@ -16,7 +16,9 @@ use crate::graph::{
 };
 use crate::server::params::{RecallParams, SearchParams};
 use crate::storage::StorageBackend;
-use crate::types::{record_key_to_string, ExportIdentity, MemoryQuery, MemoryType, ScoredMemory, SearchResult};
+use crate::types::{
+    record_key_to_string, ExportIdentity, MemoryQuery, MemoryType, ScoredMemory, SearchResult,
+};
 
 use super::contracts::{export_contract_meta, summary_collection_response, with_surface_guidance};
 use super::{error_response, normalize_limit, success_json};
@@ -392,7 +394,9 @@ async fn lexical_memory_search(
 
     let post_filtered: Vec<SearchResult> = scored
         .into_iter()
-        .filter(|result| metadata_matches(result.metadata.as_ref(), filters.metadata_filter.as_ref()))
+        .filter(|result| {
+            metadata_matches(result.metadata.as_ref(), filters.metadata_filter.as_ref())
+        })
         .collect();
     let post_filter_hits = post_filtered.len();
     let results = dedup_memory_results(post_filtered, limit);
@@ -408,7 +412,9 @@ fn apply_metadata_post_filter(results: Vec<SearchResult>, filters: &MemoryQuery)
     let retrieved_candidates = results.len();
     let filtered: Vec<SearchResult> = results
         .into_iter()
-        .filter(|result| metadata_matches(result.metadata.as_ref(), filters.metadata_filter.as_ref()))
+        .filter(|result| {
+            metadata_matches(result.metadata.as_ref(), filters.metadata_filter.as_ref())
+        })
         .collect();
     let post_filter_hits = filtered.len();
     ChannelResults {
@@ -570,10 +576,12 @@ async fn recall_impl(
         .await
         .unwrap_or_default();
     let vector_channel = apply_metadata_post_filter(vector_results_raw, &filters);
-    let vector_results = enrich_results_truth(dedup_memory_results(vector_channel.results, fetch_limit));
+    let vector_results =
+        enrich_results_truth(dedup_memory_results(vector_channel.results, fetch_limit));
 
     let bm25_channel = lexical_memory_search(state, &params.query, &filters, fetch_limit).await;
-    let bm25_results = enrich_results_truth(dedup_memory_results(bm25_channel.results, fetch_limit));
+    let bm25_results =
+        enrich_results_truth(dedup_memory_results(bm25_channel.results, fetch_limit));
 
     let vector_tuples: Vec<_> = vector_results
         .iter()
@@ -655,10 +663,7 @@ async fn recall_impl(
         limit,
     );
 
-    let mut content_map: std::collections::HashMap<
-        String,
-        (&SearchResult, MemoryType, String),
-    > =
+    let mut content_map: std::collections::HashMap<String, (&SearchResult, MemoryType, String)> =
         std::collections::HashMap::new();
     for r in &vector_results {
         content_map.insert(r.id.clone(), (r, r.memory_type.clone(), dedup_key(r)));
@@ -675,7 +680,8 @@ async fn recall_impl(
     let now = chrono::Utc::now();
     for (id, scores) in merged {
         if let Some((result, mem_type, k)) = content_map.get(&id) {
-            let boosted_score = scores.combined_score * importance_multiplier(result.importance_score);
+            let boosted_score =
+                scores.combined_score * importance_multiplier(result.importance_score);
             let (decay_factor, final_score) = if decay_enabled {
                 let actual_age_days = result
                     .event_time
@@ -814,35 +820,47 @@ mod tests {
         let ctx = TestContext::new().await;
 
         // Seed data
-        let _ = seed_memory(&ctx, Memory {
+        let _ = seed_memory(
+            &ctx,
+            Memory {
                 content: "Rust is a systems programming language".to_string(),
                 embedding: Some(vec![0.1; 768]), // Mock embedding
                 ..Memory::new("Rust is a systems programming language".to_string())
-            })
-            .await;
+            },
+        )
+        .await;
 
-        let _ = seed_memory(&ctx, Memory {
+        let _ = seed_memory(
+            &ctx,
+            Memory {
                 content: "prioritytest low".to_string(),
                 embedding: Some(vec![0.2; 768]),
                 importance_score: 0.5,
                 ..Memory::new("prioritytest low".to_string())
-            })
-            .await;
+            },
+        )
+        .await;
 
-        let _ = seed_memory(&ctx, Memory {
+        let _ = seed_memory(
+            &ctx,
+            Memory {
                 content: "prioritytest high".to_string(),
                 embedding: Some(vec![0.2; 768]),
                 importance_score: 4.0,
                 ..Memory::new("prioritytest high".to_string())
-            })
-            .await;
+            },
+        )
+        .await;
 
-        let _ = seed_memory(&ctx, Memory {
+        let _ = seed_memory(
+            &ctx,
+            Memory {
                 content: "Python is great for scripting".to_string(),
                 embedding: Some(vec![0.9; 768]),
                 ..Memory::new("Python is great for scripting".to_string())
-            })
-            .await;
+            },
+        )
+        .await;
 
         // 1. Vector Search
         let search_params = SearchParams {
@@ -871,9 +889,14 @@ mod tests {
         // Here we only verify response shape; relevance is asserted below via
         // BM25 and hybrid paths.
         assert!(json["count"].as_u64().is_some());
-        assert!(json["diagnostics"]["vector_retrieved_candidates"].as_u64().is_some());
+        assert!(json["diagnostics"]["vector_retrieved_candidates"]
+            .as_u64()
+            .is_some());
         assert_eq!(json["contract"]["schema_version"], 1);
-        assert_eq!(json["contract"]["identity"]["node_id_semantics"], "stable_public_memory_id");
+        assert_eq!(
+            json["contract"]["identity"]["node_id_semantics"],
+            "stable_public_memory_id"
+        );
         assert_eq!(json["summary"]["result_kind"], "collection");
 
         // 2. BM25 Search
@@ -900,17 +923,31 @@ mod tests {
         let json: serde_json::Value = serde_json::from_str(text).unwrap();
         let content = json["results"][0]["content"].as_str().unwrap();
         assert!(content.contains("Python"));
-        assert!(json["diagnostics"]["bm25_retrieved_candidates"].as_u64().is_some());
-        assert_eq!(json["contract"]["identity"]["node_id_semantics"], "stable_public_memory_id");
+        assert!(json["diagnostics"]["bm25_retrieved_candidates"]
+            .as_u64()
+            .is_some());
+        assert_eq!(
+            json["contract"]["identity"]["node_id_semantics"],
+            "stable_public_memory_id"
+        );
         assert_eq!(json["contract"]["compatibility"]["mode"], "additive_first");
         assert_eq!(json["summary"]["result_kind"], "collection");
         assert!(json["summary"]["partial"]["reason_code"].is_null());
         assert!(json["summary"]["partial"]["reason"].is_null());
-        assert_eq!(json["results"][0]["consolidation_trace"]["status"], "active");
+        assert_eq!(
+            json["results"][0]["consolidation_trace"]["status"],
+            "active"
+        );
         assert_eq!(json["results"][0]["replacement_lineage"]["depth"], 0);
-        assert_eq!(json["results"][0]["attention_summary"]["requires_operator_attention"], false);
+        assert_eq!(
+            json["results"][0]["attention_summary"]["requires_operator_attention"],
+            false
+        );
         assert_eq!(json["results"][0]["operator_summary"]["stage"], "retrieval");
-        assert_eq!(json["results"][0]["operator_summary"]["primary_signal"], "consolidation_trace");
+        assert_eq!(
+            json["results"][0]["operator_summary"]["primary_signal"],
+            "consolidation_trace"
+        );
 
         // 3. Recall (Hybrid)
         let recall_params = RecallParams {
@@ -939,16 +976,31 @@ mod tests {
         assert!(json["count"].as_u64().unwrap() > 0);
         assert!(json["diagnostics"]["vector_hits"].as_u64().is_some());
         assert!(json["diagnostics"]["fused_candidates"].as_u64().is_some());
-        assert_eq!(json["contract"]["identity"]["node_id_semantics"], "stable_public_memory_id");
+        assert_eq!(
+            json["contract"]["identity"]["node_id_semantics"],
+            "stable_public_memory_id"
+        );
         assert_eq!(json["contract"]["compatibility"]["mode"], "additive_first");
         assert_eq!(json["summary"]["result_kind"], "collection");
         assert!(json["summary"]["partial"]["reason_code"].is_null());
         assert!(json["summary"]["partial"]["reason"].is_null());
-        assert_eq!(json["memories"][0]["consolidation_trace"]["status"], "active");
+        assert_eq!(
+            json["memories"][0]["consolidation_trace"]["status"],
+            "active"
+        );
         assert_eq!(json["memories"][0]["replacement_lineage"]["depth"], 0);
-        assert_eq!(json["memories"][0]["attention_summary"]["requires_operator_attention"], false);
-        assert_eq!(json["memories"][0]["operator_summary"]["stage"], "retrieval");
-        assert_eq!(json["memories"][0]["operator_summary"]["lifecycle_status"], "active");
+        assert_eq!(
+            json["memories"][0]["attention_summary"]["requires_operator_attention"],
+            false
+        );
+        assert_eq!(
+            json["memories"][0]["operator_summary"]["stage"],
+            "retrieval"
+        );
+        assert_eq!(
+            json["memories"][0]["operator_summary"]["lifecycle_status"],
+            "active"
+        );
 
         let priority_params = RecallParams {
             query: "prioritytest".to_string(),
@@ -994,27 +1046,43 @@ mod tests {
             ingestion_before: None,
         };
 
-        let _ = seed_memory(&ctx, Memory {
+        let _ = seed_memory(
+            &ctx,
+            Memory {
                 content: "prioritytest tagged gold".to_string(),
                 embedding: Some(vec![0.3; 768]),
                 metadata: Some(serde_json::json!({"tier": "gold"})),
                 ..Memory::new("prioritytest tagged gold".to_string())
-            })
-            .await;
+            },
+        )
+        .await;
 
         let result = search_text(&ctx.state, metadata_params).await.unwrap();
         let val = serde_json::to_value(&result).unwrap();
         let text = val["content"][0]["text"].as_str().unwrap();
         let json: serde_json::Value = serde_json::from_str(text).unwrap();
-        assert_eq!(json["diagnostics"]["metadata_filter"]["mode"], "post_query_subset_match");
-        assert!(json["diagnostics"]["bm25_retrieved_candidates"].as_u64().unwrap() >= json["diagnostics"]["bm25_post_filter_hits"].as_u64().unwrap());
+        assert_eq!(
+            json["diagnostics"]["metadata_filter"]["mode"],
+            "post_query_subset_match"
+        );
+        assert!(
+            json["diagnostics"]["bm25_retrieved_candidates"]
+                .as_u64()
+                .unwrap()
+                >= json["diagnostics"]["bm25_post_filter_hits"]
+                    .as_u64()
+                    .unwrap()
+        );
 
-        let superseded_seed = seed_memory(&ctx, Memory {
+        let superseded_seed = seed_memory(
+            &ctx,
+            Memory {
                 content: "retrieval superseded truth".to_string(),
                 embedding: Some(vec![0.4; 768]),
                 ..Memory::new("retrieval superseded truth".to_string())
-            })
-            .await;
+            },
+        )
+        .await;
         let _ = crate::server::logic::memory::invalidate(
             &ctx.state,
             crate::server::params::InvalidateParams {
@@ -1059,26 +1127,32 @@ mod tests {
         let ctx = TestContext::new().await;
         let now = Utc::now();
 
-        let _ = seed_memory(&ctx, Memory {
+        let _ = seed_memory(
+            &ctx,
+            Memory {
                 content: "decay ordering fresh episodic".to_string(),
                 embedding: Some(vec![0.4; 768]),
                 memory_type: MemoryType::Episodic,
                 event_time: Datetime::from(now),
                 ingestion_time: Datetime::from(now),
                 ..Memory::new("decay ordering fresh episodic".to_string())
-            })
-            .await;
+            },
+        )
+        .await;
 
         let old_time = now - Duration::days(30);
-        let _ = seed_memory(&ctx, Memory {
+        let _ = seed_memory(
+            &ctx,
+            Memory {
                 content: "decay ordering old episodic".to_string(),
                 embedding: Some(vec![0.4; 768]),
                 memory_type: MemoryType::Episodic,
                 event_time: Datetime::from(old_time),
                 ingestion_time: Datetime::from(old_time),
                 ..Memory::new("decay ordering old episodic".to_string())
-            })
-            .await;
+            },
+        )
+        .await;
 
         let recall_params = RecallParams {
             query: "decay ordering episodic".to_string(),
@@ -1105,7 +1179,10 @@ mod tests {
         let text = val["content"][0]["text"].as_str().unwrap();
         let json: serde_json::Value = serde_json::from_str(text).unwrap();
 
-        assert_eq!(json["memories"][0]["content"], "decay ordering fresh episodic");
+        assert_eq!(
+            json["memories"][0]["content"],
+            "decay ordering fresh episodic"
+        );
         assert!(
             json["memories"][0]["score"].as_f64().unwrap()
                 > json["memories"][1]["score"].as_f64().unwrap()
@@ -1119,18 +1196,24 @@ mod tests {
     #[tokio::test]
     async fn test_search_text_tracks_only_returned_results() {
         let ctx = TestContext::new().await;
-        let _ = seed_memory(&ctx, Memory {
+        let _ = seed_memory(
+            &ctx,
+            Memory {
                 content: "track final result one".to_string(),
                 embedding: Some(vec![0.25; 768]),
                 ..Memory::new("track final result one".to_string())
-            })
-            .await;
-        let _ = seed_memory(&ctx, Memory {
+            },
+        )
+        .await;
+        let _ = seed_memory(
+            &ctx,
+            Memory {
                 content: "track final result two".to_string(),
                 embedding: Some(vec![0.26; 768]),
                 ..Memory::new("track final result two".to_string())
-            })
-            .await;
+            },
+        )
+        .await;
 
         let (sender, mut receiver) = mpsc::channel(8);
         let tracker = AccessTracker::new(sender);

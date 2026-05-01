@@ -10,9 +10,11 @@ use crate::server::params::{
 };
 use crate::storage::StorageBackend;
 use crate::types::{
-    ContractReasonCode, ExportIdentity, IndexState, IndexStatus, ProjectionLocatorLifecycle,
-    ProjectionLocatorLookup, ProjectionLocatorLookupState, ProjectionLocatorRecord,
+    derive_project_id, CodeIntelligenceDiagnostic, ContractReasonCode, ExportIdentity, IndexState,
+    IndexStatus, ProjectionLocatorLifecycle, ProjectionLocatorLookup,
+    ProjectionLocatorLookupState, ProjectionLocatorRecord,
 };
+use crate::codebase::ProjectLifecycleStatus;
 
 use super::super::contracts::{
     assemble_project_projection, collect_project_projection_inputs, export_contract_meta,
@@ -20,6 +22,65 @@ use super::super::contracts::{
     with_surface_guidance,
 };
 use super::super::{error_response, success_json};
+
+fn root_diagnostic(
+    configured_root: Option<&std::path::Path>,
+    fallback_root: &std::path::Path,
+) -> CodeIntelligenceDiagnostic {
+    if let Some(configured_root) = configured_root {
+        if configured_root.exists() {
+            return CodeIntelligenceDiagnostic::selected(format!(
+                    "Configured project root is available: {}",
+                    configured_root.display()
+                ));
+        }
+
+        return CodeIntelligenceDiagnostic::missing_root(format!(
+                "Configured project root is missing: {}. Set PROJECT_PATH to an existing server-visible path.",
+                configured_root.display()
+            ));
+    }
+
+    if fallback_root.exists() {
+        CodeIntelligenceDiagnostic::selected(format!(
+                "Compatibility project root is available: {}",
+                fallback_root.display()
+            ))
+    } else {
+        CodeIntelligenceDiagnostic::disabled(format!(
+                "Code intelligence startup root is unavailable. Mount {} or set PROJECT_PATH to a server-visible directory.",
+                fallback_root.display()
+            ))
+    }
+}
+
+fn runtime_root_diagnostic() -> CodeIntelligenceDiagnostic {
+    let configured_root = std::env::var_os("PROJECT_PATH").map(std::path::PathBuf::from);
+    root_diagnostic(configured_root.as_deref(), std::path::Path::new("/project"))
+}
+
+fn project_state_diagnostic(
+    status: IndexState,
+    status_metadata_missing: bool,
+) -> CodeIntelligenceDiagnostic {
+    if status_metadata_missing {
+        return CodeIntelligenceDiagnostic::degraded(
+            "Index status metadata is missing while code intelligence rows exist.",
+        );
+    }
+
+    match status {
+        IndexState::Completed => {
+            CodeIntelligenceDiagnostic::ready("Code intelligence is ready for this project.")
+        }
+        IndexState::Indexing | IndexState::EmbeddingPending => CodeIntelligenceDiagnostic::indexing(
+            "Code intelligence indexing is in progress for this project.",
+        ),
+        IndexState::Failed => {
+            CodeIntelligenceDiagnostic::degraded("Code intelligence is degraded for this project.")
+        }
+    }
+}
 
 fn lifecycle_json(status: &crate::types::IndexStatus) -> serde_json::Value {
     json!({
@@ -39,6 +100,26 @@ fn lifecycle_json(status: &crate::types::IndexStatus) -> serde_json::Value {
             "state": status.projection_state.to_string(),
             "is_current": status.projection_state == crate::types::ProjectionState::Current
         }
+    })
+}
+
+fn registry_lifecycle_json(status: &ProjectLifecycleStatus) -> serde_json::Value {
+    json!({
+        "project_id": status.project_id,
+        "root_path": status.root_path.to_string_lossy(),
+        "state": format!("{:?}", status.state).to_lowercase(),
+        "diagnostic": status.diagnostic.as_json(),
+        "pending_jobs": status.pending_jobs,
+        "handles": {
+            "manager": status.has_manager_handle,
+            "worker": status.has_worker_handle,
+            "worker_sender": status.has_worker_sender
+        },
+        "options": {
+            "registry_starts_workers": status.options.registry_starts_workers,
+            "registry_starts_watchers": status.options.registry_starts_watchers
+        },
+        "last_error": status.last_error
     })
 }
 
@@ -133,11 +214,34 @@ pub async fn index_project(
         )));
     }
 
-    let project_id = path
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("unknown")
-        .to_string();
+    let project_id = match derive_project_id(path) {
+        Ok(project_id) => project_id,
+        Err(error) => {
+            return Ok(error_response(format!("Invalid project path: {}", error)));
+        }
+    };
+
+    let registry_lifecycle = match state
+        .project_registry
+        .ensure_project(project_id.clone(), path)
+        .await
+    {
+        Ok(lifecycle) => lifecycle.status(),
+        Err(error) => {
+            return Ok(success_json(json!({
+                "error": format!(
+                    "Project registry rejected project {} at {}: {}",
+                    project_id,
+                    path.display(),
+                    error
+                ),
+                "reason_code": error.reason_code(),
+                "project_id": project_id,
+                "path": path.display().to_string()
+            })));
+        }
+    };
+    let registry_lifecycle = registry_lifecycle_json(&registry_lifecycle);
 
     let force = params.force.unwrap_or(false);
     let confirm_failed_restart = params.confirm_failed_restart.unwrap_or(false);
@@ -161,6 +265,7 @@ pub async fn index_project(
                         "total_files": status.total_files,
                         "indexed_files": status.indexed_files,
                         "total_chunks": status.total_chunks,
+                        "lifecycle": registry_lifecycle,
                         "message": "Project already indexed. File changes are tracked incrementally. Use force=true to re-index from scratch."
                     })));
                 }
@@ -179,6 +284,7 @@ pub async fn index_project(
                         "total_files": status.total_files,
                         "indexed_files": status.indexed_files,
                         "total_chunks": status.total_chunks,
+                        "lifecycle": registry_lifecycle,
                         "message": "Previous indexing failed. Refusing to restart full indexing unless force=true and confirm_failed_restart=true are both provided.",
                         "error_message": status.error_message,
                         "failed_files": status.failed_files,
@@ -237,6 +343,7 @@ pub async fn index_project(
             "total_files": total_files,
             "indexed_files": indexed_files,
             "total_chunks": total_chunks,
+            "lifecycle": registry_lifecycle,
             "message": "Indexing already in progress"
         })));
     }
@@ -271,6 +378,7 @@ pub async fn index_project(
     Ok(success_json(json!({
         "project_id": project_id,
         "status": "indexing",
+        "lifecycle": registry_lifecycle,
         "message": "Indexing started in background. Use get_index_status to check progress."
     })))
 }
@@ -401,6 +509,7 @@ pub async fn get_index_status(
             Ok(success_json(json!({
                 "project_id": status.project_id,
                 "status": status.status.to_string(),
+                "code_intelligence": project_state_diagnostic(status.status.clone(), false).as_json(),
                 "contract": phase1_contract_json(
                     Some(&status.project_id),
                     Some(&lifecycle_json(&status)),
@@ -469,7 +578,10 @@ pub async fn get_index_status(
                 .unwrap_or(0) as u32;
 
             if total_chunks == 0 && total_symbols == 0 && indexed_files == 0 {
-                return Ok(error_response(format!("Project not found: {}", project_id)));
+                return Ok(success_json(json!({
+                    "error": format!("Project not found: {}", project_id),
+                    "code_intelligence": runtime_root_diagnostic().as_json()
+                })));
             }
 
             let mut status = IndexStatus::new(project_id.clone());
@@ -515,6 +627,7 @@ pub async fn get_index_status(
             Ok(success_json(json!({
                 "project_id": project_id,
                 "status": status.status.to_string(),
+                "code_intelligence": project_state_diagnostic(status.status.clone(), true).as_json(),
                 "contract": phase1_contract_json(
                     Some(&status.project_id),
                     Some(&lifecycle_json(&status)),
@@ -577,6 +690,9 @@ pub async fn list_projects(
     match state.storage.list_projects().await {
         Ok(projects) => {
             let mut enriched = Vec::with_capacity(projects.len());
+            let mut has_ready = false;
+            let mut has_indexing = false;
+            let mut has_degraded = false;
 
             for project_id in &projects {
                 let mut status = state
@@ -605,6 +721,13 @@ pub async fn list_projects(
                     .as_ref()
                     .map(|s| s.status.to_string())
                     .unwrap_or_else(|| "unknown".to_string());
+                if let Some(status) = status.as_ref() {
+                    match status.status {
+                        IndexState::Completed => has_ready = true,
+                        IndexState::Indexing | IndexState::EmbeddingPending => has_indexing = true,
+                        IndexState::Failed => has_degraded = true,
+                    }
+                }
                 let lifecycle = status
                     .as_ref()
                     .map(lifecycle_json)
@@ -641,9 +764,20 @@ pub async fn list_projects(
                 }));
             }
 
+            let aggregate = if has_indexing {
+                CodeIntelligenceDiagnostic::indexing("At least one project is still indexing.")
+            } else if has_degraded {
+                CodeIntelligenceDiagnostic::degraded("At least one project is degraded.")
+            } else if has_ready {
+                CodeIntelligenceDiagnostic::ready("Code intelligence projects are ready.")
+            } else {
+                runtime_root_diagnostic()
+            };
+
             Ok(success_json(json!({
                 "projects": enriched,
-                "count": projects.len()
+                "count": projects.len(),
+                "code_intelligence": aggregate.as_json()
             })))
         }
         Err(e) => Ok(error_response(e)),
@@ -718,7 +852,10 @@ pub async fn get_project_stats(
         Some(status) => status,
         None => {
             if total_chunks == 0 && total_symbols == 0 && indexed_files == 0 {
-                return Ok(error_response(format!("Project not found: {}", project_id)));
+                return Ok(success_json(json!({
+                    "error": format!("Project not found: {}", project_id),
+                    "code_intelligence": runtime_root_diagnostic().as_json()
+                })));
             }
 
             let mut status = IndexStatus::new(project_id.clone());
@@ -782,6 +919,7 @@ pub async fn get_project_stats(
     Ok(success_json(json!({
         "project_id": project_id,
         "status": status.status.to_string(),
+        "code_intelligence": project_state_diagnostic(status.status.clone(), status_metadata_missing).as_json(),
         "contract": phase1_contract_json(
             Some(&status.project_id),
             Some(&lifecycle_json(&status)),
@@ -1071,7 +1209,79 @@ pub async fn get_degradation_info(state: &Arc<AppState>) -> Option<serde_json::V
 mod tests {
     use super::*;
     use crate::test_utils::TestContext;
-    use crate::types::{IndexState, IndexStatus};
+    use crate::types::{CodeIntelligenceDiagnostic, IndexState, IndexStatus};
+
+    #[tokio::test]
+    async fn root_diagnostic_reports_disabled_when_no_roots_are_available() {
+        let temp = tempfile::tempdir().unwrap();
+        let missing_fallback = temp.path().join("missing-fallback-root");
+
+        let diagnostic = root_diagnostic(None, &missing_fallback);
+
+        assert_eq!(diagnostic.status, crate::types::CodeIntelligenceDiagnosticCode::Disabled);
+        assert_eq!(diagnostic.reason_code, crate::types::CodeIntelligenceDiagnosticCode::Disabled);
+        assert!(diagnostic
+            .message
+            .contains("Code intelligence startup root is unavailable"));
+    }
+
+    #[tokio::test]
+    async fn root_diagnostic_reports_missing_root_for_missing_configured_path() {
+        let temp = tempfile::tempdir().unwrap();
+        let missing_configured = temp.path().join("missing-configured-root");
+
+        let diagnostic = root_diagnostic(Some(&missing_configured), temp.path());
+
+        assert_eq!(diagnostic.status, crate::types::CodeIntelligenceDiagnosticCode::MissingRoot);
+        assert_eq!(diagnostic.reason_code, crate::types::CodeIntelligenceDiagnosticCode::MissingRoot);
+        assert!(diagnostic
+            .message
+            .contains("Configured project root is missing"));
+    }
+
+    #[test]
+    fn code_intelligence_root_diagnostic_serializes_selected_when_root_exists() {
+        let diagnostic = CodeIntelligenceDiagnostic::selected("Configured project root is available: /project");
+
+        let json = diagnostic.as_json();
+        assert_eq!(json["status"], "selected");
+        assert_eq!(json["reason_code"], "selected");
+        assert_eq!(json["message"], "Configured project root is available: /project");
+    }
+
+    #[tokio::test]
+    async fn get_project_stats_keeps_legacy_fields_and_adds_code_intelligence_status() {
+        let ctx = TestContext::new().await;
+
+        let mut status = IndexStatus::new("compat-status-project".to_string());
+        status.status = IndexState::Completed;
+        status.mark_structural_generation_advanced();
+        status.mark_semantic_generation_caught_up();
+        ctx.state.storage.update_index_status(status).await.unwrap();
+
+        let result = get_project_stats(
+            &ctx.state,
+            GetProjectStatsParams {
+                project_id: "compat-status-project".to_string(),
+            },
+        )
+        .await
+        .unwrap();
+
+        let value = serde_json::to_value(&result).unwrap();
+        let text = value["content"][0]["text"].as_str().unwrap();
+        let json: serde_json::Value = serde_json::from_str(text).unwrap();
+
+        assert_eq!(json["status"], "completed");
+        assert!(json["files"].is_object());
+        assert!(json["chunks"].is_object());
+        assert!(json["symbols"].is_object());
+        assert!(json["summary"].is_object());
+        assert!(json["contract"].is_object());
+        assert_eq!(json["code_intelligence"]["status"], "ready");
+        assert_eq!(json["code_intelligence"]["reason_code"], "ready");
+        assert!(json["code_intelligence"]["message"].is_string());
+    }
 
     #[tokio::test]
     async fn index_project_does_not_auto_restart_failed_index_without_force() {
@@ -1107,6 +1317,9 @@ mod tests {
         assert_eq!(json["can_retry"], true);
         assert_eq!(json["requires_force"], true);
         assert_eq!(json["requires_confirmation"], true);
+        assert_eq!(json["lifecycle"]["project_id"], "failed-project");
+        assert_eq!(json["lifecycle"]["state"], "registered");
+        assert_eq!(json["lifecycle"]["diagnostic"]["status"], "selected");
         assert_eq!(
             json["recommended_action"],
             "retry_with_force_and_confirmation"
@@ -1135,6 +1348,130 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(stored.status, IndexState::Failed);
+        assert_eq!(ctx.state.project_registry.len().await, 1);
+        let lifecycle = ctx.state.project_registry.status("failed-project").await.unwrap();
+        assert_eq!(lifecycle.root_path, project_dir.canonicalize().unwrap());
+    }
+
+    #[tokio::test]
+    async fn index_project_recovers_stale_indexing_status_after_restart() {
+        let ctx = TestContext::new().await;
+        let project_dir = ctx._temp_dir.path().join("stale-indexing-project");
+        std::fs::create_dir_all(&project_dir).unwrap();
+
+        let mut stale = IndexStatus::new("stale-indexing-project".to_string());
+        stale.status = IndexState::Indexing;
+        stale.total_files = 7;
+        stale.indexed_files = 3;
+        ctx.state.storage.update_index_status(stale).await.unwrap();
+
+        let result = index_project(
+            &ctx.state,
+            IndexProjectParams {
+                path: project_dir.to_string_lossy().to_string(),
+                force: None,
+                confirm_failed_restart: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        let value = serde_json::to_value(&result).unwrap();
+        let text = value["content"][0]["text"].as_str().unwrap();
+        let json: serde_json::Value = serde_json::from_str(text).unwrap();
+
+        assert_eq!(json["project_id"], "stale-indexing-project");
+        assert_eq!(json["status"], "indexing");
+        assert_eq!(json["message"], "Indexing started in background. Use get_index_status to check progress.");
+        assert_eq!(json["lifecycle"]["project_id"], "stale-indexing-project");
+        assert_eq!(json["lifecycle"]["state"], "registered");
+        assert_eq!(ctx.state.project_registry.len().await, 1);
+
+        let marked_active = ctx
+            .state
+            .indexing_projects
+            .lock()
+            .expect("indexing_projects mutex poisoned")
+            .contains("stale-indexing-project");
+        assert!(marked_active);
+
+        let stored = ctx
+            .state
+            .storage
+            .get_index_status("stale-indexing-project")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(stored.status, IndexState::Indexing);
+    }
+
+    #[tokio::test]
+    async fn index_project_registers_and_reuses_manual_lifecycle_for_completed_project() {
+        let ctx = TestContext::new().await;
+        let project_dir = ctx._temp_dir.path().join("manual-register");
+        std::fs::create_dir_all(&project_dir).unwrap();
+
+        let mut completed = IndexStatus::new("manual-register".to_string());
+        completed.status = IndexState::Completed;
+        completed.total_files = 2;
+        completed.indexed_files = 2;
+        completed.total_chunks = 3;
+        ctx.state.storage.update_index_status(completed).await.unwrap();
+
+        let first = index_project(
+            &ctx.state,
+            IndexProjectParams {
+                path: project_dir.to_string_lossy().to_string(),
+                force: None,
+                confirm_failed_restart: None,
+            },
+        )
+        .await
+        .unwrap();
+        let first_value = serde_json::to_value(&first).unwrap();
+        let first_text = first_value["content"][0]["text"].as_str().unwrap();
+        let first_json: serde_json::Value = serde_json::from_str(first_text).unwrap();
+
+        let alias_path = project_dir.join(".");
+        let second = index_project(
+            &ctx.state,
+            IndexProjectParams {
+                path: alias_path.to_string_lossy().to_string(),
+                force: None,
+                confirm_failed_restart: None,
+            },
+        )
+        .await
+        .unwrap();
+        let second_value = serde_json::to_value(&second).unwrap();
+        let second_text = second_value["content"][0]["text"].as_str().unwrap();
+        let second_json: serde_json::Value = serde_json::from_str(second_text).unwrap();
+
+        assert_eq!(first_json["project_id"], "manual-register");
+        assert_eq!(first_json["status"], "completed");
+        assert_eq!(first_json["total_files"], 2);
+        assert_eq!(first_json["indexed_files"], 2);
+        assert_eq!(first_json["total_chunks"], 3);
+        assert_eq!(first_json["lifecycle"]["project_id"], "manual-register");
+        assert_eq!(first_json["lifecycle"]["state"], "registered");
+        assert_eq!(first_json["lifecycle"]["diagnostic"]["status"], "selected");
+        assert_eq!(
+            first_json["lifecycle"]["root_path"],
+            project_dir.canonicalize().unwrap().to_string_lossy().as_ref()
+        );
+
+        assert_eq!(second_json["project_id"], "manual-register");
+        assert_eq!(second_json["status"], "completed");
+        assert_eq!(second_json["lifecycle"]["root_path"], first_json["lifecycle"]["root_path"]);
+        assert_eq!(ctx.state.project_registry.len().await, 1);
+
+        let lifecycle = ctx
+            .state
+            .project_registry
+            .status("manual-register")
+            .await
+            .unwrap();
+        assert_eq!(lifecycle.root_path, project_dir.canonicalize().unwrap());
     }
 
     #[tokio::test]
@@ -1167,6 +1504,77 @@ mod tests {
         assert_eq!(json["state"], "blocked");
         assert_eq!(json["requires_force"], true);
         assert_eq!(json["requires_confirmation"], true);
+        assert_eq!(json["lifecycle"]["project_id"], "failed-project-force");
+        assert_eq!(ctx.state.project_registry.len().await, 1);
+    }
+
+    #[tokio::test]
+    async fn index_project_reports_path_not_allowed_reason_code_when_allowlist_rejects_path() {
+        let temp = tempfile::tempdir().unwrap();
+        let allowed_parent = temp.path().join("allowed-parent");
+        std::fs::create_dir_all(&allowed_parent).unwrap();
+        let ctx = TestContext::new_with_registry_policy(
+            crate::codebase::ProjectRegistryPolicy {
+                allowed_roots: Some(vec![allowed_parent.canonicalize().unwrap()]),
+                max_projects: 5,
+            },
+        )
+        .await;
+        let disallowed_project = tempfile::tempdir().unwrap();
+
+        let result = index_project(
+            &ctx.state,
+            IndexProjectParams {
+                path: disallowed_project.path().to_string_lossy().to_string(),
+                force: None,
+                confirm_failed_restart: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        let value = serde_json::to_value(&result).unwrap();
+        let text = value["content"][0]["text"].as_str().unwrap();
+        let json: serde_json::Value = serde_json::from_str(text).unwrap();
+
+        let error = json["error"].as_str().unwrap();
+        assert!(error.contains("path_not_allowed"));
+        assert_eq!(json["reason_code"], "path_not_allowed");
+        assert_eq!(ctx.state.project_registry.len().await, 0);
+    }
+
+    #[tokio::test]
+    async fn index_project_reports_max_project_limit_reason_code_when_registry_is_full() {
+        let ctx = TestContext::new_with_registry_policy(crate::codebase::ProjectRegistryPolicy {
+            allowed_roots: None,
+            max_projects: 1,
+        })
+        .await;
+        let first = ctx._temp_dir.path().join("first");
+        let second = ctx._temp_dir.path().join("second");
+        std::fs::create_dir_all(&first).unwrap();
+        std::fs::create_dir_all(&second).unwrap();
+
+        ctx.state.project_registry.ensure_project("first", &first).await.unwrap();
+
+        let result = index_project(
+            &ctx.state,
+            IndexProjectParams {
+                path: second.to_string_lossy().to_string(),
+                force: None,
+                confirm_failed_restart: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        let value = serde_json::to_value(&result).unwrap();
+        let text = value["content"][0]["text"].as_str().unwrap();
+        let json: serde_json::Value = serde_json::from_str(text).unwrap();
+
+        let error = json["error"].as_str().unwrap();
+        assert!(error.contains("max_project_limit"));
+        assert_eq!(json["reason_code"], "max_project_limit");
     }
 
     #[tokio::test]

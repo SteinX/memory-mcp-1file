@@ -391,7 +391,8 @@ mod tests {
         let metrics = std::sync::Arc::new(EmbeddingMetrics::new());
         let adaptive_queue = AdaptiveEmbeddingQueue::with_defaults(tx.clone(), metrics);
         let forgetting_config = crate::forgetting::config::ForgettingConfig::default();
-        let (access_tracker, _) = crate::forgetting::access::create_access_channel(forgetting_config.clone());
+        let (access_tracker, _) =
+            crate::forgetting::access::create_access_channel(forgetting_config.clone());
 
         let (shutdown_tx, _) = tokio::sync::watch::channel(false);
         let _worker = EmbeddingWorker::new(
@@ -416,7 +417,10 @@ mod tests {
                 ),
                 shutdown_tx,
                 index_pending: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
-                projection_registry: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
+                project_registry: Arc::new(crate::codebase::ProjectRegistry::new()),
+                projection_registry: Arc::new(tokio::sync::RwLock::new(
+                    std::collections::HashMap::new(),
+                )),
             }),
         );
     }

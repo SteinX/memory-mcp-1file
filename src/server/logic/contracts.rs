@@ -1,12 +1,11 @@
 use crate::types::{
-    record_key_to_string, CodeSymbol, ContractReasonCode, CountSummary, Entity,
-    ExportContractMeta, ExportIdentity, ExportResponseSummary, ExportedGraphEdge,
-    ExportedGraphNode, ExportedProjectProjection, ExportedSymbolEdge, ExportedSymbolNode,
-    FrontierSummary, GenerationBasis, IndexStatus, LifecycleView, PartialSummary,
-    ProjectionContractState, ProjectionEnvelope, ProjectProjectionInputs,
-    ProjectProjectionRequest, ProjectionLifecycleView, ProjectionMaterializationEnvelope,
-    Relation, SemanticLifecycleView, StructuralLifecycleView, SurfaceGuidance,
-    SymbolRelation, TraversalDefaults, TraversalSummary,
+    record_key_to_string, CodeSymbol, ContractReasonCode, CountSummary, Entity, ExportContractMeta,
+    ExportIdentity, ExportResponseSummary, ExportedGraphEdge, ExportedGraphNode,
+    ExportedProjectProjection, ExportedSymbolEdge, ExportedSymbolNode, FrontierSummary,
+    GenerationBasis, IndexStatus, LifecycleView, PartialSummary, ProjectProjectionInputs,
+    ProjectProjectionRequest, ProjectionContractState, ProjectionEnvelope, ProjectionLifecycleView,
+    ProjectionMaterializationEnvelope, Relation, SemanticLifecycleView, StructuralLifecycleView,
+    SurfaceGuidance, SymbolRelation, TraversalDefaults, TraversalSummary,
 };
 
 fn projection_partial_reason_code(status: &IndexStatus) -> Option<ContractReasonCode> {
@@ -182,23 +181,68 @@ mod tests {
         assert_eq!(contract.projection.state, ProjectionContractState::Missing);
         assert_eq!(contract.projection.basis, "semantic_generation");
         assert_eq!(contract.projection.generation, 0);
-        assert_eq!(contract.projection.materialization.strategy, "not_materialized");
-        assert_eq!(contract.projection.materialization.identity_basis, "project_id + semantic_generation");
-        assert_eq!(contract.projection.materialization.refresh_basis, "semantic_generation");
+        assert_eq!(
+            contract.projection.materialization.strategy,
+            "not_materialized"
+        );
+        assert_eq!(
+            contract.projection.materialization.identity_basis,
+            "project_id + semantic_generation"
+        );
+        assert_eq!(
+            contract.projection.materialization.refresh_basis,
+            "semantic_generation"
+        );
         assert_eq!(contract.projection.materialization.persistence_semantics, "contract is exposed on status surfaces only; no persisted projection artifact is promised yet");
         assert_eq!(contract.projection.materialization.is_addressable, false);
-        assert_eq!(contract.projection.materialization.shape_version_semantics, "materialized_projection_payload_shape_version");
-        assert_eq!(contract.projection.materialization.addressability_semantics, "no_stable_external_read_target_is_promised_until_materialization_strategy_changes");
+        assert_eq!(
+            contract.projection.materialization.shape_version_semantics,
+            "materialized_projection_payload_shape_version"
+        );
+        assert_eq!(
+            contract.projection.materialization.addressability_semantics,
+            "no_stable_external_read_target_is_promised_until_materialization_strategy_changes"
+        );
         assert_eq!(contract.projection.materialization.locator_kind, None);
         assert_eq!(contract.projection.materialization.locator_semantics, "absent_when_not_materialized; when present it identifies the externally consumable projection instance");
-        assert_eq!(contract.projection.materialization.locator_stability, "not_stable_until_materialization_strategy_changes");
-        assert_eq!(contract.projection.materialization.locator_scope, "none_when_not_materialized");
+        assert_eq!(
+            contract.projection.materialization.locator_stability,
+            "not_stable_until_materialization_strategy_changes"
+        );
+        assert_eq!(
+            contract.projection.materialization.locator_scope,
+            "none_when_not_materialized"
+        );
         assert_eq!(contract.projection.materialization.locator_is_opaque, true);
-        assert_eq!(contract.projection.materialization.locator_can_be_persisted_by_clients, false);
-        assert_eq!(contract.projection.materialization.locator_survives_generation_change, false);
+        assert_eq!(
+            contract
+                .projection
+                .materialization
+                .locator_can_be_persisted_by_clients,
+            false
+        );
+        assert_eq!(
+            contract
+                .projection
+                .materialization
+                .locator_survives_generation_change,
+            false
+        );
         assert_eq!(contract.projection.materialization.current_generation, 0);
-        assert_eq!(contract.projection.materialization.last_materialized_generation, None);
-        assert_eq!(contract.projection.materialization.consistent_with_projection_state, true);
+        assert_eq!(
+            contract
+                .projection
+                .materialization
+                .last_materialized_generation,
+            None
+        );
+        assert_eq!(
+            contract
+                .projection
+                .materialization
+                .consistent_with_projection_state,
+            true
+        );
         assert_eq!(contract.generation_basis.structural_generation, 0);
         assert_eq!(contract.generation_basis.semantic_generation, 0);
         assert!(contract.generation_basis.lifecycle.is_none());
@@ -216,26 +260,86 @@ mod tests {
         assert_eq!(contract.projection_state, ProjectionContractState::Stale);
         assert_eq!(contract.projection.state, ProjectionContractState::Stale);
         assert_eq!(contract.projection.generation, status.semantic_generation);
-        assert_eq!(contract.projection.materialization.strategy, "not_materialized");
-        assert_eq!(contract.projection.materialization.refresh_basis, "semantic_generation");
+        assert_eq!(
+            contract.projection.materialization.strategy,
+            "not_materialized"
+        );
+        assert_eq!(
+            contract.projection.materialization.refresh_basis,
+            "semantic_generation"
+        );
         assert_eq!(contract.projection.materialization.persistence_semantics, "contract is exposed on status surfaces only; no persisted projection artifact is promised yet");
         assert_eq!(contract.projection.materialization.current_generation, 0);
         assert_eq!(contract.projection.materialization.is_addressable, false);
-        assert_eq!(contract.projection.materialization.shape_version_semantics, "materialized_projection_payload_shape_version");
-        assert_eq!(contract.projection.materialization.addressability_semantics, "no_stable_external_read_target_is_promised_until_materialization_strategy_changes");
+        assert_eq!(
+            contract.projection.materialization.shape_version_semantics,
+            "materialized_projection_payload_shape_version"
+        );
+        assert_eq!(
+            contract.projection.materialization.addressability_semantics,
+            "no_stable_external_read_target_is_promised_until_materialization_strategy_changes"
+        );
         assert_eq!(contract.projection.materialization.locator_kind, None);
         assert_eq!(contract.projection.materialization.locator_semantics, "absent_when_not_materialized; when present it identifies the externally consumable projection instance");
-        assert_eq!(contract.projection.materialization.locator_stability, "not_stable_until_materialization_strategy_changes");
-        assert_eq!(contract.projection.materialization.locator_scope, "none_when_not_materialized");
+        assert_eq!(
+            contract.projection.materialization.locator_stability,
+            "not_stable_until_materialization_strategy_changes"
+        );
+        assert_eq!(
+            contract.projection.materialization.locator_scope,
+            "none_when_not_materialized"
+        );
         assert_eq!(contract.projection.materialization.locator_is_opaque, true);
-        assert_eq!(contract.projection.materialization.locator_can_be_persisted_by_clients, false);
-        assert_eq!(contract.projection.materialization.locator_survives_generation_change, false);
-        assert_eq!(contract.projection.materialization.last_materialized_generation, None);
-        assert_eq!(contract.projection.materialization.consistent_with_projection_state, true);
+        assert_eq!(
+            contract
+                .projection
+                .materialization
+                .locator_can_be_persisted_by_clients,
+            false
+        );
+        assert_eq!(
+            contract
+                .projection
+                .materialization
+                .locator_survives_generation_change,
+            false
+        );
+        assert_eq!(
+            contract
+                .projection
+                .materialization
+                .last_materialized_generation,
+            None
+        );
+        assert_eq!(
+            contract
+                .projection
+                .materialization
+                .consistent_with_projection_state,
+            true
+        );
         assert_eq!(contract.generation_basis.structural_generation, 1);
         assert_eq!(contract.generation_basis.semantic_generation, 0);
-        assert_eq!(contract.generation_basis.lifecycle.as_ref().unwrap().structural.generation, 1);
-        assert_eq!(contract.generation_basis.lifecycle.as_ref().unwrap().semantic.generation, 0);
+        assert_eq!(
+            contract
+                .generation_basis
+                .lifecycle
+                .as_ref()
+                .unwrap()
+                .structural
+                .generation,
+            1
+        );
+        assert_eq!(
+            contract
+                .generation_basis
+                .lifecycle
+                .as_ref()
+                .unwrap()
+                .semantic
+                .generation,
+            0
+        );
     }
 
     #[test]
@@ -253,22 +357,64 @@ mod tests {
         assert_eq!(contract.projection.state, ProjectionContractState::Current);
         assert_eq!(contract.projection.basis, "semantic_generation");
         assert_eq!(contract.projection.generation, 1);
-        assert_eq!(contract.projection.materialization.strategy, "not_materialized");
-        assert_eq!(contract.projection.materialization.refresh_basis, "semantic_generation");
+        assert_eq!(
+            contract.projection.materialization.strategy,
+            "not_materialized"
+        );
+        assert_eq!(
+            contract.projection.materialization.refresh_basis,
+            "semantic_generation"
+        );
         assert_eq!(contract.projection.materialization.persistence_semantics, "contract is exposed on status surfaces only; no persisted projection artifact is promised yet");
         assert_eq!(contract.projection.materialization.current_generation, 1);
         assert_eq!(contract.projection.materialization.is_addressable, false);
-        assert_eq!(contract.projection.materialization.shape_version_semantics, "materialized_projection_payload_shape_version");
-        assert_eq!(contract.projection.materialization.addressability_semantics, "no_stable_external_read_target_is_promised_until_materialization_strategy_changes");
+        assert_eq!(
+            contract.projection.materialization.shape_version_semantics,
+            "materialized_projection_payload_shape_version"
+        );
+        assert_eq!(
+            contract.projection.materialization.addressability_semantics,
+            "no_stable_external_read_target_is_promised_until_materialization_strategy_changes"
+        );
         assert_eq!(contract.projection.materialization.locator_kind, None);
         assert_eq!(contract.projection.materialization.locator_semantics, "absent_when_not_materialized; when present it identifies the externally consumable projection instance");
-        assert_eq!(contract.projection.materialization.locator_stability, "not_stable_until_materialization_strategy_changes");
-        assert_eq!(contract.projection.materialization.locator_scope, "none_when_not_materialized");
+        assert_eq!(
+            contract.projection.materialization.locator_stability,
+            "not_stable_until_materialization_strategy_changes"
+        );
+        assert_eq!(
+            contract.projection.materialization.locator_scope,
+            "none_when_not_materialized"
+        );
         assert_eq!(contract.projection.materialization.locator_is_opaque, true);
-        assert_eq!(contract.projection.materialization.locator_can_be_persisted_by_clients, false);
-        assert_eq!(contract.projection.materialization.locator_survives_generation_change, false);
-        assert_eq!(contract.projection.materialization.last_materialized_generation, None);
-        assert_eq!(contract.projection.materialization.consistent_with_projection_state, true);
+        assert_eq!(
+            contract
+                .projection
+                .materialization
+                .locator_can_be_persisted_by_clients,
+            false
+        );
+        assert_eq!(
+            contract
+                .projection
+                .materialization
+                .locator_survives_generation_change,
+            false
+        );
+        assert_eq!(
+            contract
+                .projection
+                .materialization
+                .last_materialized_generation,
+            None
+        );
+        assert_eq!(
+            contract
+                .projection
+                .materialization
+                .consistent_with_projection_state,
+            true
+        );
         assert_eq!(contract.generation_basis.semantic_generation, 1);
     }
 
@@ -341,11 +487,23 @@ mod tests {
 
         assert_eq!(projection.project_id, "proj-builder");
         assert_eq!(projection.contract.schema_version, 1);
-        assert_eq!(projection.contract.identity.project_id, Some("proj-builder".to_string()));
+        assert_eq!(
+            projection.contract.identity.project_id,
+            Some("proj-builder".to_string())
+        );
         assert_eq!(projection.contract.identity.stable_node_ids, true);
-        assert_eq!(projection.contract.identity.node_ids_are_project_scoped, true);
-        assert_eq!(projection.contract.identity.node_id_semantics, Some("stable_project_scoped_project_id".to_string()));
-        assert_eq!(projection.contract.identity.edge_id_semantics, Some("no_public_edge_ids".to_string()));
+        assert_eq!(
+            projection.contract.identity.node_ids_are_project_scoped,
+            true
+        );
+        assert_eq!(
+            projection.contract.identity.node_id_semantics,
+            Some("stable_project_scoped_project_id".to_string())
+        );
+        assert_eq!(
+            projection.contract.identity.edge_id_semantics,
+            Some("no_public_edge_ids".to_string())
+        );
         assert_eq!(projection.request.relation_scope, "all");
         assert_eq!(projection.request.sort_mode, "canonical");
         assert_eq!(projection.summary.result_kind, "graph");
@@ -384,21 +542,49 @@ mod tests {
 
         assert_eq!(projection.lifecycle.projection.state, "current");
         assert_eq!(projection.lifecycle.projection.is_current, true);
-        assert_eq!(projection.contract.projection.state, ProjectionContractState::Current);
+        assert_eq!(
+            projection.contract.projection.state,
+            ProjectionContractState::Current
+        );
         assert_eq!(projection.contract.projection.generation, 1);
-        assert_eq!(projection.contract.projection.materialization.current_generation, 1);
-        assert_eq!(projection.contract.projection.materialization.consistent_with_projection_state, true);
+        assert_eq!(
+            projection
+                .contract
+                .projection
+                .materialization
+                .current_generation,
+            1
+        );
+        assert_eq!(
+            projection
+                .contract
+                .projection
+                .materialization
+                .consistent_with_projection_state,
+            true
+        );
         assert_eq!(projection.request.relation_scope, "all");
         assert_eq!(projection.request.sort_mode, "canonical");
-        assert_eq!(projection.summary.partial.as_ref().unwrap().is_partial, false);
-        assert_eq!(projection.summary.partial.as_ref().unwrap().reason_code, None);
+        assert_eq!(
+            projection.summary.partial.as_ref().unwrap().is_partial,
+            false
+        );
+        assert_eq!(
+            projection.summary.partial.as_ref().unwrap().reason_code,
+            None
+        );
         assert_eq!(projection.summary.partial.as_ref().unwrap().reason, None);
         assert_eq!(
             projection.summary.partial.as_ref().unwrap().message.as_deref(),
             Some("Projection is an on-demand export of the current semantic snapshot; no separately materialized artifact is promised.")
         );
         assert_eq!(projection.contract.compatibility.mode, "additive_first");
-        assert!(projection.contract.compatibility.clients_must_ignore_unknown_fields);
+        assert!(
+            projection
+                .contract
+                .compatibility
+                .clients_must_ignore_unknown_fields
+        );
     }
 
     #[test]
@@ -423,14 +609,26 @@ mod tests {
         );
 
         assert_eq!(projection.lifecycle.projection.state, "stale");
-        assert_eq!(projection.contract.projection.state, ProjectionContractState::Stale);
-        assert_eq!(projection.summary.partial.as_ref().unwrap().is_partial, true);
+        assert_eq!(
+            projection.contract.projection.state,
+            ProjectionContractState::Stale
+        );
+        assert_eq!(
+            projection.summary.partial.as_ref().unwrap().is_partial,
+            true
+        );
         assert_eq!(
             projection.summary.partial.as_ref().unwrap().reason_code,
             Some(ContractReasonCode::Stale)
         );
         assert_eq!(
-            projection.summary.partial.as_ref().unwrap().reason.as_deref(),
+            projection
+                .summary
+                .partial
+                .as_ref()
+                .unwrap()
+                .reason
+                .as_deref(),
             Some("projection_stale")
         );
         assert_eq!(
@@ -438,7 +636,12 @@ mod tests {
             Some("Projection is an on-demand export of the latest available semantic snapshot and may lag structural changes.")
         );
         assert_eq!(projection.contract.compatibility.mode, "additive_first");
-        assert!(projection.contract.compatibility.clients_must_ignore_unknown_fields);
+        assert!(
+            projection
+                .contract
+                .compatibility
+                .clients_must_ignore_unknown_fields
+        );
     }
 
     #[test]
@@ -548,7 +751,11 @@ mod tests {
         assert_eq!(projection.edges[0].relation_type, "imports");
         assert_eq!(projection.nodes.len(), 2);
         assert_eq!(projection.counts.nodes, Some(2));
-        let node_ids: Vec<_> = projection.nodes.iter().map(|node| node.id.as_str()).collect();
+        let node_ids: Vec<_> = projection
+            .nodes
+            .iter()
+            .map(|node| node.id.as_str())
+            .collect();
         assert!(node_ids.contains(&"module"));
         assert!(node_ids.contains(&"dep"));
         assert!(!node_ids.contains(&"orphan"));
@@ -704,7 +911,11 @@ mod tests {
             .all(|edge| edge.relation_type == "extends" || edge.relation_type == "implements"));
         assert_eq!(projection.nodes.len(), 4);
         assert_eq!(projection.counts.nodes, Some(4));
-        let node_ids: Vec<_> = projection.nodes.iter().map(|node| node.id.as_str()).collect();
+        let node_ids: Vec<_> = projection
+            .nodes
+            .iter()
+            .map(|node| node.id.as_str())
+            .collect();
         assert!(node_ids.contains(&"child"));
         assert!(node_ids.contains(&"parent"));
         assert!(node_ids.contains(&"impl"));
@@ -807,7 +1018,11 @@ mod tests {
         assert_eq!(projection.edges.len(), 1);
         assert_eq!(projection.nodes.len(), 2);
         assert_eq!(projection.counts.nodes, Some(2));
-        let node_ids: Vec<_> = projection.nodes.iter().map(|node| node.id.as_str()).collect();
+        let node_ids: Vec<_> = projection
+            .nodes
+            .iter()
+            .map(|node| node.id.as_str())
+            .collect();
         assert!(node_ids.contains(&"caller"));
         assert!(node_ids.contains(&"target"));
         assert!(!node_ids.contains(&"orphan"));
@@ -851,7 +1066,10 @@ mod tests {
         assert_eq!(projection.counts.edges, Some(0));
         assert_eq!(projection.shaping.relation_scope_applied, "none");
         assert_eq!(projection.shaping.sort_mode_applied, "canonical");
-        assert_eq!(projection.shaping.node_selection_basis, "empty_graph_when_no_edges_retained");
+        assert_eq!(
+            projection.shaping.node_selection_basis,
+            "empty_graph_when_no_edges_retained"
+        );
         assert_eq!(projection.shaping.edge_selection_basis, "no_edges_retained");
         assert_eq!(projection.shaping.output_kind, "empty_graph");
     }
@@ -931,7 +1149,10 @@ mod tests {
 
         assert_eq!(projection.shaping.relation_scope_applied, "calls");
         assert_eq!(projection.shaping.sort_mode_applied, "canonical");
-        assert_eq!(projection.shaping.node_selection_basis, "relation_endpoint_induced_subgraph");
+        assert_eq!(
+            projection.shaping.node_selection_basis,
+            "relation_endpoint_induced_subgraph"
+        );
         assert_eq!(projection.shaping.edge_selection_basis, "only_call_edges");
         assert_eq!(projection.shaping.output_kind, "induced_symbol_graph");
     }
@@ -1225,8 +1446,7 @@ pub fn exported_symbol_nodes(symbols: &[CodeSymbol]) -> Vec<ExportedSymbolNode> 
         .collect();
 
     nodes.sort_by(|a, b| {
-        a.id
-            .cmp(&b.id)
+        a.id.cmp(&b.id)
             .then_with(|| a.project_id.cmp(&b.project_id))
             .then_with(|| a.file_path.cmp(&b.file_path))
             .then_with(|| a.start_line.cmp(&b.start_line))
@@ -1366,17 +1586,24 @@ pub fn shape_project_projection_graph(
             .cmp(&b.project_id)
             .then_with(|| a.file_path.cmp(&b.file_path))
             .then_with(|| a.line_number.cmp(&b.line_number))
-            .then_with(|| record_key_to_string(&a.from_symbol.key).cmp(&record_key_to_string(&b.from_symbol.key)))
-            .then_with(|| record_key_to_string(&a.to_symbol.key).cmp(&record_key_to_string(&b.to_symbol.key)))
-            .then_with(|| a.relation_type.to_string().cmp(&b.relation_type.to_string()))
+            .then_with(|| {
+                record_key_to_string(&a.from_symbol.key)
+                    .cmp(&record_key_to_string(&b.from_symbol.key))
+            })
+            .then_with(|| {
+                record_key_to_string(&a.to_symbol.key).cmp(&record_key_to_string(&b.to_symbol.key))
+            })
+            .then_with(|| {
+                a.relation_type
+                    .to_string()
+                    .cmp(&b.relation_type.to_string())
+            })
     });
 
     inputs
 }
 
-pub fn assemble_project_projection(
-    inputs: ProjectProjectionInputs,
-) -> ExportedProjectProjection {
+pub fn assemble_project_projection(inputs: ProjectProjectionInputs) -> ExportedProjectProjection {
     let ProjectProjectionInputs {
         status,
         total_files,

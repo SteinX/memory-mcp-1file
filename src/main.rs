@@ -10,7 +10,10 @@ use tracing_subscriber::util::SubscriberInitExt;
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
-use memory_mcp::codebase::{CodebaseManager, IndexWorker};
+use memory_mcp::codebase::startup::{
+    start_code_intelligence_lifecycle, CodeIntelligenceStartupStatus,
+};
+use memory_mcp::codebase::ProjectRegistryPolicy;
 use memory_mcp::config::{AppConfig, AppState};
 use memory_mcp::embedding::{
     EmbeddingConfig, EmbeddingService, EmbeddingStore, EmbeddingWorker, ModelType,
@@ -95,6 +98,25 @@ struct Cli {
         help = "HTTP server bind address"
     )]
     bind: String,
+
+    #[arg(long, env = "PROJECT_PATH", help = "Explicit project root for code intelligence startup")]
+    project_path: Option<PathBuf>,
+
+    #[arg(
+        long,
+        env = "ALLOWED_PROJECT_ROOTS",
+        value_delimiter = ',',
+        help = "Optional comma-delimited allowlist of server-visible roots for project registration"
+    )]
+    allowed_project_roots: Vec<PathBuf>,
+
+    #[arg(
+        long,
+        env = "MAX_MANAGED_PROJECTS",
+        default_value = "5",
+        help = "Maximum number of managed project lifecycles in registry"
+    )]
+    max_managed_projects: usize,
 
     /// SurrealKV block cache capacity in MB. Default: auto-detect based on available RAM.
     /// Set to 0 to use SurrealDB's default (RAM/2, may cause OOM on constrained systems).
@@ -419,6 +441,7 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
             "bind": cli.bind,
             "port": cli.port,
             "log_level": cli.log_level,
+            "project_path": cli.project_path.as_ref().map(|path| path.display().to_string()),
         }),
     );
 
@@ -480,6 +503,34 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
 
     let requeue_tx = adaptive_queue.requeue_sender();
 
+    let allowed_project_roots = if cli.allowed_project_roots.is_empty() {
+        None
+    } else {
+        let mut canonical_roots = Vec::with_capacity(cli.allowed_project_roots.len());
+        for root in &cli.allowed_project_roots {
+            let canonical = root.canonicalize().map_err(|source| {
+                anyhow::anyhow!(
+                    "Invalid --allowed-project-roots entry '{}': {}",
+                    root.display(),
+                    source
+                )
+            })?;
+            canonical_roots.push(canonical);
+        }
+        Some(canonical_roots)
+    };
+
+    let max_managed_projects = if cli.max_managed_projects == 0 {
+        5
+    } else {
+        cli.max_managed_projects
+    };
+
+    let project_registry_policy = ProjectRegistryPolicy {
+        allowed_roots: allowed_project_roots.clone(),
+        max_projects: max_managed_projects,
+    };
+
     let state = Arc::new(AppState {
         config: AppConfig {
             data_dir: cli.data_dir,
@@ -490,6 +541,8 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
             log_level: cli.log_level,
             model_load_timeout_ms: cli.model_load_timeout_secs * 1000,
             // New fields: use compile-time defaults (values are documented in AppConfig::default)
+            allowed_project_roots,
+            max_managed_projects,
             ..AppConfig::default()
         },
         forgetting_config: forgetting_config.clone(),
@@ -505,6 +558,9 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
         indexing_projects: Arc::new(std::sync::Mutex::new(std::collections::HashSet::new())),
         shutdown_tx,
         index_pending: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
+        project_registry: Arc::new(memory_mcp::codebase::ProjectRegistry::with_policy(
+            project_registry_policy,
+        )),
         projection_registry: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
     });
 
@@ -670,69 +726,73 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
     // heavier tool calls experience startup latency, and only once.
     // ──────────────────────────────────────────────────────────────────────
 
-    // Auto-start codebase manager if /project exists
-    let project_path = PathBuf::from("/project");
-    if project_path.exists() {
-        let project_id = project_path
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("project")
-            .to_string();
+    let startup_outcome = start_code_intelligence_lifecycle(
+        state.clone(),
+        cli.project_path.as_deref(),
+        std::path::Path::new("/project"),
+    )
+    .await;
 
-        // Create the IndexWorker for this project and start it in the background.
-        let (index_worker, index_tx) = IndexWorker::new(state.clone(), project_id.clone());
-        // Register the pending-job counter in AppState so the status API can read it.
-        state
-            .index_pending
-            .write()
-            .await
-            .insert(project_id.clone(), index_tx.pending_arc());
-        index_worker.start(state.shutdown_rx());
-
-        // Build the CodebaseManager with the channel sender and start it.
-        let mgr = CodebaseManager::new(state.clone(), project_path.clone(), index_tx.clone());
-        if let Err(e) = mgr.start().await {
-            tracing::error!(error = %e, "Failed to start codebase manager for /project");
-        }
-        let mgr = Arc::new(mgr);
-
-        // ── Periodic manifest-diff task ─────────────────────────────────
-        // Every N minutes, run a lightweight manifest diff and push any
-        // discovered changes into the IndexWorker channel.  This catches
-        // files that were missed by the file-system watcher (e.g. because
-        // the process was restarted or the watcher lost events under heavy load).
-        let mgr_for_diff = mgr.clone();
-        let mut diff_shutdown = state.shutdown_rx();
-        let manifest_diff_interval_mins = state.config.manifest_diff_interval_mins;
-        tokio::spawn(async move {
-            let mut interval =
-                tokio::time::interval(Duration::from_secs(manifest_diff_interval_mins * 60));
-            interval.tick().await; // skip immediate first tick
-
-            loop {
-                tokio::select! {
-                    _ = interval.tick() => {
-                        tracing::debug!(
-                            project_id = %project_id,
-                            "Periodic manifest diff starting"
-                        );
-                        if let Err(e) = mgr_for_diff.validate_index_full().await {
-                            tracing::warn!(
-                                project_id = %project_id,
-                                error = %e,
-                                "Periodic manifest diff failed"
-                            );
-                        }
-                    }
-                    _ = diff_shutdown.changed() => {
-                        if *diff_shutdown.borrow() {
-                            tracing::debug!(project_id = %project_id, "Manifest diff task stopping");
-                            break;
-                        }
-                    }
-                }
+    match startup_outcome.status {
+        CodeIntelligenceStartupStatus::Started {
+            project_id,
+            project_path,
+            source,
+            diagnostic,
+        } => match source {
+            memory_mcp::codebase::resolver::StartupProjectRootSource::Configured => {
+                tracing::info!(
+                    code_intelligence = ?diagnostic.as_json(),
+                    project_id = %project_id,
+                    path = %project_path.display(),
+                    "Using configured code intelligence project root"
+                );
             }
-        });
+            memory_mcp::codebase::resolver::StartupProjectRootSource::Fallback => {
+                tracing::info!(
+                    code_intelligence = ?diagnostic.as_json(),
+                    project_id = %project_id,
+                    path = %project_path.display(),
+                    "Using compatibility /project code intelligence root"
+                );
+            }
+        },
+        CodeIntelligenceStartupStatus::MissingRoot {
+            configured_path,
+            fallback_path,
+            diagnostic,
+        } => {
+            tracing::warn!(
+                configured_path = %configured_path.display(),
+                fallback_path = %fallback_path.display(),
+                code_intelligence = ?diagnostic.as_json(),
+                "Configured project root missing; continuing without code intelligence auto-start"
+            );
+        }
+        CodeIntelligenceStartupStatus::Disabled {
+            fallback_path,
+            diagnostic,
+        } => {
+            tracing::warn!(
+                fallback_path = %fallback_path.display(),
+                code_intelligence = ?diagnostic.as_json(),
+                "Code intelligence auto-start disabled; continuing server startup"
+            );
+        }
+        CodeIntelligenceStartupStatus::StartupFailed {
+            project_path,
+            diagnostic,
+            fatal,
+        } => {
+            tracing::error!(
+                path = %project_path.display(),
+                code_intelligence = ?diagnostic.as_json(),
+                "Failed to start code intelligence lifecycle"
+            );
+            if fatal {
+                return Ok(());
+            }
+        }
     }
 
     if cli.stdio {

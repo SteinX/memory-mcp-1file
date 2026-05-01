@@ -5,6 +5,7 @@ use std::sync::Arc;
 
 use tokio::sync::{watch, RwLock, Semaphore};
 
+use crate::codebase::ProjectRegistry;
 use crate::embedding::{AdaptiveEmbeddingQueue, EmbeddingService, EmbeddingStore};
 use crate::forgetting::access::AccessTracker;
 use crate::forgetting::config::ForgettingConfig;
@@ -50,6 +51,12 @@ pub struct AppConfig {
     /// changes missed by the file-system watcher.
     /// Default: 10 minutes.
     pub manifest_diff_interval_mins: u64,
+    /// Optional allowlist for project roots visible to code-intelligence registration paths.
+    /// When configured, `index_project` and startup registration must stay inside one of these roots.
+    pub allowed_project_roots: Option<Vec<PathBuf>>,
+    /// Maximum number of managed projects in the in-memory lifecycle registry.
+    /// Default: 5.
+    pub max_managed_projects: usize,
 }
 
 impl Default for AppConfig {
@@ -69,6 +76,8 @@ impl Default for AppConfig {
             index_batch_size: 20,
             index_debounce_ms: 2_000,
             manifest_diff_interval_mins: 10,
+            allowed_project_roots: None,
+            max_managed_projects: 5,
         }
     }
 }
@@ -157,6 +166,12 @@ pub struct AppState {
     /// corresponding `IndexJobSender` so both sides share the same counter
     /// without `AppState` needing to import the `codebase` crate.
     pub index_pending: Arc<RwLock<HashMap<String, Arc<AtomicUsize>>>>,
+    /// Per-project code-intelligence lifecycle registry.
+    ///
+    /// T10 makes `AppState` the owner of the registry so later startup and
+    /// manual-indexing tasks can route through one lifecycle coordinator without
+    /// changing search breadth or public MCP tool schemas in this step.
+    pub project_registry: Arc<ProjectRegistry>,
     /// Ephemeral in-process projection registry.
     ///
     /// Key = opaque locator string. Value = latest on-demand export-only

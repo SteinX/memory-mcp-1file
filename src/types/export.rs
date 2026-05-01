@@ -319,7 +319,12 @@ pub struct ExportedGraphEdge {
 }
 
 impl ExportedGraphEdge {
-    pub fn from_relation(relation: &Relation, id: Option<String>, from_id: String, to_id: String) -> Self {
+    pub fn from_relation(
+        relation: &Relation,
+        id: Option<String>,
+        from_id: String,
+        to_id: String,
+    ) -> Self {
         Self {
             id,
             from_id,

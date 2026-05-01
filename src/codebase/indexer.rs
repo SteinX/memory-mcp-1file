@@ -6,7 +6,7 @@ use tokio::fs;
 
 use crate::config::AppState;
 use crate::storage::StorageBackend;
-use crate::types::{IndexState, IndexStatus};
+use crate::types::{derive_project_id, IndexState, IndexStatus};
 use crate::Result;
 
 use super::chunker::chunk_file;
@@ -22,11 +22,8 @@ use crate::types::symbol::{CodeReference, CodeSymbol};
 const PARSE_TIMEOUT_SECS: u64 = 30;
 
 pub async fn index_project(state: Arc<AppState>, project_path: &Path) -> Result<IndexStatus> {
-    let project_id = project_path
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("unknown")
-        .to_string();
+    let project_id = derive_project_id(project_path)
+        .map_err(|error| crate::AppError::InvalidPath(error.to_string()))?;
 
     let state_clone = state.clone();
     let project_path_clone = project_path.to_path_buf();
@@ -516,8 +513,14 @@ async fn do_index_project(
     }
 
     status.mark_structural_generation_advanced();
-    status.status = IndexState::EmbeddingPending;
+    status.status = if status.total_files == 0 {
+        status.mark_semantic_generation_caught_up();
+        IndexState::Completed
+    } else {
+        IndexState::EmbeddingPending
+    };
     status.completed_at = Some(crate::types::Datetime::default());
+    status.refresh_lifecycle_states();
 
     state.storage.update_index_status(status.clone()).await?;
 
@@ -836,5 +839,35 @@ mod tests {
             .search("fn test", None, 200, ctx.state.storage.as_ref())
             .await;
         assert_eq!(chunks.len(), 150);
+    }
+
+    #[tokio::test]
+    async fn index_project_empty_directory_completes_with_zero_files() {
+        let ctx = TestContext::new().await;
+        let project_dir = ctx._temp_dir.path().join("empty-project");
+        fs::create_dir_all(&project_dir).unwrap();
+
+        let status = index_project(ctx.state.clone(), &project_dir).await.unwrap();
+
+        assert_eq!(status.project_id, "empty-project");
+        assert_eq!(status.status, IndexState::Completed);
+        assert_eq!(status.total_files, 0);
+        assert_eq!(status.indexed_files, 0);
+        assert_eq!(status.total_chunks, 0);
+        assert_eq!(status.total_symbols, 0);
+        assert_eq!(status.structural_state, crate::types::StructuralState::Ready);
+        assert_eq!(status.semantic_state, crate::types::SemanticState::Ready);
+        assert_eq!(status.structural_generation, 1);
+        assert_eq!(status.semantic_generation, 1);
+
+        let stored = ctx
+            .state
+            .storage
+            .get_index_status("empty-project")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(stored.status, IndexState::Completed);
+        assert_eq!(ctx.state.storage.count_manifest_entries("empty-project").await.unwrap(), 0);
     }
 }
