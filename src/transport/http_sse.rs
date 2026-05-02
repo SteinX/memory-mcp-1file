@@ -225,8 +225,10 @@ mod tests {
     use super::*;
     use axum::body::Body;
     use axum::http::Request;
+    use serde_json::{json, Value};
     use tower::ServiceExt;
 
+    use crate::server::params::{DeleteProjectParams, GetIndexStatusParams, IndexProjectParams};
     use crate::server::MemoryMcpServer;
     use crate::test_utils::TestContext;
 
@@ -238,6 +240,169 @@ mod tests {
             state,
             &ct,
         )
+    }
+
+    async fn post_mcp_request(
+        app: &axum::Router,
+        payload: &Value,
+        session_id: Option<&str>,
+    ) -> axum::response::Response {
+        let mut request = Request::builder()
+            .method("POST")
+            .uri("/mcp")
+            .header("content-type", "application/json")
+            .header("accept", "application/json, text/event-stream");
+
+        if let Some(session_id) = session_id {
+            request = request.header("mcp-session-id", session_id);
+        }
+
+        app.clone()
+            .oneshot(
+                request
+                    .body(Body::from(payload.to_string()))
+                    .expect("request should build"),
+            )
+            .await
+            .expect("mcp request should complete")
+    }
+
+    fn response_session_id(response: &axum::response::Response) -> Option<String> {
+        response
+            .headers()
+            .get("mcp-session-id")
+            .and_then(|value| value.to_str().ok())
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToOwned::to_owned)
+    }
+
+    async fn response_json(response: axum::response::Response) -> Value {
+        let bytes = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+            .await
+            .expect("response body should decode");
+        if bytes.is_empty() {
+            return json!({});
+        }
+
+        if let Ok(value) = serde_json::from_slice::<Value>(&bytes) {
+            return value;
+        }
+
+        let body_text = String::from_utf8_lossy(&bytes);
+        let sse_data_line = body_text
+            .lines()
+            .rev()
+            .find_map(|line| line.strip_prefix("data:"))
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .expect("response should contain JSON or SSE data line");
+
+        serde_json::from_str(sse_data_line)
+            .unwrap_or_else(|_| panic!("response should decode from JSON or SSE data: {body_text}"))
+    }
+
+    fn parse_tool_result_json(response_json: &Value) -> Value {
+        let text = response_json
+            .get("result")
+            .and_then(|result| result.get("content"))
+            .and_then(|content| content.get(0))
+            .and_then(|item| item.get("text"))
+            .and_then(Value::as_str)
+            .expect("tool response should contain result.content[0].text");
+        serde_json::from_str(text).expect("tool result text should be valid JSON")
+    }
+
+    async fn initialize_http_session(app: &axum::Router, request_id: u64) -> String {
+        let initialize_payload = json!({
+            "jsonrpc": "2.0",
+            "id": request_id,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2024-11-05",
+                "capabilities": {},
+                "clientInfo": {
+                    "name": "task-9-http-test",
+                    "version": "0.1"
+                }
+            }
+        });
+        let initialize_response = post_mcp_request(app, &initialize_payload, None).await;
+        assert!(
+            initialize_response.status().is_success(),
+            "initialize should succeed"
+        );
+        let session_id = response_session_id(&initialize_response)
+            .expect("initialize response should issue mcp-session-id");
+
+        let initialized_payload = json!({
+            "jsonrpc": "2.0",
+            "method": "notifications/initialized"
+        });
+        let initialized_response = post_mcp_request(app, &initialized_payload, Some(&session_id)).await;
+        assert!(
+            initialized_response.status().is_success(),
+            "notifications/initialized should succeed"
+        );
+
+        session_id
+    }
+
+    async fn index_project_and_wait(ctx: &TestContext, project_path: &std::path::Path) -> String {
+        let project_id = project_path
+            .file_name()
+            .and_then(|value| value.to_str())
+            .expect("project path should have file name")
+            .to_string();
+
+        let _ = crate::server::logic::code::index_project(
+            &ctx.state,
+            IndexProjectParams {
+                path: project_path.to_string_lossy().to_string(),
+                force: None,
+                confirm_failed_restart: None,
+            },
+        )
+        .await
+        .expect("index_project should succeed");
+
+        let status_params = GetIndexStatusParams {
+            project_id: project_id.clone(),
+        };
+        for _ in 0..120 {
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            let status = crate::server::logic::code::get_index_status(&ctx.state, status_params.clone())
+                .await
+                .expect("get_index_status should succeed")
+                .into_typed::<Value>()
+                .expect("status should be JSON");
+
+            let current = status
+                .get("status")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            if current == "completed" || current == "embedding_pending" {
+                return project_id;
+            }
+        }
+
+        panic!("Indexing timed out for project_id={project_id}");
+    }
+
+    fn recall_code_tool_call_payload(id: u64, query: &str) -> Value {
+        json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "method": "tools/call",
+            "params": {
+                "name": "recall_code",
+                "arguments": {
+                    "query": query,
+                    "mode": "vector",
+                    "limit": 20
+                }
+            }
+        })
     }
 
     #[tokio::test]
@@ -464,5 +629,211 @@ mod tests {
         let config = HttpServerConfig::default();
         assert_eq!(config.bind, "127.0.0.1");
         assert_eq!(config.port, 8080);
+    }
+
+    #[tokio::test]
+    async fn mcp_http_two_sessions_bind_and_search_isolated() {
+        let ctx = TestContext::new().await;
+        let app = test_router(ctx.state.clone());
+
+        let project_a_path = ctx._temp_dir.path().join("task9-http-two-sessions-a");
+        let project_b_path = ctx._temp_dir.path().join("task9-http-two-sessions-b");
+        std::fs::create_dir_all(&project_a_path).expect("project A path should exist");
+        std::fs::create_dir_all(&project_b_path).expect("project B path should exist");
+        std::fs::write(
+            project_a_path.join("lib.rs"),
+            "fn task9_http_shared_search() { println!(\"task9-marker-alpha-only\"); }\n",
+        )
+        .expect("project A source should write");
+        std::fs::write(
+            project_b_path.join("lib.rs"),
+            "fn task9_http_shared_search() { println!(\"task9-marker-beta-only\"); }\n",
+        )
+        .expect("project B source should write");
+
+        let project_a = index_project_and_wait(&ctx, &project_a_path).await;
+        let project_b = index_project_and_wait(&ctx, &project_b_path).await;
+
+        let session_a = initialize_http_session(&app, 1).await;
+        let session_b = initialize_http_session(&app, 2).await;
+        assert_ne!(session_a, session_b, "sessions should receive distinct ids");
+
+        let bind_a_payload = json!({
+            "jsonrpc": "2.0",
+            "id": 3,
+            "method": "tools/call",
+            "params": {
+                "name": "project_info",
+                "arguments": {
+                    "action": "bind",
+                    "project_id": project_a
+                }
+            }
+        });
+        let bind_a_response = post_mcp_request(&app, &bind_a_payload, Some(&session_a)).await;
+        assert!(bind_a_response.status().is_success());
+        let bind_a_json = parse_tool_result_json(&response_json(bind_a_response).await);
+        assert_eq!(bind_a_json["binding"]["session_id"], session_a);
+        assert_eq!(bind_a_json["binding"]["project_id"], project_a);
+
+        let bind_b_payload = json!({
+            "jsonrpc": "2.0",
+            "id": 4,
+            "method": "tools/call",
+            "params": {
+                "name": "project_info",
+                "arguments": {
+                    "action": "bind",
+                    "project_id": project_b
+                }
+            }
+        });
+        let bind_b_response = post_mcp_request(&app, &bind_b_payload, Some(&session_b)).await;
+        assert!(bind_b_response.status().is_success());
+        let bind_b_json = parse_tool_result_json(&response_json(bind_b_response).await);
+        assert_eq!(bind_b_json["binding"]["session_id"], session_b);
+        assert_eq!(bind_b_json["binding"]["project_id"], project_b);
+
+        let query = "task9_http_shared_search";
+        let search_a_response =
+            post_mcp_request(&app, &recall_code_tool_call_payload(5, query), Some(&session_a)).await;
+        assert!(search_a_response.status().is_success());
+        let search_a_json = parse_tool_result_json(&response_json(search_a_response).await);
+        assert_eq!(
+            search_a_json["project_resolution"]["source"],
+            "session_binding"
+        );
+        assert_eq!(
+            search_a_json["project_resolution"]["project_id"],
+            project_a
+        );
+        let search_a_text = search_a_json.to_string();
+        assert!(search_a_text.contains("task9-marker-alpha-only"));
+        assert!(!search_a_text.contains("task9-marker-beta-only"));
+
+        let search_b_response =
+            post_mcp_request(&app, &recall_code_tool_call_payload(6, query), Some(&session_b)).await;
+        assert!(search_b_response.status().is_success());
+        let search_b_json = parse_tool_result_json(&response_json(search_b_response).await);
+        assert_eq!(
+            search_b_json["project_resolution"]["source"],
+            "session_binding"
+        );
+        assert_eq!(
+            search_b_json["project_resolution"]["project_id"],
+            project_b
+        );
+        let search_b_text = search_b_json.to_string();
+        assert!(search_b_text.contains("task9-marker-beta-only"));
+        assert!(!search_b_text.contains("task9-marker-alpha-only"));
+    }
+
+    #[tokio::test]
+    async fn mcp_http_stale_binding_and_rebind_last_write_wins() {
+        let ctx = TestContext::new().await;
+        let app = test_router(ctx.state.clone());
+
+        let project_a_path = ctx._temp_dir.path().join("task9-http-stale-a");
+        let project_b_path = ctx._temp_dir.path().join("task9-http-stale-b");
+        std::fs::create_dir_all(&project_a_path).expect("project A path should exist");
+        std::fs::create_dir_all(&project_b_path).expect("project B path should exist");
+        std::fs::write(
+            project_a_path.join("lib.rs"),
+            "fn task9_stale_shared_probe() { println!(\"task9-stale-alpha-only\"); }\n",
+        )
+        .expect("project A source should write");
+        std::fs::write(
+            project_b_path.join("lib.rs"),
+            "fn task9_stale_shared_probe() { println!(\"task9-stale-beta-only\"); }\n",
+        )
+        .expect("project B source should write");
+
+        let project_a = index_project_and_wait(&ctx, &project_a_path).await;
+        let project_b = index_project_and_wait(&ctx, &project_b_path).await;
+
+        let session_id = initialize_http_session(&app, 10).await;
+
+        for (request_id, action, project_id) in [
+            (11_u64, "bind", Some(project_a.clone())),
+            (12_u64, "bind", Some(project_b.clone())),
+            (13_u64, "unbind", None),
+            (14_u64, "bind", Some(project_a.clone())),
+        ] {
+            let payload = json!({
+                "jsonrpc": "2.0",
+                "id": request_id,
+                "method": "tools/call",
+                "params": {
+                    "name": "project_info",
+                    "arguments": {
+                        "action": action,
+                        "project_id": project_id
+                    }
+                }
+            });
+            let response = post_mcp_request(&app, &payload, Some(&session_id)).await;
+            assert!(response.status().is_success(), "{action} should succeed");
+        }
+
+        let status_payload = json!({
+            "jsonrpc": "2.0",
+            "id": 15,
+            "method": "tools/call",
+            "params": {
+                "name": "project_info",
+                "arguments": {
+                    "action": "binding_status"
+                }
+            }
+        });
+        let status_response = post_mcp_request(&app, &status_payload, Some(&session_id)).await;
+        assert!(status_response.status().is_success());
+        let status_json = parse_tool_result_json(&response_json(status_response).await);
+        assert_eq!(status_json["binding"]["project_id"], project_a);
+
+        let delete_response = crate::server::logic::code::delete_project(
+            &ctx.state,
+            DeleteProjectParams {
+                project_id: project_a.clone(),
+            },
+        )
+        .await
+        .expect("delete project should succeed")
+        .into_typed::<Value>()
+        .expect("delete response should be json");
+        assert_eq!(delete_response["project_id"], project_a);
+
+        let stale_query_response = post_mcp_request(
+            &app,
+            &recall_code_tool_call_payload(16, "task9_stale_shared_probe"),
+            Some(&session_id),
+        )
+        .await;
+        assert!(stale_query_response.status().is_success());
+        let stale_json = parse_tool_result_json(&response_json(stale_query_response).await);
+        assert_eq!(stale_json["project_resolution"]["source"], "session_binding");
+        assert_eq!(
+            stale_json["project_resolution"]["project_id"],
+            project_a,
+            "stale response should preserve original bound project id"
+        );
+        assert_eq!(stale_json["project_resolution"]["reason_code"], "stale");
+        assert_eq!(
+            stale_json["project_resolution"]["binding_state"],
+            "stale_binding"
+        );
+        assert_eq!(stale_json["summary"]["partial"]["reason_code"], "stale");
+        assert_eq!(stale_json["reason_code"], "stale");
+        assert_eq!(stale_json["count"], 0);
+        assert!(
+            stale_json["results"]
+                .as_array()
+                .expect("results should be array")
+                .is_empty()
+        );
+        assert!(
+            !stale_json.to_string().contains("task9-stale-beta-only"),
+            "stale binding should not silently broaden to other projects"
+        );
     }
 }

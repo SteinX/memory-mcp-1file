@@ -96,6 +96,7 @@ impl TestContext {
             project_registry: Arc::new(crate::codebase::ProjectRegistry::with_policy(
                 project_registry_policy,
             )),
+            session_bindings: Arc::new(crate::codebase::SessionBindingStore::new(1024)),
             projection_registry: Arc::new(tokio::sync::RwLock::new(
                 std::collections::HashMap::new(),
             )),

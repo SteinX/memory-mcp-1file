@@ -7,6 +7,7 @@ pub mod resolver;
 pub mod parser;
 pub mod relations;
 pub mod scanner;
+pub mod session_binding;
 pub mod startup;
 pub mod symbol_index;
 pub mod watcher;
@@ -21,6 +22,7 @@ pub use project_registry::{
     ProjectRootConflict,
     ProjectWorkerHandle, ProjectWorkerSenderHandle,
 };
+pub use session_binding::{SessionBinding, SessionBindingStatus, SessionBindingStore};
 pub use relations::{create_symbol_relations, detect_containment_references, RelationStats};
 pub use scanner::{detect_language, is_code_file, scan_directory};
 pub use symbol_index::{ResolutionContext, SymbolIndex};

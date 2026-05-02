@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use tokio::sync::{watch, RwLock, Semaphore};
 
-use crate::codebase::ProjectRegistry;
+use crate::codebase::{ProjectRegistry, SessionBindingStore};
 use crate::embedding::{AdaptiveEmbeddingQueue, EmbeddingService, EmbeddingStore};
 use crate::forgetting::access::AccessTracker;
 use crate::forgetting::config::ForgettingConfig;
@@ -172,6 +172,11 @@ pub struct AppState {
     /// manual-indexing tasks can route through one lifecycle coordinator without
     /// changing search breadth or public MCP tool schemas in this step.
     pub project_registry: Arc<ProjectRegistry>,
+    /// In-memory HTTP/MCP session to project binding store.
+    ///
+    /// Key = `mcp-session-id`. Value = optional project binding state plus update timestamp.
+    /// This is intentionally process-local and does not persist across restarts.
+    pub session_bindings: Arc<SessionBindingStore>,
     /// Ephemeral in-process projection registry.
     ///
     /// Key = opaque locator string. Value = latest on-demand export-only

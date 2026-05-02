@@ -17,6 +17,7 @@ use super::super::contracts::{
     export_contract_meta, summary_collection_response, with_surface_guidance,
 };
 use super::super::{normalize_limit, success_json};
+use super::{apply_project_resolution, resolve_project_for_code_tool, CodeToolContext};
 
 struct RecallCodeTimingEvidence;
 
@@ -337,6 +338,14 @@ pub async fn search_code(
     state: &Arc<AppState>,
     params: SearchCodeParams,
 ) -> anyhow::Result<CallToolResult> {
+    search_code_with_context(state, params, None).await
+}
+
+pub(crate) async fn search_code_with_context(
+    state: &Arc<AppState>,
+    params: SearchCodeParams,
+    context: Option<CodeToolContext>,
+) -> anyhow::Result<CallToolResult> {
     crate::ensure_embedding_ready!(state);
 
     let SearchCodeParams {
@@ -344,7 +353,10 @@ pub async fn search_code(
         project_id,
         limit,
     } = params;
-    let project_id = normalize_project_id(project_id);
+    let project_resolution =
+        resolve_project_for_code_tool(state, normalize_project_id(project_id), context.as_ref())
+            .await;
+    let project_id = project_resolution.project_id().map(str::to_string);
 
     let mut is_partial = false;
     let mut indexing_message = None;
@@ -365,9 +377,31 @@ pub async fn search_code(
         }
     }
 
-    let query_embedding = state.embedding.embed(&query).await?;
-
     let limit = normalize_limit(limit);
+
+    if project_resolution.is_stale_binding() {
+        let mut response = json!({
+            "results": [],
+            "count": 0,
+            "summary": summary_collection_response(
+                "collection",
+                0,
+                Some(0),
+                true,
+                Some("Session-bound project is stale; refusing cross-project fallback.".to_string()),
+            ),
+            "query": query,
+            "contract": code_search_contract_json(project_id.as_deref(), project_status.as_ref()),
+            "vector_hits": 0,
+            "bm25_hits": 0,
+            "is_partial": true,
+            "message": "Session-bound project is stale; refusing cross-project fallback."
+        });
+        apply_project_resolution(&mut response, &project_resolution);
+        return Ok(success_json(response));
+    }
+
+    let query_embedding = state.embedding.embed(&query).await?;
 
     // Run vector search and BM25 in parallel for robust results.
     // Previously BM25 was only a fallback — degenerate vectors masked BM25 entirely.
@@ -466,6 +500,8 @@ pub async fn search_code(
         "message": indexing_message
     });
 
+    apply_project_resolution(&mut response, &project_resolution);
+
     if let Some(diagnostic) = missing_project_diagnostic.as_ref() {
         super::apply_missing_project_binding_diagnostic(&mut response, diagnostic);
     }
@@ -477,6 +513,14 @@ pub async fn search_code(
 pub async fn recall_code(
     state: &Arc<AppState>,
     params: RecallCodeParams,
+) -> anyhow::Result<CallToolResult> {
+    recall_code_with_context(state, params, None).await
+}
+
+pub(crate) async fn recall_code_with_context(
+    state: &Arc<AppState>,
+    params: RecallCodeParams,
+    context: Option<CodeToolContext>,
 ) -> anyhow::Result<CallToolResult> {
     use petgraph::graph::{DiGraph, NodeIndex};
     use std::collections::{HashMap, HashSet};
@@ -508,7 +552,10 @@ pub async fn recall_code(
     if let Some(timing) = timing.as_mut() {
         timing.record("embedding_readiness_wait", embedding_readiness_wait);
     }
-    let project_id = normalize_project_id(project_id);
+    let project_resolution =
+        resolve_project_for_code_tool(state, normalize_project_id(project_id), context.as_ref())
+            .await;
+    let project_id = project_resolution.project_id().map(str::to_string);
 
     let mut is_partial = false;
     let mut indexing_message = None;
@@ -536,6 +583,40 @@ pub async fn recall_code(
     }
 
     let stage_start = Instant::now();
+    let limit = normalize_limit(limit);
+
+    if project_resolution.is_stale_binding() {
+        let mut response = json!({
+            "results": [],
+            "count": 0,
+            "summary": summary_collection_response(
+                "collection",
+                0,
+                Some(0),
+                true,
+                Some("Session-bound project is stale; refusing cross-project fallback.".to_string()),
+            ),
+            "query": query,
+            "contract": code_search_contract_json(project_id.as_deref(), project_status.as_ref()),
+            "weights": {
+                "vector": vector_weight.unwrap_or(DEFAULT_CODE_VECTOR_WEIGHT),
+                "bm25": bm25_weight.unwrap_or(DEFAULT_CODE_BM25_WEIGHT),
+                "ppr": ppr_weight.unwrap_or(DEFAULT_CODE_PPR_WEIGHT)
+            },
+            "is_partial": true,
+            "message": "Session-bound project is stale; refusing cross-project fallback."
+        });
+        apply_project_resolution(&mut response, &project_resolution);
+        if let Some(timing) = timing.as_mut() {
+            timing.record("response_shaping", stage_start.elapsed());
+            timing.count("results_count", 0usize);
+            timing.count("has_degradation", false);
+            timing.finish(true, 0);
+        }
+        return Ok(success_json(response));
+    }
+
+    let stage_start = Instant::now();
     let query_embedding = state.embedding.embed(&query).await?;
     if let Some(timing) = timing.as_mut() {
         timing.record("embedding_inference", stage_start.elapsed());
@@ -543,7 +624,6 @@ pub async fn recall_code(
     }
 
     let stage_start = Instant::now();
-    let limit = normalize_limit(limit);
 
     let vector_weight = vector_weight.unwrap_or(DEFAULT_CODE_VECTOR_WEIGHT);
     let bm25_weight = bm25_weight.unwrap_or(DEFAULT_CODE_BM25_WEIGHT);
@@ -1205,6 +1285,8 @@ pub async fn recall_code(
         "is_partial": is_partial,
         "message": indexing_message
     });
+
+    apply_project_resolution(&mut response, &project_resolution);
 
     if let Some(degradation) = super::get_degradation_info(state).await {
         response["_indexing"] = degradation;

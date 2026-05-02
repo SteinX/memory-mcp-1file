@@ -4,14 +4,17 @@ use rmcp::{
     handler::server::{
         tool::ToolCallContext, tool::ToolRouter, wrapper::Parameters, ServerHandler,
     },
-    model::*,
+    model::{Extensions, *},
     service::{RequestContext, RoleServer},
     tool, tool_router,
 };
+use serde_json::json;
 
 use crate::config::AppState;
 use crate::server::logic;
+use crate::server::logic::code::CodeToolContext;
 use crate::server::params::*;
+use crate::storage::StorageBackend;
 
 fn require_project_id(project_id: Option<String>, action: &str) -> Result<String, ErrorData> {
     normalize_project_id(project_id).ok_or_else(|| ErrorData {
@@ -19,6 +22,92 @@ fn require_project_id(project_id: Option<String>, action: &str) -> Result<String
         message: format!("project_id required for {} action", action).into(),
         data: None,
     })
+}
+
+const MCP_SESSION_ID_HEADER: &str = "mcp-session-id";
+
+pub(crate) fn extract_session_id(context: &RequestContext<RoleServer>) -> Option<String> {
+    extract_session_id_from_extensions(&context.extensions)
+}
+
+fn code_tool_context_from_session_id(session_id: Option<String>) -> Option<CodeToolContext> {
+    session_id.map(|session_id| CodeToolContext::from_session_id(Some(session_id)))
+}
+
+fn unsupported_binding_response(action: &str) -> CallToolResult {
+    logic::success_json(json!({
+        "action": action,
+        "binding": serde_json::Value::Null,
+        "reason_code": "unsupported",
+        "message": "Session-scoped project binding is unsupported without an MCP session context."
+    }))
+}
+
+fn binding_response(status: &crate::codebase::SessionBindingStatus) -> serde_json::Value {
+    json!({
+        "session_id": status.session_id,
+        "project_id": status.project_id,
+        "updated_at_unix_ms": status.updated_at_unix_ms,
+        "state": if status.project_id.is_some() { "bound" } else { "unbound" },
+        "resolution_source": "session_binding"
+    })
+}
+
+fn binding_lifecycle_response(index_status: Option<&crate::types::IndexStatus>) -> serde_json::Value {
+    match index_status {
+        Some(index_status) => {
+            let is_partial = index_status.status != crate::types::IndexState::Completed;
+            let reason_code = if is_partial { "partial" } else { "ok" };
+            let message = if is_partial {
+                "Bound project is still indexing; results may be partial."
+            } else {
+                "Bound project indexing is complete."
+            };
+
+            json!({
+                "index_status": {
+                    "status": index_status.status.to_string(),
+                    "total_files": index_status.total_files,
+                    "indexed_files": index_status.indexed_files,
+                    "total_chunks": index_status.total_chunks,
+                    "total_symbols": index_status.total_symbols,
+                    "started_at": index_status.started_at,
+                    "completed_at": index_status.completed_at,
+                    "error_message": index_status.error_message,
+                },
+                "summary": {
+                    "result_kind": "binding_status",
+                    "partial": {
+                        "is_partial": is_partial,
+                        "reason_code": reason_code,
+                        "reason": if is_partial { "indexing_in_progress" } else { "complete" },
+                        "message": message
+                    }
+                }
+            })
+        }
+        None => json!({
+            "summary": {
+                "result_kind": "binding_status",
+                "partial": {
+                    "is_partial": true,
+                    "reason_code": "degraded",
+                    "reason": "missing_index_status",
+                    "message": "Bound project has no persisted index status metadata yet."
+                }
+            }
+        }),
+    }
+}
+
+fn extract_session_id_from_extensions(extensions: &Extensions) -> Option<String> {
+    extensions
+        .get::<axum::http::request::Parts>()
+        .and_then(|parts| parts.headers.get(MCP_SESSION_ID_HEADER))
+        .and_then(|value| value.to_str().ok())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
 }
 
 #[derive(Clone)]
@@ -310,28 +399,44 @@ impl MemoryMcpServer {
         &self,
         params: Parameters<RecallCodeParams>,
     ) -> Result<CallToolResult, ErrorData> {
+        self.recall_code_with_session(params, None).await
+    }
+
+    async fn recall_code_with_session(
+        &self,
+        params: Parameters<RecallCodeParams>,
+        context: Option<CodeToolContext>,
+    ) -> Result<CallToolResult, ErrorData> {
         if params.0.mode.as_deref() == Some("vector") {
             let search_params = SearchCodeParams {
                 query: params.0.query,
                 project_id: params.0.project_id,
                 limit: params.0.limit,
             };
-            logic::code::search_code(&self.state, search_params)
+            logic::code::search_code_with_context(&self.state, search_params, context)
                 .await
                 .map_err(to_rpc_error)
         } else {
-            logic::code::recall_code(&self.state, params.0)
+            logic::code::recall_code_with_context(&self.state, params.0, context)
                 .await
                 .map_err(to_rpc_error)
         }
     }
 
     #[tool(
-        description = "Project indexing information. Actions: list() | status(project_id) | stats(project_id) | projection(project_id) | projection_by_locator(). Status/stats/list responses include additive contract and normalized summary metadata, including lifecycle, generation, and projection/materialization contract fields. Projection returns an on-demand, export-only project projection document built from current canonical data."
+        description = "Project indexing information. Actions: list() | status(project_id) | stats(project_id) | projection(project_id) | projection_by_locator() | bind(project_id) | unbind() | binding_status(). Status/stats/list responses include additive contract and normalized summary metadata, including lifecycle, generation, and projection/materialization contract fields. Projection returns an on-demand, export-only project projection document built from current canonical data."
     )]
     async fn project_info(
         &self,
         params: Parameters<ProjectInfoParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        self.project_info_with_session(params, None).await
+    }
+
+    async fn project_info_with_session(
+        &self,
+        params: Parameters<ProjectInfoParams>,
+        context: Option<CodeToolContext>,
     ) -> Result<CallToolResult, ErrorData> {
         match params.0.action.as_str() {
             "list" => {
@@ -381,9 +486,111 @@ impl MemoryMcpServer {
                     .await
                     .map_err(to_rpc_error)
             }
+            "bind" => {
+                let Some(context) = context else {
+                    return Ok(unsupported_binding_response("bind"));
+                };
+                let Some(session_id) = context.session_id() else {
+                    return Ok(unsupported_binding_response("bind"));
+                };
+
+                let project_id = require_project_id(params.0.project_id, "bind")?;
+                if let Some(missing) =
+                    logic::code::missing_project_binding_diagnostic(&self.state, Some(&project_id))
+                        .await
+                {
+                    return Ok(logic::success_json(json!({
+                        "action": "bind",
+                        "project_id": project_id,
+                        "binding": serde_json::Value::Null,
+                        "reason_code": missing.reason_code,
+                        "message": missing.message,
+                        "code_intelligence": missing.code_intelligence,
+                        "project_binding": missing.project_binding
+                    })));
+                }
+
+                self.state
+                    .session_bindings
+                    .bind(session_id.to_string(), project_id.clone())
+                    .await;
+                let binding = self.state.session_bindings.binding_status(session_id).await;
+                let lifecycle = binding_lifecycle_response(
+                    self.state
+                        .storage
+                        .get_index_status(&project_id)
+                        .await
+                        .ok()
+                        .flatten()
+                        .as_ref(),
+                );
+
+                Ok(logic::success_json(json!({
+                    "action": "bind",
+                    "project_id": project_id,
+                    "binding": binding_response(&binding),
+                    "lifecycle": lifecycle,
+                })))
+            }
+            "unbind" => {
+                let Some(context) = context else {
+                    return Ok(unsupported_binding_response("unbind"));
+                };
+                let Some(session_id) = context.session_id() else {
+                    return Ok(unsupported_binding_response("unbind"));
+                };
+
+                let previous_binding = self.state.session_bindings.binding_status(session_id).await;
+                self.state.session_bindings.unbind(session_id).await;
+                let current_binding = self.state.session_bindings.binding_status(session_id).await;
+
+                Ok(logic::success_json(json!({
+                    "action": "unbind",
+                    "previous_binding": binding_response(&previous_binding),
+                    "binding": binding_response(&current_binding),
+                })))
+            }
+            "binding_status" => {
+                let Some(context) = context else {
+                    return Ok(unsupported_binding_response("binding_status"));
+                };
+                let Some(session_id) = context.session_id() else {
+                    return Ok(unsupported_binding_response("binding_status"));
+                };
+
+                let binding = self.state.session_bindings.binding_status(session_id).await;
+                let lifecycle = match binding.project_id.as_deref() {
+                    Some(project_id) => binding_lifecycle_response(
+                        self.state
+                            .storage
+                            .get_index_status(project_id)
+                            .await
+                            .ok()
+                            .flatten()
+                            .as_ref(),
+                    ),
+                    None => json!({
+                        "summary": {
+                            "result_kind": "binding_status",
+                            "partial": {
+                                "is_partial": false,
+                                "reason_code": "ok",
+                                "reason": "unbound",
+                                "message": "No project is currently bound for this session."
+                            }
+                        }
+                    }),
+                };
+
+                Ok(logic::success_json(json!({
+                    "action": "binding_status",
+                    "binding": binding_response(&binding),
+                    "lifecycle": lifecycle,
+                })))
+            }
             other => Err(ErrorData {
                 code: ErrorCode(-32602),
-                message: format!("Invalid action '{}'. Use: list, status, stats, projection, projection_by_locator", other).into(),
+                message: format!("Invalid action '{}'. Use: list, status, stats, projection, projection_by_locator, bind, unbind, binding_status", other).into(),
                 data: None,
             }),
         }
@@ -406,7 +613,15 @@ impl MemoryMcpServer {
         &self,
         params: Parameters<SearchSymbolsParams>,
     ) -> Result<CallToolResult, ErrorData> {
-        logic::code::search_symbols(&self.state, params.0)
+        self.search_symbols_with_session(params, None).await
+    }
+
+    async fn search_symbols_with_session(
+        &self,
+        params: Parameters<SearchSymbolsParams>,
+        context: Option<CodeToolContext>,
+    ) -> Result<CallToolResult, ErrorData> {
+        logic::code::search_symbols_with_context(&self.state, params.0, context)
             .await
             .map_err(to_rpc_error)
     }
@@ -493,6 +708,57 @@ impl ServerHandler for MemoryMcpServer {
         request: CallToolRequestParams,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, ErrorData> {
+        let session_context = code_tool_context_from_session_id(extract_session_id(&context));
+        let direct_result = match request.name.as_ref() {
+            "project_info" => {
+                let params = serde_json::from_value(serde_json::Value::Object(
+                    request.arguments.clone().unwrap_or_default(),
+                ))
+                .map_err(|error| ErrorData {
+                    code: ErrorCode(-32602),
+                    message: format!("Invalid project_info parameters: {error}").into(),
+                    data: None,
+                })?;
+                Some(
+                    self.project_info_with_session(Parameters(params), session_context)
+                        .await,
+                )
+            }
+            "recall_code" => {
+                let params = serde_json::from_value(serde_json::Value::Object(
+                    request.arguments.clone().unwrap_or_default(),
+                ))
+                .map_err(|error| ErrorData {
+                    code: ErrorCode(-32602),
+                    message: format!("Invalid recall_code parameters: {error}").into(),
+                    data: None,
+                })?;
+                Some(
+                    self.recall_code_with_session(Parameters(params), session_context)
+                        .await,
+                )
+            }
+            "search_symbols" => {
+                let params = serde_json::from_value(serde_json::Value::Object(
+                    request.arguments.clone().unwrap_or_default(),
+                ))
+                .map_err(|error| ErrorData {
+                    code: ErrorCode(-32602),
+                    message: format!("Invalid search_symbols parameters: {error}").into(),
+                    data: None,
+                })?;
+                Some(
+                    self.search_symbols_with_session(Parameters(params), session_context)
+                        .await,
+                )
+            }
+            _ => None,
+        };
+
+        if let Some(result) = direct_result {
+            return result;
+        }
+
         let tool_context = ToolCallContext::new(self, request, context);
         self.tool_router.call(tool_context).await
     }
@@ -503,6 +769,7 @@ mod tests {
     use super::*;
     use std::collections::BTreeSet;
 
+    use axum::http::Request;
     use serde_json::Value;
 
     use crate::test_utils::TestContext;
@@ -512,6 +779,104 @@ mod tests {
             .or_else(|| tool.get("input_schema"))
             .cloned()
             .unwrap_or(Value::Null)
+    }
+
+    fn extensions_with_request_headers(headers: &[(&str, &str)]) -> Extensions {
+        let mut builder = Request::builder();
+        for (name, value) in headers {
+            builder = builder.header(*name, *value);
+        }
+        let request = builder.body(()).expect("request should build");
+        let (parts, _) = request.into_parts();
+        let mut extensions = Extensions::new();
+        extensions.insert(parts);
+        extensions
+    }
+
+    #[test]
+    fn tool_context_session_identity() {
+        let extensions = extensions_with_request_headers(&[(MCP_SESSION_ID_HEADER, "session-abc")]);
+
+        assert_eq!(
+            extract_session_id_from_extensions(&extensions).as_deref(),
+            Some("session-abc")
+        );
+    }
+
+    #[test]
+    fn tool_context_without_session_is_none() {
+        let empty_extensions = Extensions::new();
+        let headerless_extensions = extensions_with_request_headers(&[]);
+
+        assert_eq!(extract_session_id_from_extensions(&empty_extensions), None);
+        assert_eq!(extract_session_id_from_extensions(&headerless_extensions), None);
+    }
+
+    #[tokio::test]
+    async fn handler_threads_session_to_project_resolver() {
+        let ctx = TestContext::new().await;
+        let server = MemoryMcpServer::new(ctx.state.clone());
+        let session_id = "handler-session-alpha";
+        let project_id = "handler-project-alpha";
+
+        ctx.state
+            .session_bindings
+            .bind(session_id, project_id)
+            .await;
+        let session_context = code_tool_context_from_session_id(Some(session_id.to_string()))
+            .expect("session context should be present");
+
+        assert_eq!(session_context.session_id(), Some(session_id));
+        assert_eq!(session_context.bound_project_id(&ctx.state).await.as_deref(), Some(project_id));
+
+        let result = server
+            .search_symbols_with_session(
+                Parameters(SearchSymbolsParams {
+                    query: "anything".to_string(),
+                    project_id: None,
+                    limit: Some(5),
+                    offset: Some(0),
+                    symbol_type: None,
+                    path_prefix: None,
+                }),
+                Some(session_context),
+            )
+            .await
+            .expect("handler should call search_symbols with session context");
+        let body = result
+            .into_typed::<Value>()
+            .expect("search_symbols response should be JSON");
+
+        assert_eq!(body["filters"]["project_id"], project_id);
+    }
+
+    #[tokio::test]
+    async fn handler_no_session_context_remains_none() {
+        let ctx = TestContext::new().await;
+        let server = MemoryMcpServer::new(ctx.state.clone());
+
+        assert!(code_tool_context_from_session_id(None).is_none());
+
+        let result = server
+            .search_symbols_with_session(
+                Parameters(SearchSymbolsParams {
+                    query: "anything".to_string(),
+                    project_id: None,
+                    limit: Some(5),
+                    offset: Some(0),
+                    symbol_type: None,
+                    path_prefix: None,
+                }),
+                None,
+            )
+            .await
+            .expect("handler should preserve no-session search_symbols behavior");
+        let body = result
+            .into_typed::<Value>()
+            .expect("search_symbols response should be JSON");
+
+        assert_eq!(body["filters"]["project_id"], Value::Null);
+        assert!(body.get("project_binding").is_none());
     }
 
     #[tokio::test]
@@ -546,6 +911,332 @@ mod tests {
         assert!(names.contains("how_to_use"));
         assert!(!names.contains("search"));
         assert!(!names.contains("search_code"));
+    }
+
+    #[tokio::test]
+    async fn project_info_binding_tool_surface_no_session_returns_unsupported_success_json() {
+        let ctx = TestContext::new().await;
+        let server = MemoryMcpServer::new(ctx.state.clone());
+
+        for action in ["bind", "unbind", "binding_status"] {
+            let result = server
+                .project_info(Parameters(ProjectInfoParams {
+                    action: action.to_string(),
+                    project_id: None,
+                    locator: None,
+                    relation_scope: None,
+                    sort_mode: None,
+                }))
+                .await;
+
+            let body = result
+                .expect("future binding action should return success JSON")
+                .into_typed::<Value>()
+                .expect("binding response should be JSON");
+
+            assert_eq!(body.get("binding"), Some(&Value::Null));
+            assert_eq!(body.get("reason_code").and_then(Value::as_str), Some("unsupported"));
+        }
+    }
+
+    #[tokio::test]
+    async fn project_info_bind_unbind_roundtrip() {
+        let ctx = TestContext::new().await;
+        let server = MemoryMcpServer::new(ctx.state.clone());
+        let session_context = CodeToolContext::from_session_id(Some("sid-roundtrip".to_string()));
+        let project_id = "project-bind-roundtrip";
+        let project_path = ctx._temp_dir.path().join(project_id);
+        std::fs::create_dir_all(&project_path).expect("project path should exist");
+        ctx.state
+            .project_registry
+            .ensure_project(project_id.to_string(), &project_path)
+            .await
+            .expect("project should register");
+
+        let bind = server
+            .project_info_with_session(
+                Parameters(ProjectInfoParams {
+                    action: "bind".to_string(),
+                    project_id: Some(project_id.to_string()),
+                    locator: None,
+                    relation_scope: None,
+                    sort_mode: None,
+                }),
+                Some(session_context.clone()),
+            )
+            .await
+            .expect("bind should succeed")
+            .into_typed::<Value>()
+            .expect("bind response should be json");
+
+        assert_eq!(bind["action"], "bind");
+        assert_eq!(bind["binding"]["project_id"], project_id);
+
+        let status = server
+            .project_info_with_session(
+                Parameters(ProjectInfoParams {
+                    action: "binding_status".to_string(),
+                    project_id: None,
+                    locator: None,
+                    relation_scope: None,
+                    sort_mode: None,
+                }),
+                Some(session_context.clone()),
+            )
+            .await
+            .expect("binding_status should succeed")
+            .into_typed::<Value>()
+            .expect("status response should be json");
+
+        assert_eq!(status["action"], "binding_status");
+        assert_eq!(status["binding"]["project_id"], project_id);
+
+        let unbind = server
+            .project_info_with_session(
+                Parameters(ProjectInfoParams {
+                    action: "unbind".to_string(),
+                    project_id: None,
+                    locator: None,
+                    relation_scope: None,
+                    sort_mode: None,
+                }),
+                Some(session_context),
+            )
+            .await
+            .expect("unbind should succeed")
+            .into_typed::<Value>()
+            .expect("unbind response should be json");
+
+        assert_eq!(unbind["action"], "unbind");
+        assert_eq!(unbind["previous_binding"]["project_id"], project_id);
+        assert!(unbind["binding"]["project_id"].is_null());
+        assert!(ctx
+            .state
+            .session_bindings
+            .binding_status("sid-roundtrip")
+            .await
+            .project_id
+            .is_none());
+    }
+
+    #[tokio::test]
+    async fn stdio_no_session_binding_unsupported() {
+        let ctx = TestContext::new().await;
+        let server = MemoryMcpServer::new(ctx.state.clone());
+
+        let bind = server
+            .project_info_with_session(
+                Parameters(ProjectInfoParams {
+                    action: "bind".to_string(),
+                    project_id: Some("project-a".to_string()),
+                    locator: None,
+                    relation_scope: None,
+                    sort_mode: None,
+                }),
+                None,
+            )
+            .await
+            .expect("bind without session should return success json")
+            .into_typed::<Value>()
+            .expect("bind no-session response should be json");
+
+        assert_eq!(bind["reason_code"], "unsupported");
+        assert!(bind["binding"].is_null());
+        assert_eq!(ctx.state.session_bindings.len().await, 0);
+
+        let project_a = format!("test_stdio_no_session_a_{}", uuid::Uuid::new_v4().simple());
+        let project_b = format!("test_stdio_no_session_b_{}", uuid::Uuid::new_v4().simple());
+
+        let project_a_path = ctx._temp_dir.path().join(&project_a);
+        let project_b_path = ctx._temp_dir.path().join(&project_b);
+        std::fs::create_dir_all(&project_a_path).expect("project a path should exist");
+        std::fs::create_dir_all(&project_b_path).expect("project b path should exist");
+        std::fs::write(
+            project_a_path.join("lib.rs"),
+            "fn stdio_alpha_target() { println!(\"stdio no session alpha marker\"); }\n",
+        )
+        .unwrap();
+        std::fs::write(
+            project_b_path.join("lib.rs"),
+            "fn stdio_beta_target() { println!(\"stdio no session beta marker\"); }\n",
+        )
+        .unwrap();
+
+        for project_path in [&project_a_path, &project_b_path] {
+            crate::server::logic::code::index_project(
+                &ctx.state,
+                IndexProjectParams {
+                    path: project_path.to_string_lossy().to_string(),
+                    force: None,
+                    confirm_failed_restart: None,
+                },
+            )
+            .await
+            .unwrap();
+        }
+
+        for project_id in [&project_a, &project_b] {
+            let status_params = crate::server::params::GetIndexStatusParams {
+                project_id: project_id.clone(),
+            };
+            let mut retries = 0;
+            loop {
+                tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
+                let res = crate::server::logic::code::get_index_status(&ctx.state, status_params.clone())
+                    .await
+                    .unwrap();
+                if let rmcp::model::RawContent::Text(t) = &res.content[0].raw {
+                    let indexing_done = t.text.contains("\"status\":\"completed\"")
+                        || t.text.contains("\"status\":\"embedding_pending\"");
+                    if indexing_done {
+                        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+                        break;
+                    }
+                }
+                retries += 1;
+                assert!(retries <= 100, "Indexing timed out for stdio no-session regression test");
+            }
+        }
+
+        let search = server
+            .recall_code_with_session(
+                Parameters(RecallCodeParams {
+                    query: "stdio no session".to_string(),
+                    project_id: None,
+                    limit: Some(20),
+                    mode: None,
+                    vector_weight: None,
+                    bm25_weight: None,
+                    ppr_weight: None,
+                    path_prefix: None,
+                    language: None,
+                    chunk_type: None,
+                }),
+                None,
+            )
+            .await
+            .expect("no-session recall should succeed")
+            .into_typed::<Value>()
+            .expect("recall response should be json");
+
+        assert_eq!(search["project_resolution"]["source"], "cross_project");
+        assert!(search["project_resolution"]["project_id"].is_null());
+        let text = search.to_string();
+        assert!(text.contains("stdio no session alpha marker"));
+        assert!(text.contains("stdio no session beta marker"));
+    }
+
+    #[tokio::test]
+    async fn project_info_bind_unknown_project_rejected() {
+        let ctx = TestContext::new().await;
+        let server = MemoryMcpServer::new(ctx.state.clone());
+        let session_context = CodeToolContext::from_session_id(Some("sid-unknown".to_string()));
+
+        let bind = server
+            .project_info_with_session(
+                Parameters(ProjectInfoParams {
+                    action: "bind".to_string(),
+                    project_id: Some("missing-project-id".to_string()),
+                    locator: None,
+                    relation_scope: None,
+                    sort_mode: None,
+                }),
+                Some(session_context),
+            )
+            .await
+            .expect("unknown bind should return success json")
+            .into_typed::<Value>()
+            .expect("unknown bind response should be json");
+
+        assert_eq!(bind["action"], "bind");
+        assert_eq!(bind["reason_code"], "missing");
+        assert!(bind["binding"].is_null());
+        assert!(ctx
+            .state
+            .session_bindings
+            .binding_status("sid-unknown")
+            .await
+            .project_id
+            .is_none());
+    }
+
+    #[tokio::test]
+    async fn project_info_bind_indexing_project_allowed() {
+        let ctx = TestContext::new().await;
+        let server = MemoryMcpServer::new(ctx.state.clone());
+        let session_context = CodeToolContext::from_session_id(Some("sid-indexing".to_string()));
+        let project_id = "indexing-bind-project";
+        let project_path = ctx._temp_dir.path().join(project_id);
+        std::fs::create_dir_all(&project_path).expect("project path should exist");
+
+        ctx.state
+            .project_registry
+            .ensure_project(project_id.to_string(), &project_path)
+            .await
+            .expect("project should register");
+
+        let mut status = crate::types::IndexStatus::new(project_id.to_string());
+        status.status = crate::types::IndexState::Indexing;
+        status.total_files = 10;
+        status.indexed_files = 4;
+        ctx.state
+            .storage
+            .update_index_status(status)
+            .await
+            .expect("status should update");
+
+        let bind = server
+            .project_info_with_session(
+                Parameters(ProjectInfoParams {
+                    action: "bind".to_string(),
+                    project_id: Some(project_id.to_string()),
+                    locator: None,
+                    relation_scope: None,
+                    sort_mode: None,
+                }),
+                Some(session_context),
+            )
+            .await
+            .expect("indexing project bind should succeed")
+            .into_typed::<Value>()
+            .expect("indexing bind response should be json");
+
+        assert_eq!(bind["binding"]["project_id"], project_id);
+        assert_eq!(bind["lifecycle"]["index_status"]["status"], "indexing");
+        assert_eq!(
+            bind["lifecycle"]["summary"]["partial"]["is_partial"],
+            Value::Bool(true)
+        );
+        assert_eq!(
+            bind["lifecycle"]["summary"]["partial"]["reason_code"],
+            "partial"
+        );
+    }
+
+    #[tokio::test]
+    async fn index_project_does_not_auto_bind_session() {
+        let ctx = TestContext::new().await;
+        let server = MemoryMcpServer::new(ctx.state.clone());
+        let project_path = ctx._temp_dir.path().join("no-auto-bind-project");
+        std::fs::create_dir_all(&project_path).expect("project path should exist");
+
+        let _ = server
+            .index_project(Parameters(IndexProjectParams {
+                path: project_path.to_string_lossy().to_string(),
+                force: None,
+                confirm_failed_restart: None,
+            }))
+            .await
+            .expect("index_project should return success json");
+
+        assert_eq!(ctx.state.session_bindings.len().await, 0);
+        assert!(ctx
+            .state
+            .session_bindings
+            .binding_status("sid-index-project")
+            .await
+            .project_id
+            .is_none());
     }
 
     #[tokio::test]

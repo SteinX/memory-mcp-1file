@@ -788,29 +788,32 @@ pub async fn delete_project(
     state: &Arc<AppState>,
     params: DeleteProjectParams,
 ) -> anyhow::Result<CallToolResult> {
+    let project_id = params.project_id;
+
     let _ = state
         .storage
-        .delete_project_symbols(&params.project_id)
+        .delete_project_symbols(&project_id)
         .await;
 
-    let _ = state.storage.delete_index_status(&params.project_id).await;
-    let _ = state.storage.delete_file_hashes(&params.project_id).await;
+    let _ = state.storage.delete_index_status(&project_id).await;
+    let _ = state.storage.delete_file_hashes(&project_id).await;
     let _ = state
         .storage
-        .delete_manifest_entries(&params.project_id)
+        .delete_manifest_entries(&project_id)
         .await;
 
     // Remove from in-memory BM25 index
-    state.code_search.remove_project(&params.project_id).await;
+    state.code_search.remove_project(&project_id).await;
+    state.project_registry.remove(&project_id).await;
 
     match state
         .storage
-        .delete_project_chunks(&params.project_id)
+        .delete_project_chunks(&project_id)
         .await
     {
         Ok(deleted) => Ok(success_json(json!({
             "deleted_chunks": deleted,
-            "project_id": params.project_id
+            "project_id": project_id
         }))),
         Err(e) => Ok(error_response(e)),
     }

@@ -306,6 +306,10 @@ impl ProjectRegistry {
         self.lifecycles.read().await.len()
     }
 
+    pub async fn remove(&self, project_id: &str) -> bool {
+        self.lifecycles.write().await.remove(project_id).is_some()
+    }
+
     pub async fn is_empty(&self) -> bool {
         self.len().await == 0
     }

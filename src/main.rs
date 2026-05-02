@@ -561,6 +561,7 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
         project_registry: Arc::new(memory_mcp::codebase::ProjectRegistry::with_policy(
             project_registry_policy,
         )),
+        session_bindings: Arc::new(memory_mcp::codebase::SessionBindingStore::new(1024)),
         projection_registry: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
     });
 

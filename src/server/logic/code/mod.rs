@@ -10,7 +10,7 @@ mod symbols;
 
 use std::sync::Arc;
 
-use serde_json::json;
+use serde_json::{json, Value};
 
 use crate::config::AppState;
 use crate::storage::StorageBackend;
@@ -22,7 +22,162 @@ pub use indexing::{
     get_project_projection_by_locator, get_project_stats, index_project, list_projects,
 };
 pub use search::{recall_code, search_code};
+pub(crate) use search::{recall_code_with_context, search_code_with_context};
 pub use symbols::{search_symbols, symbol_graph};
+pub(crate) use symbols::search_symbols_with_context;
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct CodeToolContext {
+    session_id: Option<String>,
+}
+
+impl CodeToolContext {
+    pub(crate) fn from_session_id(session_id: Option<String>) -> Self {
+        Self { session_id }
+    }
+
+    pub(crate) fn session_id(&self) -> Option<&str> {
+        self.session_id.as_deref()
+    }
+
+    #[cfg(test)]
+    pub(crate) async fn bound_project_id(&self, state: &Arc<AppState>) -> Option<String> {
+        let session_id = self.session_id()?;
+        state
+            .session_bindings
+            .binding_status(session_id)
+            .await
+            .project_id
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum ProjectResolutionSource {
+    Explicit,
+    SessionBinding,
+    CrossProject,
+}
+
+impl ProjectResolutionSource {
+    fn as_str(&self) -> &'static str {
+        match self {
+            Self::Explicit => "explicit",
+            Self::SessionBinding => "session_binding",
+            Self::CrossProject => "cross_project",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ProjectResolution {
+    pub project_id: Option<String>,
+    pub source: ProjectResolutionSource,
+    pub reason_code: Option<ContractReasonCode>,
+    pub binding_state: Option<&'static str>,
+}
+
+impl ProjectResolution {
+    pub(crate) fn project_id(&self) -> Option<&str> {
+        self.project_id.as_deref()
+    }
+
+    pub(crate) fn is_stale_binding(&self) -> bool {
+        self.reason_code == Some(ContractReasonCode::Stale)
+            && self.binding_state == Some("stale_binding")
+    }
+
+    pub(crate) fn as_json(&self) -> Value {
+        let mut value = json!({
+            "source": self.source.as_str(),
+            "project_id": self.project_id,
+        });
+
+        if let Some(reason_code) = &self.reason_code {
+            value["reason_code"] = json!(reason_code);
+        }
+        if let Some(binding_state) = self.binding_state {
+            value["binding_state"] = json!(binding_state);
+        }
+
+        value
+    }
+}
+
+pub(crate) async fn resolve_project_for_code_tool(
+    state: &Arc<AppState>,
+    explicit_project_id: Option<String>,
+    context: Option<&CodeToolContext>,
+) -> ProjectResolution {
+    if let Some(project_id) = explicit_project_id {
+        return ProjectResolution {
+            project_id: Some(project_id),
+            source: ProjectResolutionSource::Explicit,
+            reason_code: None,
+            binding_state: None,
+        };
+    }
+
+    let Some(context) = context else {
+        return ProjectResolution {
+            project_id: None,
+            source: ProjectResolutionSource::CrossProject,
+            reason_code: None,
+            binding_state: None,
+        };
+    };
+    let Some(session_id) = context.session_id() else {
+        return ProjectResolution {
+            project_id: None,
+            source: ProjectResolutionSource::CrossProject,
+            reason_code: None,
+            binding_state: None,
+        };
+    };
+
+    let binding = state.session_bindings.binding_status(session_id).await;
+    let Some(project_id) = binding.project_id else {
+        return ProjectResolution {
+            project_id: None,
+            source: ProjectResolutionSource::CrossProject,
+            reason_code: None,
+            binding_state: None,
+        };
+    };
+
+    if missing_project_binding_diagnostic(state, Some(&project_id))
+        .await
+        .is_some()
+    {
+        return ProjectResolution {
+            project_id: Some(project_id),
+            source: ProjectResolutionSource::SessionBinding,
+            reason_code: Some(ContractReasonCode::Stale),
+            binding_state: Some("stale_binding"),
+        };
+    }
+
+    ProjectResolution {
+        project_id: Some(project_id),
+        source: ProjectResolutionSource::SessionBinding,
+        reason_code: None,
+        binding_state: None,
+    }
+}
+
+pub(crate) fn apply_project_resolution(response: &mut Value, resolution: &ProjectResolution) {
+    response["project_resolution"] = resolution.as_json();
+
+    if resolution.is_stale_binding() {
+        response["reason_code"] = json!(ContractReasonCode::Stale);
+        let partial = &mut response["summary"]["partial"];
+        partial["is_partial"] = json!(true);
+        partial["reason_code"] = json!(ContractReasonCode::Stale);
+        partial["reason"] = json!("stale_binding");
+        partial["message"] = json!(
+            "Session-bound project is no longer registered or indexed; refusing cross-project fallback."
+        );
+    }
+}
 
 pub(crate) struct MissingProjectBindingDiagnostic {
     pub code_intelligence: serde_json::Value,
@@ -95,8 +250,10 @@ pub(crate) fn apply_missing_project_binding_diagnostic(
 mod tests {
     use crate::server::params::{
         GetIndexStatusParams, GetProjectProjectionParams, GetProjectionByLocatorParams,
-        IndexProjectParams, SearchCodeParams, SearchSymbolsParams, SymbolGraphParams,
+        IndexProjectParams, RecallCodeParams, SearchCodeParams, SearchSymbolsParams,
+        SymbolGraphParams,
     };
+    use super::CodeToolContext;
     use crate::storage::StorageBackend;
     use crate::test_utils::TestContext;
     use std::fs;
@@ -692,6 +849,575 @@ mod tests {
             recall_json["contract"]["surface_guidance"]["preferred_response_fields"][0],
             "results[].file_path"
         );
+    }
+
+    #[tokio::test]
+    async fn no_binding_preserves_project_id_none_breadth() {
+        let ctx = TestContext::new().await;
+        let project_a = format!("test_resolution_a_{}", uuid::Uuid::new_v4().simple());
+        let project_b = format!("test_resolution_b_{}", uuid::Uuid::new_v4().simple());
+
+        let project_a_path = ctx._temp_dir.path().join(&project_a);
+        let project_b_path = ctx._temp_dir.path().join(&project_b);
+        fs::create_dir_all(&project_a_path).unwrap();
+        fs::create_dir_all(&project_b_path).unwrap();
+
+        fs::write(
+            project_a_path.join("lib.rs"),
+            "fn alpha_source() { println!(\"alpha only marker\"); }\n",
+        )
+        .unwrap();
+        fs::write(
+            project_b_path.join("lib.rs"),
+            "fn beta_source() { println!(\"beta only marker\"); }\n",
+        )
+        .unwrap();
+
+        super::index_project(
+            &ctx.state,
+            IndexProjectParams {
+                path: project_a_path.to_string_lossy().to_string(),
+                force: None,
+                confirm_failed_restart: None,
+            },
+        )
+        .await
+        .unwrap();
+        super::index_project(
+            &ctx.state,
+            IndexProjectParams {
+                path: project_b_path.to_string_lossy().to_string(),
+                force: None,
+                confirm_failed_restart: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        for project_id in [&project_a, &project_b] {
+            let status_params = GetIndexStatusParams {
+                project_id: project_id.clone(),
+            };
+
+            let mut retries = 0;
+            loop {
+                tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
+                let res = super::get_index_status(&ctx.state, status_params.clone())
+                    .await
+                    .unwrap();
+                if let rmcp::model::RawContent::Text(t) = &res.content[0].raw {
+                    let indexing_done = t.text.contains("\"status\":\"completed\"")
+                        || t.text.contains("\"status\":\"embedding_pending\"");
+                    if indexing_done {
+                        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+                        break;
+                    }
+                }
+                retries += 1;
+                assert!(
+                    retries <= 100,
+                    "Indexing timed out for code_project_resolution_sources test"
+                );
+            }
+        }
+
+        let explicit_search = super::search_code(
+            &ctx.state,
+            SearchCodeParams {
+                query: "alpha only marker".to_string(),
+                project_id: Some(project_a.clone()),
+                limit: Some(10),
+            },
+        )
+        .await
+        .unwrap();
+        if let rmcp::model::RawContent::Text(t) = &explicit_search.content[0].raw {
+            let json: serde_json::Value = serde_json::from_str(&t.text).unwrap();
+            assert_eq!(json["project_resolution"]["source"], "explicit");
+            assert_eq!(json["project_resolution"]["project_id"], project_a);
+        } else {
+            panic!("Expected text content");
+        }
+
+        let explicit_recall = super::recall_code(
+            &ctx.state,
+            RecallCodeParams {
+                query: "alpha only marker".to_string(),
+                project_id: Some(project_a.clone()),
+                limit: Some(10),
+                mode: None,
+                vector_weight: None,
+                bm25_weight: None,
+                ppr_weight: None,
+                path_prefix: None,
+                language: None,
+                chunk_type: None,
+            },
+        )
+        .await
+        .unwrap();
+        if let rmcp::model::RawContent::Text(t) = &explicit_recall.content[0].raw {
+            let json: serde_json::Value = serde_json::from_str(&t.text).unwrap();
+            assert_eq!(json["project_resolution"]["source"], "explicit");
+            assert_eq!(json["project_resolution"]["project_id"], project_a);
+        } else {
+            panic!("Expected text content");
+        }
+
+        let explicit_symbols = super::search_symbols(
+            &ctx.state,
+            SearchSymbolsParams {
+                query: "alpha_source".to_string(),
+                project_id: Some(project_a.clone()),
+                limit: Some(10),
+                offset: Some(0),
+                symbol_type: None,
+                path_prefix: None,
+            },
+        )
+        .await
+        .unwrap();
+        if let rmcp::model::RawContent::Text(t) = &explicit_symbols.content[0].raw {
+            let json: serde_json::Value = serde_json::from_str(&t.text).unwrap();
+            assert_eq!(json["project_resolution"]["source"], "explicit");
+            assert_eq!(json["project_resolution"]["project_id"], project_a);
+        } else {
+            panic!("Expected text content");
+        }
+
+        let cross_project_search = super::search_code(
+            &ctx.state,
+            SearchCodeParams {
+                query: "only marker".to_string(),
+                project_id: None,
+                limit: Some(20),
+            },
+        )
+        .await
+        .unwrap();
+        if let rmcp::model::RawContent::Text(t) = &cross_project_search.content[0].raw {
+            let json: serde_json::Value = serde_json::from_str(&t.text).unwrap();
+            assert_eq!(json["project_resolution"]["source"], "cross_project");
+            assert!(json["project_resolution"]["project_id"].is_null());
+            assert!(
+                t.text.contains("alpha only marker") && t.text.contains("beta only marker"),
+                "Expected broad cross-project behavior to include both project markers. Got: {}",
+                t.text
+            );
+        } else {
+            panic!("Expected text content");
+        }
+
+        let session_id = format!("sid-resolution-{}", uuid::Uuid::new_v4().simple());
+        ctx.state
+            .session_bindings
+            .bind(session_id.clone(), project_a.clone())
+            .await;
+        let session_bound_search = super::search_code_with_context(
+            &ctx.state,
+            SearchCodeParams {
+                query: "alpha only marker".to_string(),
+                project_id: None,
+                limit: Some(10),
+            },
+            Some(CodeToolContext::from_session_id(Some(session_id))),
+        )
+        .await
+        .unwrap();
+        if let rmcp::model::RawContent::Text(t) = &session_bound_search.content[0].raw {
+            let json: serde_json::Value = serde_json::from_str(&t.text).unwrap();
+            assert_eq!(json["project_resolution"]["source"], "session_binding");
+            assert_eq!(json["project_resolution"]["project_id"], project_a);
+        } else {
+            panic!("Expected text content");
+        }
+    }
+
+    #[tokio::test]
+    async fn code_project_resolution_stale_binding() {
+        let ctx = TestContext::new().await;
+
+        let stable_project = format!("test_stale_live_{}", uuid::Uuid::new_v4().simple());
+        let stale_project = "test_stale_bound_project".to_string();
+
+        let stable_path = ctx._temp_dir.path().join(&stable_project);
+        fs::create_dir_all(&stable_path).unwrap();
+        fs::write(
+            stable_path.join("lib.rs"),
+            "fn live_marker() { println!(\"live project marker\"); }\n",
+        )
+        .unwrap();
+
+        super::index_project(
+            &ctx.state,
+            IndexProjectParams {
+                path: stable_path.to_string_lossy().to_string(),
+                force: None,
+                confirm_failed_restart: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        let status_params = GetIndexStatusParams {
+            project_id: stable_project,
+        };
+
+        let mut retries = 0;
+        loop {
+            tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
+            let res = super::get_index_status(&ctx.state, status_params.clone())
+                .await
+                .unwrap();
+            if let rmcp::model::RawContent::Text(t) = &res.content[0].raw {
+                let indexing_done = t.text.contains("\"status\":\"completed\"")
+                    || t.text.contains("\"status\":\"embedding_pending\"");
+                if indexing_done {
+                    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+                    break;
+                }
+            }
+            retries += 1;
+            assert!(
+                retries <= 100,
+                "Indexing timed out for code_project_resolution_stale_binding test"
+            );
+        }
+
+        let session_id = format!("sid-stale-{}", uuid::Uuid::new_v4().simple());
+        ctx.state
+            .session_bindings
+            .bind(session_id.clone(), stale_project.clone())
+            .await;
+        let stale_search = super::search_code_with_context(
+            &ctx.state,
+            SearchCodeParams {
+                query: "live project marker".to_string(),
+                project_id: None,
+                limit: Some(20),
+            },
+            Some(CodeToolContext::from_session_id(Some(session_id))),
+        )
+        .await
+        .unwrap();
+
+        if let rmcp::model::RawContent::Text(t) = &stale_search.content[0].raw {
+            let json: serde_json::Value = serde_json::from_str(&t.text).unwrap();
+
+            assert_eq!(json["project_resolution"]["source"], "session_binding");
+            assert_eq!(json["project_resolution"]["project_id"], stale_project);
+            assert_eq!(json["project_resolution"]["reason_code"], "stale");
+            assert_eq!(json["project_resolution"]["binding_state"], "stale_binding");
+            assert_eq!(json["summary"]["partial"]["reason_code"], "stale");
+            assert_eq!(json["reason_code"], "stale");
+            assert_eq!(json["count"], 0);
+            assert!(json["results"].as_array().unwrap().is_empty());
+            assert_ne!(json["project_resolution"]["source"], "cross_project");
+        } else {
+            panic!("Expected text content");
+        }
+    }
+
+    #[tokio::test]
+    async fn explicit_project_id_overrides_session_binding() {
+        let ctx = TestContext::new().await;
+        let project_a = format!("test_explicit_override_a_{}", uuid::Uuid::new_v4().simple());
+        let project_b = format!("test_explicit_override_b_{}", uuid::Uuid::new_v4().simple());
+
+        let project_a_path = ctx._temp_dir.path().join(&project_a);
+        let project_b_path = ctx._temp_dir.path().join(&project_b);
+        fs::create_dir_all(&project_a_path).unwrap();
+        fs::create_dir_all(&project_b_path).unwrap();
+        fs::write(
+            project_a_path.join("lib.rs"),
+            "fn explicit_override_target() { println!(\"explicit override alpha marker\"); }\n",
+        )
+        .unwrap();
+        fs::write(
+            project_b_path.join("lib.rs"),
+            "fn session_binding_decoy() { println!(\"session binding beta marker\"); }\n",
+        )
+        .unwrap();
+
+        for project_path in [&project_a_path, &project_b_path] {
+            super::index_project(
+                &ctx.state,
+                IndexProjectParams {
+                    path: project_path.to_string_lossy().to_string(),
+                    force: None,
+                    confirm_failed_restart: None,
+                },
+            )
+            .await
+            .unwrap();
+        }
+
+        for project_id in [&project_a, &project_b] {
+            let status_params = GetIndexStatusParams {
+                project_id: project_id.clone(),
+            };
+            let mut retries = 0;
+            loop {
+                tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
+                let res = super::get_index_status(&ctx.state, status_params.clone())
+                    .await
+                    .unwrap();
+                if let rmcp::model::RawContent::Text(t) = &res.content[0].raw {
+                    let indexing_done = t.text.contains("\"status\":\"completed\"")
+                        || t.text.contains("\"status\":\"embedding_pending\"");
+                    if indexing_done {
+                        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+                        break;
+                    }
+                }
+                retries += 1;
+                assert!(
+                    retries <= 100,
+                    "Indexing timed out for explicit override test"
+                );
+            }
+        }
+
+        let session_id = format!("sid-override-{}", uuid::Uuid::new_v4().simple());
+        ctx.state
+            .session_bindings
+            .bind(session_id.clone(), project_b.clone())
+            .await;
+        let context = Some(CodeToolContext::from_session_id(Some(session_id.clone())));
+
+        let search_res = super::search_code_with_context(
+            &ctx.state,
+            SearchCodeParams {
+                query: "explicit override alpha marker".to_string(),
+                project_id: Some(project_a.clone()),
+                limit: Some(10),
+            },
+            context.clone(),
+        )
+        .await
+        .unwrap();
+        if let rmcp::model::RawContent::Text(t) = &search_res.content[0].raw {
+            let json: serde_json::Value = serde_json::from_str(&t.text).unwrap();
+            assert_eq!(json["project_resolution"]["source"], "explicit");
+            assert_eq!(json["project_resolution"]["project_id"], project_a);
+            assert!(t.text.contains("explicit override alpha marker"));
+            assert!(!t.text.contains("session binding beta marker"));
+        } else {
+            panic!("Expected text content");
+        }
+
+        let recall_res = super::recall_code_with_context(
+            &ctx.state,
+            RecallCodeParams {
+                query: "explicit override alpha marker".to_string(),
+                project_id: Some(project_a.clone()),
+                limit: Some(10),
+                mode: None,
+                vector_weight: None,
+                bm25_weight: None,
+                ppr_weight: None,
+                path_prefix: None,
+                language: None,
+                chunk_type: None,
+            },
+            context.clone(),
+        )
+        .await
+        .unwrap();
+        if let rmcp::model::RawContent::Text(t) = &recall_res.content[0].raw {
+            let json: serde_json::Value = serde_json::from_str(&t.text).unwrap();
+            assert_eq!(json["project_resolution"]["source"], "explicit");
+            assert_eq!(json["project_resolution"]["project_id"], project_a);
+            assert!(t.text.contains("explicit override alpha marker"));
+            assert!(!t.text.contains("session binding beta marker"));
+        } else {
+            panic!("Expected text content");
+        }
+
+        let symbols_res = super::search_symbols_with_context(
+            &ctx.state,
+            SearchSymbolsParams {
+                query: "explicit_override_target".to_string(),
+                project_id: Some(project_a.clone()),
+                limit: Some(10),
+                offset: Some(0),
+                symbol_type: None,
+                path_prefix: None,
+            },
+            context,
+        )
+        .await
+        .unwrap();
+        if let rmcp::model::RawContent::Text(t) = &symbols_res.content[0].raw {
+            let json: serde_json::Value = serde_json::from_str(&t.text).unwrap();
+            assert_eq!(json["project_resolution"]["source"], "explicit");
+            assert_eq!(json["project_resolution"]["project_id"], project_a);
+            assert!(t.text.contains("explicit_override_target"));
+            assert!(!t.text.contains("session_binding_decoy"));
+        } else {
+            panic!("Expected text content");
+        }
+    }
+
+    #[tokio::test]
+    async fn session_binding_scopes_code_search() {
+        let ctx = TestContext::new().await;
+        let project_a = format!("test_session_scope_a_{}", uuid::Uuid::new_v4().simple());
+        let project_b = format!("test_session_scope_b_{}", uuid::Uuid::new_v4().simple());
+
+        let project_a_path = ctx._temp_dir.path().join(&project_a);
+        let project_b_path = ctx._temp_dir.path().join(&project_b);
+        fs::create_dir_all(&project_a_path).unwrap();
+        fs::create_dir_all(&project_b_path).unwrap();
+        fs::write(
+            project_a_path.join("lib.rs"),
+            "fn bound_project_target() { println!(\"shared session marker bound\"); }\n",
+        )
+        .unwrap();
+        fs::write(
+            project_b_path.join("lib.rs"),
+            "fn other_project_target() { println!(\"shared session marker other\"); }\n",
+        )
+        .unwrap();
+
+        for project_path in [&project_a_path, &project_b_path] {
+            super::index_project(
+                &ctx.state,
+                IndexProjectParams {
+                    path: project_path.to_string_lossy().to_string(),
+                    force: None,
+                    confirm_failed_restart: None,
+                },
+            )
+            .await
+            .unwrap();
+        }
+
+        for project_id in [&project_a, &project_b] {
+            let status_params = GetIndexStatusParams {
+                project_id: project_id.clone(),
+            };
+            let mut retries = 0;
+            loop {
+                tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
+                let res = super::get_index_status(&ctx.state, status_params.clone())
+                    .await
+                    .unwrap();
+                if let rmcp::model::RawContent::Text(t) = &res.content[0].raw {
+                    let indexing_done = t.text.contains("\"status\":\"completed\"")
+                        || t.text.contains("\"status\":\"embedding_pending\"");
+                    if indexing_done {
+                        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+                        break;
+                    }
+                }
+                retries += 1;
+                assert!(
+                    retries <= 100,
+                    "Indexing timed out for session scope test"
+                );
+            }
+        }
+
+        let broad_search = super::search_code(
+            &ctx.state,
+            SearchCodeParams {
+                query: "shared session marker".to_string(),
+                project_id: None,
+                limit: Some(20),
+            },
+        )
+        .await
+        .unwrap();
+        if let rmcp::model::RawContent::Text(t) = &broad_search.content[0].raw {
+            let json: serde_json::Value = serde_json::from_str(&t.text).unwrap();
+            assert_eq!(json["project_resolution"]["source"], "cross_project");
+            assert!(json["project_resolution"]["project_id"].is_null());
+            assert!(t.text.contains("shared session marker bound"));
+            assert!(t.text.contains("shared session marker other"));
+        } else {
+            panic!("Expected text content");
+        }
+
+        let session_id = format!("sid-scope-{}", uuid::Uuid::new_v4().simple());
+        ctx.state
+            .session_bindings
+            .bind(session_id.clone(), project_a.clone())
+            .await;
+        let context = Some(CodeToolContext::from_session_id(Some(session_id.clone())));
+
+        let scoped_search = super::search_code_with_context(
+            &ctx.state,
+            SearchCodeParams {
+                query: "shared session marker".to_string(),
+                project_id: None,
+                limit: Some(20),
+            },
+            context.clone(),
+        )
+        .await
+        .unwrap();
+        if let rmcp::model::RawContent::Text(t) = &scoped_search.content[0].raw {
+            let json: serde_json::Value = serde_json::from_str(&t.text).unwrap();
+            assert_eq!(json["project_resolution"]["source"], "session_binding");
+            assert_eq!(json["project_resolution"]["project_id"], project_a);
+            assert!(t.text.contains("shared session marker bound"));
+            assert!(!t.text.contains("shared session marker other"));
+        } else {
+            panic!("Expected text content");
+        }
+
+        let scoped_recall = super::recall_code_with_context(
+            &ctx.state,
+            RecallCodeParams {
+                query: "shared session marker".to_string(),
+                project_id: None,
+                limit: Some(20),
+                mode: None,
+                vector_weight: None,
+                bm25_weight: None,
+                ppr_weight: None,
+                path_prefix: None,
+                language: None,
+                chunk_type: None,
+            },
+            context.clone(),
+        )
+        .await
+        .unwrap();
+        if let rmcp::model::RawContent::Text(t) = &scoped_recall.content[0].raw {
+            let json: serde_json::Value = serde_json::from_str(&t.text).unwrap();
+            assert_eq!(json["project_resolution"]["source"], "session_binding");
+            assert_eq!(json["project_resolution"]["project_id"], project_a);
+            assert!(t.text.contains("shared session marker bound"));
+            assert!(!t.text.contains("shared session marker other"));
+        } else {
+            panic!("Expected text content");
+        }
+
+        let scoped_symbols = super::search_symbols_with_context(
+            &ctx.state,
+            SearchSymbolsParams {
+                query: "target".to_string(),
+                project_id: None,
+                limit: Some(20),
+                offset: Some(0),
+                symbol_type: None,
+                path_prefix: None,
+            },
+            context,
+        )
+        .await
+        .unwrap();
+        if let rmcp::model::RawContent::Text(t) = &scoped_symbols.content[0].raw {
+            let json: serde_json::Value = serde_json::from_str(&t.text).unwrap();
+            assert_eq!(json["project_resolution"]["source"], "session_binding");
+            assert_eq!(json["project_resolution"]["project_id"], project_a);
+            assert!(t.text.contains("bound_project_target"));
+            assert!(!t.text.contains("other_project_target"));
+        } else {
+            panic!("Expected text content");
+        }
     }
 
     #[tokio::test]

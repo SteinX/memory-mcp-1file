@@ -14,6 +14,7 @@ use super::super::contracts::{
     with_surface_guidance, with_traversal_defaults,
 };
 use super::super::{error_response, strip_symbol_embeddings, success_json};
+use super::{apply_project_resolution, resolve_project_for_code_tool, CodeToolContext};
 
 fn symbol_contract_json(symbol_id: &str) -> serde_json::Value {
     let contract = with_traversal_defaults(
@@ -58,6 +59,14 @@ pub async fn search_symbols(
     state: &Arc<AppState>,
     params: SearchSymbolsParams,
 ) -> anyhow::Result<CallToolResult> {
+    search_symbols_with_context(state, params, None).await
+}
+
+pub(crate) async fn search_symbols_with_context(
+    state: &Arc<AppState>,
+    params: SearchSymbolsParams,
+    context: Option<CodeToolContext>,
+) -> anyhow::Result<CallToolResult> {
     let SearchSymbolsParams {
         query,
         project_id,
@@ -66,9 +75,39 @@ pub async fn search_symbols(
         symbol_type,
         path_prefix,
     } = params;
-    let project_id = normalize_project_id(project_id);
+    let project_resolution =
+        resolve_project_for_code_tool(state, normalize_project_id(project_id), context.as_ref())
+            .await;
+    let project_id = project_resolution.project_id().map(str::to_string);
     let limit = limit.unwrap_or(20).clamp(1, 100);
     let offset = offset.unwrap_or(0);
+
+    if project_resolution.is_stale_binding() {
+        let mut response = json!({
+            "results": [],
+            "count": 0,
+            "total": 0,
+            "offset": offset,
+            "limit": limit,
+            "has_more": false,
+            "summary": summary_collection_response(
+                "collection",
+                0,
+                Some(0),
+                true,
+                Some("Session-bound project is stale; refusing cross-project fallback.".to_string()),
+            ),
+            "contract": symbol_contract_json("search_symbols"),
+            "query": query,
+            "filters": {
+                "project_id": project_id,
+                "symbol_type": symbol_type,
+                "path_prefix": path_prefix
+            }
+        });
+        apply_project_resolution(&mut response, &project_resolution);
+        return Ok(success_json(response));
+    }
 
     match state
         .storage
@@ -104,6 +143,8 @@ pub async fn search_symbols(
                     "path_prefix": path_prefix
                 }
             });
+
+            apply_project_resolution(&mut response, &project_resolution);
 
             if let Some(degradation) = super::get_degradation_info(state).await {
                 response["_indexing"] = degradation;

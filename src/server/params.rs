@@ -794,6 +794,45 @@ mod tests {
     }
 
     #[test]
+    fn project_info_binding_params_deserialize_bind() {
+        let params: ProjectInfoParams = serde_json::from_str(
+            r#"{"action":"bind","project_id":"proj"}"#,
+        )
+        .unwrap();
+
+        assert_eq!(params.action, "bind");
+        assert_eq!(params.project_id, Some("proj".to_string()));
+        assert_eq!(params.locator, None);
+        assert_eq!(params.relation_scope, None);
+        assert_eq!(params.sort_mode, None);
+    }
+
+    #[test]
+    fn project_info_binding_params_deserialize_unbind() {
+        let params: ProjectInfoParams = serde_json::from_str(r#"{"action":"unbind"}"#).unwrap();
+
+        assert_eq!(params.action, "unbind");
+        assert_eq!(params.project_id, None);
+        assert_eq!(params.locator, None);
+        assert_eq!(params.relation_scope, None);
+        assert_eq!(params.sort_mode, None);
+    }
+
+    #[test]
+    fn project_info_binding_params_deserialize_binding_status() {
+        let params: ProjectInfoParams = serde_json::from_str(
+            r#"{"action":"binding_status"}"#,
+        )
+        .unwrap();
+
+        assert_eq!(params.action, "binding_status");
+        assert_eq!(params.project_id, None);
+        assert_eq!(params.locator, None);
+        assert_eq!(params.relation_scope, None);
+        assert_eq!(params.sort_mode, None);
+    }
+
+    #[test]
     fn recall_code_params_accept_snake_case_project_id_alias() {
         let params: RecallCodeParams = serde_json::from_str(
             r#"{"query":"Container","project_id":"reddoc_true_dev","limit":5}"#,
