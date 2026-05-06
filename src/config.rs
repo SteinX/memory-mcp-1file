@@ -86,6 +86,12 @@ pub struct IndexMonitor {
     pub total_files: AtomicU32,
     pub indexed_files: AtomicU32,
     pub current_file: std::sync::RwLock<String>,
+    /// Same-process operation id for a manually queued one-shot full index.
+    pub operation_id: std::sync::RwLock<Option<String>>,
+    /// One-shot task state: queued | running | completed | failed | unknown_after_restart.
+    pub task_state: std::sync::RwLock<String>,
+    /// Last task-level error for the one-shot index runner.
+    pub last_error: std::sync::RwLock<Option<String>>,
 }
 
 impl Default for IndexMonitor {
@@ -94,6 +100,9 @@ impl Default for IndexMonitor {
             total_files: AtomicU32::new(0),
             indexed_files: AtomicU32::new(0),
             current_file: std::sync::RwLock::new(String::new()),
+            operation_id: std::sync::RwLock::new(None),
+            task_state: std::sync::RwLock::new("idle".to_string()),
+            last_error: std::sync::RwLock::new(None),
         }
     }
 }

@@ -59,10 +59,12 @@ fn canonicalize_project_root(path: &Path) -> Result<PathBuf, ProjectIdError> {
         });
     }
 
-    let canonical = path.canonicalize().map_err(|source| ProjectIdError::Canonicalize {
-        path: path.to_string_lossy().into_owned(),
-        source,
-    })?;
+    let canonical = path
+        .canonicalize()
+        .map_err(|source| ProjectIdError::Canonicalize {
+            path: path.to_string_lossy().into_owned(),
+            source,
+        })?;
 
     if canonical == Path::new("/") {
         return Err(ProjectIdError::UnsafeRoot {

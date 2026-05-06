@@ -21,6 +21,9 @@ use super::contracts::{
 };
 use super::{error_response, strip_entity_embeddings, success_json};
 
+const ENTITY_ID_GUIDANCE: &str =
+    "Pass the entity id returned by create_entity, not the entity display name.";
+
 fn graph_contract_json(entity_id: Option<&str>) -> serde_json::Value {
     let contract = with_traversal_defaults(
         with_surface_guidance(
@@ -99,14 +102,21 @@ pub async fn create_relation(
         Ok(id) => id,
         Err(e) => {
             return Ok(error_response(anyhow::anyhow!(
-                "Invalid from_entity: {}",
-                e
+                "Invalid from_entity: {}. {}",
+                e,
+                ENTITY_ID_GUIDANCE
             )))
         }
     };
     let to_id = match ThingId::new("entities", &params.to_entity) {
         Ok(id) => id,
-        Err(e) => return Ok(error_response(anyhow::anyhow!("Invalid to_entity: {}", e))),
+        Err(e) => {
+            return Ok(error_response(anyhow::anyhow!(
+                "Invalid to_entity: {}. {}",
+                e,
+                ENTITY_ID_GUIDANCE
+            )))
+        }
     };
 
     let relation = Relation {
@@ -348,5 +358,31 @@ mod tests {
         // Alice and Bob should be in the same community (connected)
         let communities = json_comm["communities"].as_array().unwrap();
         assert!(!communities.is_empty());
+    }
+
+    #[tokio::test]
+    async fn create_relation_explains_entity_ids_are_required() {
+        let ctx = TestContext::new().await;
+
+        let result = create_relation(
+            &ctx.state,
+            CreateRelationParams {
+                from_entity: "Flutter App Layer".to_string(),
+                to_entity: "Backend Service".to_string(),
+                relation_type: "depends_on".to_string(),
+                weight: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        let value = serde_json::to_value(&result).unwrap();
+        let text = value["content"][0]["text"].as_str().unwrap();
+        let json: serde_json::Value = serde_json::from_str(text).unwrap();
+        let error = json["error"].as_str().unwrap();
+
+        assert!(error.contains("Invalid from_entity"));
+        assert!(error.contains("entity id returned by create_entity"));
+        assert!(error.contains("not the entity display name"));
     }
 }

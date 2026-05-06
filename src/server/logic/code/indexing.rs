@@ -1,9 +1,11 @@
 use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use rmcp::model::CallToolResult;
 use serde_json::json;
 
-use crate::config::AppState;
+use crate::codebase::ProjectLifecycleStatus;
+use crate::config::{AppState, IndexMonitor};
 use crate::server::params::{
     DeleteProjectParams, GetIndexStatusParams, GetProjectProjectionParams, GetProjectStatsParams,
     GetProjectionByLocatorParams, IndexProjectParams, ListProjectsParams,
@@ -11,15 +13,14 @@ use crate::server::params::{
 use crate::storage::StorageBackend;
 use crate::types::{
     derive_project_id, CodeIntelligenceDiagnostic, ContractReasonCode, ExportIdentity, IndexState,
-    IndexStatus, ProjectionLocatorLifecycle, ProjectionLocatorLookup,
-    ProjectionLocatorLookupState, ProjectionLocatorRecord,
+    IndexStatus, ProjectionLocatorLifecycle, ProjectionLocatorLookup, ProjectionLocatorLookupState,
+    ProjectionLocatorRecord,
 };
-use crate::codebase::ProjectLifecycleStatus;
 
 use super::super::contracts::{
     assemble_project_projection, collect_project_projection_inputs, export_contract_meta,
     shape_project_projection_graph, summary_collection_response, summary_index_status_response,
-    with_surface_guidance,
+    summary_index_status_response_with_reason, with_surface_guidance,
 };
 use super::super::{error_response, success_json};
 
@@ -30,9 +31,9 @@ fn root_diagnostic(
     if let Some(configured_root) = configured_root {
         if configured_root.exists() {
             return CodeIntelligenceDiagnostic::selected(format!(
-                    "Configured project root is available: {}",
-                    configured_root.display()
-                ));
+                "Configured project root is available: {}",
+                configured_root.display()
+            ));
         }
 
         return CodeIntelligenceDiagnostic::missing_root(format!(
@@ -43,9 +44,9 @@ fn root_diagnostic(
 
     if fallback_root.exists() {
         CodeIntelligenceDiagnostic::selected(format!(
-                "Compatibility project root is available: {}",
-                fallback_root.display()
-            ))
+            "Compatibility project root is available: {}",
+            fallback_root.display()
+        ))
     } else {
         CodeIntelligenceDiagnostic::disabled(format!(
                 "Code intelligence startup root is unavailable. Mount {} or set PROJECT_PATH to a server-visible directory.",
@@ -73,9 +74,11 @@ fn project_state_diagnostic(
         IndexState::Completed => {
             CodeIntelligenceDiagnostic::ready("Code intelligence is ready for this project.")
         }
-        IndexState::Indexing | IndexState::EmbeddingPending => CodeIntelligenceDiagnostic::indexing(
-            "Code intelligence indexing is in progress for this project.",
-        ),
+        IndexState::Indexing | IndexState::EmbeddingPending => {
+            CodeIntelligenceDiagnostic::indexing(
+                "Code intelligence indexing is in progress for this project.",
+            )
+        }
         IndexState::Failed => {
             CodeIntelligenceDiagnostic::degraded("Code intelligence is degraded for this project.")
         }
@@ -120,6 +123,154 @@ fn registry_lifecycle_json(status: &ProjectLifecycleStatus) -> serde_json::Value
             "registry_starts_watchers": status.options.registry_starts_watchers
         },
         "last_error": status.last_error
+    })
+}
+
+fn read_monitor_string(lock: &std::sync::RwLock<String>) -> String {
+    lock.read().map(|value| value.clone()).unwrap_or_default()
+}
+
+fn read_monitor_optional_string(lock: &std::sync::RwLock<Option<String>>) -> Option<String> {
+    lock.read().ok().and_then(|value| value.clone())
+}
+
+fn set_monitor_string(lock: &std::sync::RwLock<String>, value: impl Into<String>) {
+    if let Ok(mut guard) = lock.write() {
+        *guard = value.into();
+    }
+}
+
+fn set_monitor_optional_string(lock: &std::sync::RwLock<Option<String>>, value: Option<String>) {
+    if let Ok(mut guard) = lock.write() {
+        *guard = value;
+    }
+}
+
+fn one_shot_task_message() -> &'static str {
+    "The registry lifecycle reports only registry-managed watchers/workers. Manual index requests run as one-shot background tasks. Track them with project_info(action=\"status\") or the client alias project_status(action=\"status\")."
+}
+
+fn new_index_operation_id(project_id: &str) -> String {
+    static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+    let millis = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis())
+        .unwrap_or(0);
+    let sequence = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    format!("idx-{project_id}-{millis}-{sequence}")
+}
+
+fn index_status_summary(
+    status: &IndexStatus,
+    indexed_files: u32,
+    total_chunks: u32,
+    total_symbols: u32,
+    overall_progress_percent: f32,
+    message: Option<String>,
+) -> crate::types::ExportResponseSummary {
+    match status.status {
+        IndexState::Completed => summary_index_status_response(
+            status.total_files,
+            indexed_files,
+            total_chunks,
+            total_symbols,
+            overall_progress_percent,
+            false,
+            message,
+        ),
+        IndexState::Failed => summary_index_status_response_with_reason(
+            status.total_files,
+            indexed_files,
+            total_chunks,
+            total_symbols,
+            overall_progress_percent,
+            true,
+            Some(ContractReasonCode::Degraded),
+            Some("indexing_failed".to_string()),
+            message.or_else(|| {
+                Some(
+                    "Indexing failed. Project stats are incomplete until a force rebuild succeeds."
+                        .to_string(),
+                )
+            }),
+        ),
+        IndexState::Indexing | IndexState::EmbeddingPending => summary_index_status_response(
+            status.total_files,
+            indexed_files,
+            total_chunks,
+            total_symbols,
+            overall_progress_percent,
+            true,
+            message,
+        ),
+    }
+}
+
+fn monitor_one_shot_index_task_json(monitor: &IndexMonitor) -> serde_json::Value {
+    json!({
+        "operation_id": read_monitor_optional_string(&monitor.operation_id),
+        "state": read_monitor_string(&monitor.task_state),
+        "runner": "local_tokio_task",
+        "registry_lifecycle_scope": "manual_project_registration_only",
+        "current_file": read_monitor_string(&monitor.current_file),
+        "total_files": monitor.total_files.load(std::sync::atomic::Ordering::Relaxed),
+        "indexed_files": monitor.indexed_files.load(std::sync::atomic::Ordering::Relaxed),
+        "last_error": read_monitor_optional_string(&monitor.last_error),
+        "survives_process_restart": false,
+        "restart_fallback": "If the process restarts while status remains indexing, the in-memory one-shot operation is gone; retry with force=true and confirm_failed_restart=true after checking resources.",
+        "message": one_shot_task_message()
+    })
+}
+
+async fn one_shot_index_task_json(
+    state: &Arc<AppState>,
+    project_id: &str,
+    task_state: &str,
+) -> serde_json::Value {
+    if let Some(monitor) = state.progress.get(project_id).await {
+        if read_monitor_string(&monitor.task_state) == "idle" {
+            set_monitor_string(&monitor.task_state, task_state);
+        }
+        return monitor_one_shot_index_task_json(&monitor);
+    }
+
+    json!({
+        "operation_id": null,
+        "state": task_state,
+        "runner": "local_tokio_task",
+        "registry_lifecycle_scope": "manual_project_registration_only",
+        "survives_process_restart": false,
+        "message": one_shot_task_message()
+    })
+}
+
+async fn status_background_task_json(
+    state: &Arc<AppState>,
+    project_id: &str,
+    status: &IndexStatus,
+) -> serde_json::Value {
+    if let Some(monitor) = state.progress.get(project_id).await {
+        return monitor_one_shot_index_task_json(&monitor);
+    }
+
+    if status.status == IndexState::Indexing {
+        return json!({
+            "operation_id": null,
+            "state": "unknown_after_restart",
+            "runner": "local_tokio_task",
+            "registry_lifecycle_scope": "manual_project_registration_only",
+            "survives_process_restart": false,
+            "message": "Index status is persisted as indexing, but no same-process one-shot task is registered. The server likely restarted or reconnected after queuing; verify resources, then retry with force=true and confirm_failed_restart=true if progress remains unchanged."
+        });
+    }
+
+    json!({
+        "operation_id": null,
+        "state": status.status.to_string(),
+        "runner": "none",
+        "registry_lifecycle_scope": "manual_project_registration_only",
+        "survives_process_restart": false,
+        "message": one_shot_task_message()
     })
 }
 
@@ -220,6 +371,10 @@ pub async fn index_project(
             return Ok(error_response(format!("Invalid project path: {}", error)));
         }
     };
+    let canonical_root_path = path
+        .canonicalize()
+        .map(|path| path.to_string_lossy().into_owned())
+        .unwrap_or_else(|_| path.to_string_lossy().into_owned());
 
     let registry_lifecycle = match state
         .project_registry
@@ -273,8 +428,13 @@ pub async fn index_project(
             }
             crate::types::IndexState::Failed => {
                 if !force || !confirm_failed_restart {
+                    let root_path = status
+                        .root_path
+                        .clone()
+                        .unwrap_or_else(|| canonical_root_path.clone());
                     return Ok(success_json(json!({
                         "project_id": project_id,
+                        "root_path": root_path,
                         "status": status.status.to_string(),
                         "state": "blocked",
                         "can_retry": true,
@@ -328,6 +488,7 @@ pub async fn index_project(
     }; // guard dropped here — no awaits held
 
     if already_indexing {
+        let background_task = one_shot_index_task_json(state, &project_id, "already_running").await;
         // Already indexing — return current progress from DB
         let (total_files, indexed_files, total_chunks) = state
             .storage
@@ -339,14 +500,38 @@ pub async fn index_project(
             .unwrap_or((0, 0, 0));
         return Ok(success_json(json!({
             "project_id": project_id,
+            "root_path": canonical_root_path,
             "status": "indexing",
             "total_files": total_files,
             "indexed_files": indexed_files,
             "total_chunks": total_chunks,
             "lifecycle": registry_lifecycle,
-            "message": "Indexing already in progress"
+            "background_task": background_task,
+            "message": "Indexing already in progress. Registry lifecycle only describes registry-managed workers; this manual index is tracked through index status/progress."
         })));
     }
+
+    let monitor = state.progress.get_or_create(&project_id).await;
+    let operation_id = new_index_operation_id(&project_id);
+    tracing::info!(
+        project_id = %project_id,
+        root_path = %canonical_root_path,
+        operation_id = %operation_id,
+        force,
+        confirm_failed_restart,
+        "Queued one-shot code index task"
+    );
+    set_monitor_optional_string(&monitor.operation_id, Some(operation_id));
+    set_monitor_string(&monitor.task_state, "queued");
+    set_monitor_optional_string(&monitor.last_error, None);
+    monitor
+        .total_files
+        .store(0, std::sync::atomic::Ordering::Relaxed);
+    monitor
+        .indexed_files
+        .store(0, std::sync::atomic::Ordering::Relaxed);
+    set_monitor_string(&monitor.current_file, "");
+    let background_task = monitor_one_shot_index_task_json(&monitor);
 
     // Spawn indexing in background
     let state_clone = state.clone();
@@ -354,18 +539,53 @@ pub async fn index_project(
     let project_id_for_cleanup = project_id.clone();
 
     tokio::spawn(async move {
+        if let Some(monitor) = state_clone.progress.get(&project_id_for_cleanup).await {
+            set_monitor_string(&monitor.task_state, "running");
+            tracing::info!(
+                project_id = %project_id_for_cleanup,
+                operation_id = read_monitor_optional_string(&monitor.operation_id)
+                    .as_deref()
+                    .unwrap_or(""),
+                "One-shot code index task running"
+            );
+        }
         let path = std::path::Path::new(&path_clone);
         match crate::codebase::index_project(state_clone.clone(), path).await {
             Ok(status) => {
+                let operation_id = state_clone
+                    .progress
+                    .get(&project_id_for_cleanup)
+                    .await
+                    .and_then(|monitor| read_monitor_optional_string(&monitor.operation_id));
+                if let Some(monitor) = state_clone.progress.get(&project_id_for_cleanup).await {
+                    set_monitor_string(&monitor.task_state, "completed");
+                    set_monitor_optional_string(&monitor.last_error, None);
+                }
                 tracing::info!(
                     project_id = %status.project_id,
+                    operation_id = operation_id.as_deref().unwrap_or(""),
                     files = status.indexed_files,
                     chunks = status.total_chunks,
+                    symbols = status.total_symbols,
                     "Indexing completed"
                 );
             }
             Err(e) => {
-                tracing::error!("Indexing failed: {}", e);
+                let operation_id = state_clone
+                    .progress
+                    .get(&project_id_for_cleanup)
+                    .await
+                    .and_then(|monitor| read_monitor_optional_string(&monitor.operation_id));
+                if let Some(monitor) = state_clone.progress.get(&project_id_for_cleanup).await {
+                    set_monitor_string(&monitor.task_state, "failed");
+                    set_monitor_optional_string(&monitor.last_error, Some(e.to_string()));
+                }
+                tracing::error!(
+                    project_id = %project_id_for_cleanup,
+                    operation_id = operation_id.as_deref().unwrap_or(""),
+                    error = %e,
+                    "Indexing failed"
+                );
             }
         }
         // Release the atomic lock regardless of outcome
@@ -377,9 +597,11 @@ pub async fn index_project(
     // Return immediately
     Ok(success_json(json!({
         "project_id": project_id,
+        "root_path": canonical_root_path,
         "status": "indexing",
         "lifecycle": registry_lifecycle,
-        "message": "Indexing started in background. Use get_index_status to check progress."
+        "background_task": background_task,
+        "message": "Indexing queued in a one-shot background task. Use project_info(action=\"status\") or client alias project_status(action=\"status\") to track operation_id/state/progress; registry lifecycle only describes registry-managed workers."
     })))
 }
 
@@ -395,6 +617,7 @@ pub async fn get_index_status(
     match state.storage.get_index_status(&project_id).await {
         Ok(Some(mut status)) => {
             status.refresh_lifecycle_states();
+            let background_task = status_background_task_json(state, &project_id, &status).await;
             let mut current_file: Option<String> = None;
 
             // Always try to fetch current_file from monitor if available, even if failed or stuck
@@ -500,14 +723,19 @@ pub async fn get_index_status(
                 parse_ratio * (PARSE_WEIGHT + embed_ratio * EMBED_WEIGHT) * 100.0;
 
             let parsing_done = status.total_files > 0 && indexed_files >= status.total_files;
-            let indexing_message = if status.status == crate::types::IndexState::Completed {
-                None
-            } else {
-                Some("Indexing in progress. Status and counts may still change.".to_string())
+            let indexing_message = match status.status {
+                crate::types::IndexState::Completed => None,
+                crate::types::IndexState::Failed => status.error_message.clone().or_else(|| {
+                    Some("Indexing failed. Status and counts are incomplete.".to_string())
+                }),
+                crate::types::IndexState::Indexing | crate::types::IndexState::EmbeddingPending => {
+                    Some("Indexing in progress. Status and counts may still change.".to_string())
+                }
             };
 
             Ok(success_json(json!({
                 "project_id": status.project_id,
+                "root_path": status.root_path,
                 "status": status.status.to_string(),
                 "code_intelligence": project_state_diagnostic(status.status.clone(), false).as_json(),
                 "contract": phase1_contract_json(
@@ -515,13 +743,12 @@ pub async fn get_index_status(
                     Some(&lifecycle_json(&status)),
                     Some(&status),
                 ),
-                "summary": summary_index_status_response(
-                    status.total_files,
+                "summary": index_status_summary(
+                    &status,
                     indexed_files,
                     total_chunks,
                     total_symbols,
                     overall_progress,
-                    status.status != crate::types::IndexState::Completed,
                     indexing_message,
                 ),
                 "is_syncing": is_syncing,
@@ -531,6 +758,7 @@ pub async fn get_index_status(
                 "started_at": status.started_at,
                 "completed_at": status.completed_at,
                 "lifecycle": lifecycle_json(&status),
+                "background_task": background_task,
 
                 "parsing": {
                     "status": if indexed_files >= status.total_files { "completed" } else { "in_progress" },
@@ -578,6 +806,49 @@ pub async fn get_index_status(
                 .unwrap_or(0) as u32;
 
             if total_chunks == 0 && total_symbols == 0 && indexed_files == 0 {
+                if let Some(monitor) = state.progress.get(&project_id).await {
+                    let background_task = monitor_one_shot_index_task_json(&monitor);
+                    return Ok(success_json(json!({
+                        "project_id": project_id,
+                        "root_path": null,
+                        "status": "indexing",
+                        "code_intelligence": CodeIntelligenceDiagnostic::indexing(
+                            "Manual indexing has been queued but persistent index status has not been written yet."
+                        ).as_json(),
+                        "summary": summary_index_status_response(
+                            0,
+                            0,
+                            0,
+                            0,
+                            0.0,
+                            true,
+                            Some("Indexing queued. Persistent status will appear after the one-shot task starts.".to_string()),
+                        ),
+                        "background_task": background_task,
+                        "parsing": {
+                            "status": "queued",
+                            "progress": "0/0",
+                            "current_file": null
+                        },
+                        "vector_embeddings": {
+                            "status": "pending",
+                            "total": 0,
+                            "completed": 0,
+                            "percent": "0.0"
+                        },
+                        "graph_embeddings": {
+                            "status": "pending",
+                            "total": 0,
+                            "completed": 0,
+                            "percent": "0.0"
+                        },
+                        "overall_progress": {
+                            "percent": "0.0",
+                            "is_complete": false
+                        }
+                    })));
+                }
+
                 return Ok(success_json(json!({
                     "error": format!("Project not found: {}", project_id),
                     "code_intelligence": runtime_root_diagnostic().as_json()
@@ -595,6 +866,7 @@ pub async fn get_index_status(
                     .to_string(),
             );
             status.refresh_lifecycle_states();
+            let background_task = status_background_task_json(state, &project_id, &status).await;
 
             let embedded_symbols = state
                 .storage
@@ -626,6 +898,7 @@ pub async fn get_index_status(
 
             Ok(success_json(json!({
                 "project_id": project_id,
+                "root_path": status.root_path,
                 "status": status.status.to_string(),
                 "code_intelligence": project_state_diagnostic(status.status.clone(), true).as_json(),
                 "contract": phase1_contract_json(
@@ -654,6 +927,7 @@ pub async fn get_index_status(
                 "started_at": status.started_at,
                 "completed_at": status.completed_at,
                 "lifecycle": lifecycle_json(&status),
+                "background_task": background_task,
                 "parsing": {
                     "status": "degraded",
                     "progress": format!("{}/{}", indexed_files, status.total_files),
@@ -727,6 +1001,8 @@ pub async fn list_projects(
                         IndexState::Indexing | IndexState::EmbeddingPending => has_indexing = true,
                         IndexState::Failed => has_degraded = true,
                     }
+                } else if chunks > 0 || symbols > 0 {
+                    has_degraded = true;
                 }
                 let lifecycle = status
                     .as_ref()
@@ -740,9 +1016,26 @@ pub async fn list_projects(
                     .as_ref()
                     .map(|s| s.status == crate::types::IndexState::Completed)
                     .unwrap_or(false);
+                let status_summary_message = match status.as_ref().map(|s| &s.status) {
+                    Some(IndexState::Completed) => None,
+                    Some(IndexState::Failed) => Some(
+                        "Project indexing failed. Results are incomplete until a force rebuild succeeds."
+                            .to_string(),
+                    ),
+                    Some(IndexState::Indexing) | Some(IndexState::EmbeddingPending) => {
+                        Some("Project indexing is still in progress.".to_string())
+                    }
+                    None if chunks > 0 || symbols > 0 => Some(
+                        "Index status metadata is missing while code intelligence rows exist."
+                            .to_string(),
+                    ),
+                    None => None,
+                };
 
                 enriched.push(json!({
                     "id": project_id,
+                    "project_id": project_id,
+                    "root_path": status.as_ref().and_then(|status| status.root_path.clone()),
                     "status": status_str,
                     "lifecycle": lifecycle.clone(),
                     "contract": phase1_contract_json(Some(project_id), Some(&lifecycle), status.as_ref()),
@@ -751,16 +1044,21 @@ pub async fn list_projects(
                         chunks as usize,
                         Some((chunks + symbols) as usize),
                         !status_is_complete,
-                        if status_is_complete {
-                            None
-                        } else {
-                            Some("Project indexing is still in progress.".to_string())
-                        },
+                        status_summary_message,
                     ),
                     "chunks": chunks,
                     "symbols": symbols,
                     "embedded_chunks": embedded_chunks,
-                    "embedded_symbols": embedded_symbols
+                    "embedded_symbols": embedded_symbols,
+                    "diagnostics": {
+                        "status_metadata_missing": status.is_none() && (chunks > 0 || symbols > 0),
+                        "reason_code": if status.is_none() && (chunks > 0 || symbols > 0) { "degraded" } else { "ok" },
+                        "message": if status.is_none() && (chunks > 0 || symbols > 0) {
+                            Some("Index status metadata is missing while code intelligence rows exist; force rebuild writes indexing metadata before clearing stale rows.".to_string())
+                        } else {
+                            None
+                        }
+                    }
                 }));
             }
 
@@ -790,27 +1088,21 @@ pub async fn delete_project(
 ) -> anyhow::Result<CallToolResult> {
     let project_id = params.project_id;
 
-    let _ = state
-        .storage
-        .delete_project_symbols(&project_id)
-        .await;
+    let _ = state.storage.delete_project_symbols(&project_id).await;
 
     let _ = state.storage.delete_index_status(&project_id).await;
     let _ = state.storage.delete_file_hashes(&project_id).await;
-    let _ = state
-        .storage
-        .delete_manifest_entries(&project_id)
-        .await;
+    let _ = state.storage.delete_manifest_entries(&project_id).await;
 
     // Remove from in-memory BM25 index
     state.code_search.remove_project(&project_id).await;
     state.project_registry.remove(&project_id).await;
+    state.progress.remove(&project_id).await;
+    if let Ok(mut guard) = state.indexing_projects.lock() {
+        guard.remove(&project_id);
+    }
 
-    match state
-        .storage
-        .delete_project_chunks(&project_id)
-        .await
-    {
+    match state.storage.delete_project_chunks(&project_id).await {
         Ok(deleted) => Ok(success_json(json!({
             "deleted_chunks": deleted,
             "project_id": project_id
@@ -875,6 +1167,7 @@ pub async fn get_project_stats(
         }
     };
     status.refresh_lifecycle_states();
+    let background_task = status_background_task_json(state, &project_id, &status).await;
 
     // Sync queue status from shared AtomicUsize counter.
     let sync_queue_size = {
@@ -913,14 +1206,22 @@ pub async fn get_project_stats(
     let overall_progress = parse_ratio * (PARSE_WEIGHT + embed_ratio * EMBED_WEIGHT) * 100.0;
     let indexing_message = if status_metadata_missing {
         status.error_message.clone()
-    } else if status.status == IndexState::Completed {
-        None
     } else {
-        Some("Indexing in progress. Project stats may still change.".to_string())
+        match status.status {
+            IndexState::Completed => None,
+            IndexState::Failed => status
+                .error_message
+                .clone()
+                .or_else(|| Some("Indexing failed. Project stats are incomplete.".to_string())),
+            IndexState::Indexing | IndexState::EmbeddingPending => {
+                Some("Indexing in progress. Project stats may still change.".to_string())
+            }
+        }
     };
 
     Ok(success_json(json!({
         "project_id": project_id,
+        "root_path": status.root_path,
         "status": status.status.to_string(),
         "code_intelligence": project_state_diagnostic(status.status.clone(), status_metadata_missing).as_json(),
         "contract": phase1_contract_json(
@@ -928,13 +1229,12 @@ pub async fn get_project_stats(
             Some(&lifecycle_json(&status)),
             Some(&status),
         ),
-        "summary": summary_index_status_response(
-            status.total_files,
+        "summary": index_status_summary(
+            &status,
             indexed_files,
             total_chunks,
             total_symbols,
             overall_progress,
-            status.status != IndexState::Completed,
             indexing_message,
         ),
         "diagnostics": {
@@ -945,6 +1245,7 @@ pub async fn get_project_stats(
         "is_syncing": is_syncing,
         "sync_queue_size": sync_queue_size,
         "lifecycle": lifecycle_json(&status),
+        "background_task": background_task,
         "files": {
             "total": status.total_files,
             "indexed": indexed_files,
@@ -1221,8 +1522,14 @@ mod tests {
 
         let diagnostic = root_diagnostic(None, &missing_fallback);
 
-        assert_eq!(diagnostic.status, crate::types::CodeIntelligenceDiagnosticCode::Disabled);
-        assert_eq!(diagnostic.reason_code, crate::types::CodeIntelligenceDiagnosticCode::Disabled);
+        assert_eq!(
+            diagnostic.status,
+            crate::types::CodeIntelligenceDiagnosticCode::Disabled
+        );
+        assert_eq!(
+            diagnostic.reason_code,
+            crate::types::CodeIntelligenceDiagnosticCode::Disabled
+        );
         assert!(diagnostic
             .message
             .contains("Code intelligence startup root is unavailable"));
@@ -1235,8 +1542,14 @@ mod tests {
 
         let diagnostic = root_diagnostic(Some(&missing_configured), temp.path());
 
-        assert_eq!(diagnostic.status, crate::types::CodeIntelligenceDiagnosticCode::MissingRoot);
-        assert_eq!(diagnostic.reason_code, crate::types::CodeIntelligenceDiagnosticCode::MissingRoot);
+        assert_eq!(
+            diagnostic.status,
+            crate::types::CodeIntelligenceDiagnosticCode::MissingRoot
+        );
+        assert_eq!(
+            diagnostic.reason_code,
+            crate::types::CodeIntelligenceDiagnosticCode::MissingRoot
+        );
         assert!(diagnostic
             .message
             .contains("Configured project root is missing"));
@@ -1244,12 +1557,16 @@ mod tests {
 
     #[test]
     fn code_intelligence_root_diagnostic_serializes_selected_when_root_exists() {
-        let diagnostic = CodeIntelligenceDiagnostic::selected("Configured project root is available: /project");
+        let diagnostic =
+            CodeIntelligenceDiagnostic::selected("Configured project root is available: /project");
 
         let json = diagnostic.as_json();
         assert_eq!(json["status"], "selected");
         assert_eq!(json["reason_code"], "selected");
-        assert_eq!(json["message"], "Configured project root is available: /project");
+        assert_eq!(
+            json["message"],
+            "Configured project root is available: /project"
+        );
     }
 
     #[tokio::test]
@@ -1352,7 +1669,12 @@ mod tests {
             .unwrap();
         assert_eq!(stored.status, IndexState::Failed);
         assert_eq!(ctx.state.project_registry.len().await, 1);
-        let lifecycle = ctx.state.project_registry.status("failed-project").await.unwrap();
+        let lifecycle = ctx
+            .state
+            .project_registry
+            .status("failed-project")
+            .await
+            .unwrap();
         assert_eq!(lifecycle.root_path, project_dir.canonicalize().unwrap());
     }
 
@@ -1385,7 +1707,12 @@ mod tests {
 
         assert_eq!(json["project_id"], "stale-indexing-project");
         assert_eq!(json["status"], "indexing");
-        assert_eq!(json["message"], "Indexing started in background. Use get_index_status to check progress.");
+        assert_eq!(json["background_task"]["state"], "queued");
+        assert_eq!(json["background_task"]["runner"], "local_tokio_task");
+        assert!(json["message"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("one-shot background task"));
         assert_eq!(json["lifecycle"]["project_id"], "stale-indexing-project");
         assert_eq!(json["lifecycle"]["state"], "registered");
         assert_eq!(ctx.state.project_registry.len().await, 1);
@@ -1419,7 +1746,11 @@ mod tests {
         completed.total_files = 2;
         completed.indexed_files = 2;
         completed.total_chunks = 3;
-        ctx.state.storage.update_index_status(completed).await.unwrap();
+        ctx.state
+            .storage
+            .update_index_status(completed)
+            .await
+            .unwrap();
 
         let first = index_project(
             &ctx.state,
@@ -1460,12 +1791,19 @@ mod tests {
         assert_eq!(first_json["lifecycle"]["diagnostic"]["status"], "selected");
         assert_eq!(
             first_json["lifecycle"]["root_path"],
-            project_dir.canonicalize().unwrap().to_string_lossy().as_ref()
+            project_dir
+                .canonicalize()
+                .unwrap()
+                .to_string_lossy()
+                .as_ref()
         );
 
         assert_eq!(second_json["project_id"], "manual-register");
         assert_eq!(second_json["status"], "completed");
-        assert_eq!(second_json["lifecycle"]["root_path"], first_json["lifecycle"]["root_path"]);
+        assert_eq!(
+            second_json["lifecycle"]["root_path"],
+            first_json["lifecycle"]["root_path"]
+        );
         assert_eq!(ctx.state.project_registry.len().await, 1);
 
         let lifecycle = ctx
@@ -1516,12 +1854,10 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let allowed_parent = temp.path().join("allowed-parent");
         std::fs::create_dir_all(&allowed_parent).unwrap();
-        let ctx = TestContext::new_with_registry_policy(
-            crate::codebase::ProjectRegistryPolicy {
-                allowed_roots: Some(vec![allowed_parent.canonicalize().unwrap()]),
-                max_projects: 5,
-            },
-        )
+        let ctx = TestContext::new_with_registry_policy(crate::codebase::ProjectRegistryPolicy {
+            allowed_roots: Some(vec![allowed_parent.canonicalize().unwrap()]),
+            max_projects: 5,
+        })
         .await;
         let disallowed_project = tempfile::tempdir().unwrap();
 
@@ -1558,7 +1894,11 @@ mod tests {
         std::fs::create_dir_all(&first).unwrap();
         std::fs::create_dir_all(&second).unwrap();
 
-        ctx.state.project_registry.ensure_project("first", &first).await.unwrap();
+        ctx.state
+            .project_registry
+            .ensure_project("first", &first)
+            .await
+            .unwrap();
 
         let result = index_project(
             &ctx.state,

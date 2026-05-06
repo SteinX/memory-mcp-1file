@@ -29,28 +29,14 @@ impl Default for HttpServerConfig {
 }
 
 /// Health check endpoint for liveness probes.
-async fn health_check(
-    axum::extract::State(state): axum::extract::State<Arc<AppState>>,
-) -> impl IntoResponse {
-    let storage_ok = state.storage.health_check().await.unwrap_or(false);
-    if storage_ok {
-        (
-            StatusCode::OK,
-            Json(serde_json::json!({
-                "status": "ok",
-                "version": env!("CARGO_PKG_VERSION"),
-            })),
-        )
-    } else {
-        (
-            StatusCode::SERVICE_UNAVAILABLE,
-            Json(serde_json::json!({
-                "status": "degraded",
-                "version": env!("CARGO_PKG_VERSION"),
-                "error": "storage unhealthy",
-            })),
-        )
-    }
+async fn health_check() -> impl IntoResponse {
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({
+            "status": "ok",
+            "version": env!("CARGO_PKG_VERSION"),
+        })),
+    )
 }
 
 /// Build the axum Router with all middleware layers.
@@ -339,7 +325,8 @@ mod tests {
             "jsonrpc": "2.0",
             "method": "notifications/initialized"
         });
-        let initialized_response = post_mcp_request(app, &initialized_payload, Some(&session_id)).await;
+        let initialized_response =
+            post_mcp_request(app, &initialized_payload, Some(&session_id)).await;
         assert!(
             initialized_response.status().is_success(),
             "notifications/initialized should succeed"
@@ -371,11 +358,12 @@ mod tests {
         };
         for _ in 0..120 {
             tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-            let status = crate::server::logic::code::get_index_status(&ctx.state, status_params.clone())
-                .await
-                .expect("get_index_status should succeed")
-                .into_typed::<Value>()
-                .expect("status should be JSON");
+            let status =
+                crate::server::logic::code::get_index_status(&ctx.state, status_params.clone())
+                    .await
+                    .expect("get_index_status should succeed")
+                    .into_typed::<Value>()
+                    .expect("status should be JSON");
 
             let current = status
                 .get("status")
@@ -406,7 +394,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn health_check_returns_ok_when_storage_healthy() {
+    async fn health_check_returns_ok_for_liveness() {
         let ctx = TestContext::new().await;
         let app = test_router(ctx.state.clone());
 
@@ -695,34 +683,36 @@ mod tests {
         assert_eq!(bind_b_json["binding"]["project_id"], project_b);
 
         let query = "task9_http_shared_search";
-        let search_a_response =
-            post_mcp_request(&app, &recall_code_tool_call_payload(5, query), Some(&session_a)).await;
+        let search_a_response = post_mcp_request(
+            &app,
+            &recall_code_tool_call_payload(5, query),
+            Some(&session_a),
+        )
+        .await;
         assert!(search_a_response.status().is_success());
         let search_a_json = parse_tool_result_json(&response_json(search_a_response).await);
         assert_eq!(
             search_a_json["project_resolution"]["source"],
             "session_binding"
         );
-        assert_eq!(
-            search_a_json["project_resolution"]["project_id"],
-            project_a
-        );
+        assert_eq!(search_a_json["project_resolution"]["project_id"], project_a);
         let search_a_text = search_a_json.to_string();
         assert!(search_a_text.contains("task9-marker-alpha-only"));
         assert!(!search_a_text.contains("task9-marker-beta-only"));
 
-        let search_b_response =
-            post_mcp_request(&app, &recall_code_tool_call_payload(6, query), Some(&session_b)).await;
+        let search_b_response = post_mcp_request(
+            &app,
+            &recall_code_tool_call_payload(6, query),
+            Some(&session_b),
+        )
+        .await;
         assert!(search_b_response.status().is_success());
         let search_b_json = parse_tool_result_json(&response_json(search_b_response).await);
         assert_eq!(
             search_b_json["project_resolution"]["source"],
             "session_binding"
         );
-        assert_eq!(
-            search_b_json["project_resolution"]["project_id"],
-            project_b
-        );
+        assert_eq!(search_b_json["project_resolution"]["project_id"], project_b);
         let search_b_text = search_b_json.to_string();
         assert!(search_b_text.contains("task9-marker-beta-only"));
         assert!(!search_b_text.contains("task9-marker-alpha-only"));
@@ -811,10 +801,12 @@ mod tests {
         .await;
         assert!(stale_query_response.status().is_success());
         let stale_json = parse_tool_result_json(&response_json(stale_query_response).await);
-        assert_eq!(stale_json["project_resolution"]["source"], "session_binding");
         assert_eq!(
-            stale_json["project_resolution"]["project_id"],
-            project_a,
+            stale_json["project_resolution"]["source"],
+            "session_binding"
+        );
+        assert_eq!(
+            stale_json["project_resolution"]["project_id"], project_a,
             "stale response should preserve original bound project id"
         );
         assert_eq!(stale_json["project_resolution"]["reason_code"], "stale");
@@ -825,12 +817,10 @@ mod tests {
         assert_eq!(stale_json["summary"]["partial"]["reason_code"], "stale");
         assert_eq!(stale_json["reason_code"], "stale");
         assert_eq!(stale_json["count"], 0);
-        assert!(
-            stale_json["results"]
-                .as_array()
-                .expect("results should be array")
-                .is_empty()
-        );
+        assert!(stale_json["results"]
+            .as_array()
+            .expect("results should be array")
+            .is_empty());
         assert!(
             !stale_json.to_string().contains("task9-stale-beta-only"),
             "stale binding should not silently broaden to other projects"

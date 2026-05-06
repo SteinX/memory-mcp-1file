@@ -209,19 +209,11 @@ mod tests {
         store.bind("s-beta", "project-b").await;
 
         assert_eq!(
-            store
-                .binding_status("s-alpha")
-                .await
-                .project_id
-                .as_deref(),
+            store.binding_status("s-alpha").await.project_id.as_deref(),
             Some("project-a")
         );
         assert_eq!(
-            store
-                .binding_status("s-beta")
-                .await
-                .project_id
-                .as_deref(),
+            store.binding_status("s-beta").await.project_id.as_deref(),
             Some("project-b")
         );
         assert!(store.binding_status("s-gamma").await.project_id.is_none());

@@ -255,10 +255,10 @@ pub struct KnowledgeGraphParams {
     /// For: create_entity
     #[serde(skip_serializing_if = "Option::is_none")]
     pub user_id: Option<String>,
-    /// For: create_relation (required)
+    /// For: create_relation (required). Entity ID returned by create_entity, not display name.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub from_entity: Option<String>,
-    /// For: create_relation (required)
+    /// For: create_relation (required). Entity ID returned by create_entity, not display name.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub to_entity: Option<String>,
     /// For: create_relation (required)
@@ -593,11 +593,20 @@ pub struct SearchCodeParams {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[schemars(title = "")]
 pub struct ProjectInfoParams {
-    /// list|status|stats|projection|projection_by_locator
+    /// list|index|status|stats|projection|projection_by_locator|bind|unbind|binding_status
     pub action: String,
-    /// For: status, stats, projection (required)
+    /// For: status, stats, projection, bind (required)
     #[serde(skip_serializing_if = "Option::is_none", alias = "projectId")]
     pub project_id: Option<String>,
+    /// For: index (required). Server-visible path to index.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+    /// For: index. Force full re-index (default: false).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub force: Option<bool>,
+    /// For: index. Required together with force=true when retrying a previously failed full index.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub confirm_failed_restart: Option<bool>,
     /// For: projection_by_locator (required)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub locator: Option<String>,
@@ -795,10 +804,8 @@ mod tests {
 
     #[test]
     fn project_info_binding_params_deserialize_bind() {
-        let params: ProjectInfoParams = serde_json::from_str(
-            r#"{"action":"bind","project_id":"proj"}"#,
-        )
-        .unwrap();
+        let params: ProjectInfoParams =
+            serde_json::from_str(r#"{"action":"bind","project_id":"proj"}"#).unwrap();
 
         assert_eq!(params.action, "bind");
         assert_eq!(params.project_id, Some("proj".to_string()));
@@ -820,10 +827,8 @@ mod tests {
 
     #[test]
     fn project_info_binding_params_deserialize_binding_status() {
-        let params: ProjectInfoParams = serde_json::from_str(
-            r#"{"action":"binding_status"}"#,
-        )
-        .unwrap();
+        let params: ProjectInfoParams =
+            serde_json::from_str(r#"{"action":"binding_status"}"#).unwrap();
 
         assert_eq!(params.action, "binding_status");
         assert_eq!(params.project_id, None);

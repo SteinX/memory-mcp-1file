@@ -104,7 +104,6 @@ pub use embedding_state::{EmbedResult, EmbedTarget, EmbeddingState};
 pub use entity::{ConfidenceClass, RelationClass, RelationProvenance, StalenessState};
 pub use entity::{Direction, Entity, Relation};
 pub use error::{AppError, Result};
-pub use project_id::{derive_project_id, derive_project_id_with_existing, ProjectIdError};
 pub use export::{
     CompatibilityPolicy, ContractReasonCode, CountSummary, ExportContractMeta, ExportIdentity,
     ExportResponseSummary, ExportedGraphEdge, ExportedGraphNode, ExportedProjectProjection,
@@ -116,6 +115,7 @@ pub use export::{
     StructuralLifecycleView, SurfaceGuidance, TraversalDefaults, TraversalSummary,
 };
 pub use memory::{Memory, MemoryType, MemoryUpdate};
+pub use project_id::{derive_project_id, derive_project_id_with_existing, ProjectIdError};
 pub use search::{
     CodeSearchResult, MemoryQuery, RecallResult, ScoredCodeChunk, ScoredMemory, SearchResult,
 };

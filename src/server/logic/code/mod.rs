@@ -23,8 +23,8 @@ pub use indexing::{
 };
 pub use search::{recall_code, search_code};
 pub(crate) use search::{recall_code_with_context, search_code_with_context};
-pub use symbols::{search_symbols, symbol_graph};
 pub(crate) use symbols::search_symbols_with_context;
+pub use symbols::{search_symbols, symbol_graph};
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct CodeToolContext {
@@ -197,14 +197,22 @@ pub(crate) async fn missing_project_binding_diagnostic(
         return None;
     }
 
-    let has_status = matches!(state.storage.get_index_status(project_id).await, Ok(Some(_)));
+    let has_status = matches!(
+        state.storage.get_index_status(project_id).await,
+        Ok(Some(_))
+    );
     if has_status {
         return None;
     }
 
     let has_index_rows = state.storage.count_chunks(project_id).await.unwrap_or(0) > 0
         || state.storage.count_symbols(project_id).await.unwrap_or(0) > 0
-        || state.storage.count_manifest_entries(project_id).await.unwrap_or(0) > 0;
+        || state
+            .storage
+            .count_manifest_entries(project_id)
+            .await
+            .unwrap_or(0)
+            > 0;
     if has_index_rows {
         return None;
     }
@@ -248,12 +256,12 @@ pub(crate) fn apply_missing_project_binding_diagnostic(
 
 #[cfg(test)]
 mod tests {
+    use super::CodeToolContext;
     use crate::server::params::{
         GetIndexStatusParams, GetProjectProjectionParams, GetProjectionByLocatorParams,
         IndexProjectParams, RecallCodeParams, SearchCodeParams, SearchSymbolsParams,
         SymbolGraphParams,
     };
-    use super::CodeToolContext;
     use crate::storage::StorageBackend;
     use crate::test_utils::TestContext;
     use std::fs;
@@ -503,7 +511,10 @@ mod tests {
             assert_eq!(json["summary"]["partial"]["reason_code"], "missing");
             assert_eq!(json["summary"]["partial"]["reason"], "project_missing");
             assert_eq!(json["project_binding"]["state"], "missing");
-            assert_eq!(json["project_binding"]["project_id"], "unregistered_project_binding");
+            assert_eq!(
+                json["project_binding"]["project_id"],
+                "unregistered_project_binding"
+            );
             assert_eq!(json["code_intelligence"]["status"], "degraded");
             assert_eq!(json["code_intelligence"]["reason_code"], "degraded");
             assert!(json["summary"]["partial"]["message"]
@@ -1312,10 +1323,7 @@ mod tests {
                     }
                 }
                 retries += 1;
-                assert!(
-                    retries <= 100,
-                    "Indexing timed out for session scope test"
-                );
+                assert!(retries <= 100, "Indexing timed out for session scope test");
             }
         }
 

@@ -1389,6 +1389,30 @@ pub fn summary_index_status_response(
     is_partial: bool,
     message: Option<String>,
 ) -> ExportResponseSummary {
+    summary_index_status_response_with_reason(
+        total_files,
+        indexed_files,
+        total_chunks,
+        total_symbols,
+        overall_progress_percent,
+        is_partial,
+        index_status_reason_code(is_partial),
+        index_status_reason_slug(is_partial, overall_progress_percent),
+        message,
+    )
+}
+
+pub fn summary_index_status_response_with_reason(
+    total_files: u32,
+    indexed_files: u32,
+    total_chunks: u32,
+    total_symbols: u32,
+    _overall_progress_percent: f32,
+    is_partial: bool,
+    reason_code: Option<ContractReasonCode>,
+    reason: Option<String>,
+    message: Option<String>,
+) -> ExportResponseSummary {
     ExportResponseSummary {
         result_kind: "status".to_string(),
         counts: CountSummary {
@@ -1401,8 +1425,8 @@ pub fn summary_index_status_response(
         traversal: None,
         partial: Some(PartialSummary {
             is_partial,
-            reason_code: index_status_reason_code(is_partial),
-            reason: index_status_reason_slug(is_partial, overall_progress_percent),
+            reason_code,
+            reason,
             message,
         }),
     }

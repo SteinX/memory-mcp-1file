@@ -93,7 +93,8 @@ mod tests {
         let fallback_dir = tempdir().unwrap();
         let missing_configured = fallback_dir.path().join("missing-configured");
 
-        let resolution = resolve_startup_project_root(Some(&missing_configured), fallback_dir.path());
+        let resolution =
+            resolve_startup_project_root(Some(&missing_configured), fallback_dir.path());
 
         match resolution.status {
             StartupProjectRootStatus::MissingConfiguredRoot {
@@ -103,8 +104,14 @@ mod tests {
             } => {
                 assert_eq!(configured_path, missing_configured);
                 assert_eq!(fallback_path, fallback_dir.path());
-                assert_eq!(diagnostic.status, crate::types::CodeIntelligenceDiagnosticCode::MissingRoot);
-                assert_eq!(diagnostic.reason_code, crate::types::CodeIntelligenceDiagnosticCode::MissingRoot);
+                assert_eq!(
+                    diagnostic.status,
+                    crate::types::CodeIntelligenceDiagnosticCode::MissingRoot
+                );
+                assert_eq!(
+                    diagnostic.reason_code,
+                    crate::types::CodeIntelligenceDiagnosticCode::MissingRoot
+                );
                 assert!(diagnostic.message.contains("missing"));
             }
             other => panic!("expected missing configured root diagnostic, got {other:?}"),
@@ -156,8 +163,14 @@ mod tests {
                 diagnostic,
             } => {
                 assert_eq!(fallback_path, missing_fallback);
-                assert_eq!(diagnostic.status, crate::types::CodeIntelligenceDiagnosticCode::Disabled);
-                assert_eq!(diagnostic.reason_code, crate::types::CodeIntelligenceDiagnosticCode::Disabled);
+                assert_eq!(
+                    diagnostic.status,
+                    crate::types::CodeIntelligenceDiagnosticCode::Disabled
+                );
+                assert_eq!(
+                    diagnostic.reason_code,
+                    crate::types::CodeIntelligenceDiagnosticCode::Disabled
+                );
                 assert!(diagnostic.message.contains("disabled"));
             }
             other => panic!("expected disabled resolution, got {other:?}"),

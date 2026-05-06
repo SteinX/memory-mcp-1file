@@ -321,7 +321,9 @@ impl Default for ProjectRegistry {
     }
 }
 
-fn mark_status_degraded_if_root_missing(mut status: ProjectLifecycleStatus) -> ProjectLifecycleStatus {
+fn mark_status_degraded_if_root_missing(
+    mut status: ProjectLifecycleStatus,
+) -> ProjectLifecycleStatus {
     if status.root_path.exists() {
         return status;
     }
@@ -377,8 +379,14 @@ mod tests {
         let project_id = derive_project_id(&root).unwrap();
         let registry = ProjectRegistry::new();
 
-        let first = registry.ensure_project(project_id.clone(), &root).await.unwrap();
-        let second = registry.ensure_project(project_id.clone(), &root).await.unwrap();
+        let first = registry
+            .ensure_project(project_id.clone(), &root)
+            .await
+            .unwrap();
+        let second = registry
+            .ensure_project(project_id.clone(), &root)
+            .await
+            .unwrap();
 
         assert!(Arc::ptr_eq(&first, &second));
         assert_eq!(first.project_id, project_id);
@@ -405,7 +413,10 @@ mod tests {
         let project_id = derive_project_id(&root).unwrap();
         let registry = ProjectRegistry::new();
 
-        registry.ensure_project(project_id.clone(), &root).await.unwrap();
+        registry
+            .ensure_project(project_id.clone(), &root)
+            .await
+            .unwrap();
         let status = registry.status(&project_id).await.unwrap();
 
         assert_eq!(status.project_id, project_id);
@@ -454,7 +465,10 @@ mod tests {
         let project_id = derive_project_id(&root).unwrap();
         let registry = ProjectRegistry::new();
 
-        let first = registry.ensure_project(project_id.clone(), &root).await.unwrap();
+        let first = registry
+            .ensure_project(project_id.clone(), &root)
+            .await
+            .unwrap();
         let second = registry.ensure_project(project_id, &alias).await.unwrap();
 
         assert!(Arc::ptr_eq(&first, &second));
@@ -504,7 +518,10 @@ mod tests {
         let second_id = derive_project_id_with_existing(&second_root, &existing_ids).unwrap();
         let registry = ProjectRegistry::new();
 
-        registry.ensure_project(first_id.clone(), &first_root).await.unwrap();
+        registry
+            .ensure_project(first_id.clone(), &first_root)
+            .await
+            .unwrap();
         let conflict = registry
             .ensure_project(first_id.clone(), &second_root)
             .await
@@ -519,7 +536,10 @@ mod tests {
         assert_eq!(conflict.requested_root, second_root.canonicalize().unwrap());
         assert_eq!(registry.len().await, 1);
 
-        registry.ensure_project(second_id.clone(), &second_root).await.unwrap();
+        registry
+            .ensure_project(second_id.clone(), &second_root)
+            .await
+            .unwrap();
         assert_eq!(registry.len().await, 2);
         assert_eq!(
             registry.status(&first_id).await.unwrap().root_path,
@@ -555,7 +575,9 @@ mod tests {
         }
 
         let first = lifecycles.first().unwrap().clone();
-        assert!(lifecycles.iter().all(|lifecycle| Arc::ptr_eq(&first, lifecycle)));
+        assert!(lifecycles
+            .iter()
+            .all(|lifecycle| Arc::ptr_eq(&first, lifecycle)));
         assert_eq!(registry.len().await, 1);
     }
 
@@ -606,7 +628,10 @@ mod tests {
             .unwrap_err();
 
         assert_eq!(error.reason_code(), "max_project_limit");
-        assert!(matches!(error, ProjectRegistryError::MaxProjectLimit { .. }));
+        assert!(matches!(
+            error,
+            ProjectRegistryError::MaxProjectLimit { .. }
+        ));
         assert_eq!(registry.len().await, 1);
     }
 
@@ -622,8 +647,14 @@ mod tests {
 
         let status = registry.status("project").await.unwrap();
         assert_eq!(status.state, ProjectLifecycleState::Degraded);
-        assert_eq!(status.diagnostic.status, crate::types::CodeIntelligenceDiagnosticCode::Degraded);
-        assert_eq!(status.diagnostic.reason_code, crate::types::CodeIntelligenceDiagnosticCode::Degraded);
+        assert_eq!(
+            status.diagnostic.status,
+            crate::types::CodeIntelligenceDiagnosticCode::Degraded
+        );
+        assert_eq!(
+            status.diagnostic.reason_code,
+            crate::types::CodeIntelligenceDiagnosticCode::Degraded
+        );
         assert!(status
             .last_error
             .unwrap_or_default()

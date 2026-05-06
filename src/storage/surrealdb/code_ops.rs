@@ -56,13 +56,12 @@ pub(super) async fn create_code_chunks_batch(
 }
 
 pub(super) async fn delete_project_chunks(db: &Surreal<Db>, project_id: &str) -> Result<usize> {
-    let sql = "DELETE FROM code_chunks WHERE project_id = $project_id RETURN BEFORE";
-    let mut response = db
-        .query(sql)
+    let count = count_chunks(db, project_id).await? as usize;
+    let sql = "DELETE FROM code_chunks WHERE project_id = $project_id";
+    db.query(sql)
         .bind(("project_id", project_id.to_string()))
         .await?;
-    let deleted: Vec<CodeChunk> = response.take(0).unwrap_or_default();
-    Ok(deleted.len())
+    Ok(count)
 }
 
 pub(super) async fn delete_chunks_by_path(
@@ -171,6 +170,7 @@ pub(super) async fn update_index_status(db: &Surreal<Db>, status: IndexStatus) -
 
     let sql = r#"
         UPDATE index_status SET 
+            root_path = $root_path,
             status = $status,
             total_files = $total_files,
             indexed_files = $indexed_files,
@@ -193,6 +193,7 @@ pub(super) async fn update_index_status(db: &Surreal<Db>, status: IndexStatus) -
     let mut response = db
         .query(sql)
         .bind(("project_id", status.project_id.clone()))
+        .bind(("root_path", status.root_path.clone()))
         .bind(("status", status.status.clone()))
         .bind(("total_files", status.total_files))
         .bind(("indexed_files", status.indexed_files))

@@ -2,10 +2,10 @@ pub mod chunker;
 pub mod index_worker;
 pub mod indexer;
 pub mod manager;
-pub mod project_registry;
-pub mod resolver;
 pub mod parser;
+pub mod project_registry;
 pub mod relations;
+pub mod resolver;
 pub mod scanner;
 pub mod session_binding;
 pub mod startup;
@@ -19,11 +19,10 @@ pub use parser::CodeParser;
 pub use project_registry::{
     ProjectLifecycle, ProjectLifecycleOptions, ProjectLifecycleState, ProjectLifecycleStatus,
     ProjectManagerHandle, ProjectRegistry, ProjectRegistryError, ProjectRegistryPolicy,
-    ProjectRootConflict,
-    ProjectWorkerHandle, ProjectWorkerSenderHandle,
+    ProjectRootConflict, ProjectWorkerHandle, ProjectWorkerSenderHandle,
 };
-pub use session_binding::{SessionBinding, SessionBindingStatus, SessionBindingStore};
 pub use relations::{create_symbol_relations, detect_containment_references, RelationStats};
 pub use scanner::{detect_language, is_code_file, scan_directory};
+pub use session_binding::{SessionBinding, SessionBindingStatus, SessionBindingStore};
 pub use symbol_index::{ResolutionContext, SymbolIndex};
 pub use watcher::FileWatcher;

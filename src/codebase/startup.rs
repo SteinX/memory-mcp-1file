@@ -75,7 +75,8 @@ pub async fn start_code_intelligence_lifecycle(
                 .insert(project_id.clone(), index_tx.pending_arc());
             index_worker.start(state.shutdown_rx());
 
-            let manager = match CodebaseManager::new(state.clone(), path.clone(), index_tx.clone()) {
+            let manager = match CodebaseManager::new(state.clone(), path.clone(), index_tx.clone())
+            {
                 Ok(manager) => manager,
                 Err(error) => {
                     return CodeIntelligenceStartupOutcome {
@@ -118,7 +119,10 @@ pub async fn start_code_intelligence_lifecycle(
                     format!("Configured project root is available: {}", path.display())
                 }
                 StartupProjectRootSource::Fallback => {
-                    format!("Compatibility project root is available: {}", path.display())
+                    format!(
+                        "Compatibility project root is available: {}",
+                        path.display()
+                    )
                 }
             };
 
@@ -237,9 +241,7 @@ mod tests {
 
         let project_id = match outcome.status {
             CodeIntelligenceStartupStatus::Started {
-                source,
-                project_id,
-                ..
+                source, project_id, ..
             } => {
                 assert_eq!(source, StartupProjectRootSource::Configured);
                 assert_eq!(project_id, "project");
@@ -267,7 +269,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn startup_lifecycle_missing_configured_root_does_not_register_or_start_fallback_project() {
+    async fn startup_lifecycle_missing_configured_root_does_not_register_or_start_fallback_project()
+    {
         let context = TestContext::new().await;
         let fallback_dir = tempfile::tempdir().unwrap();
         let fallback_project = fallback_dir.path().join("project");
@@ -321,7 +324,10 @@ mod tests {
                 assert_eq!(project_id, "project");
                 assert_eq!(project_path, compatibility_project);
                 assert_eq!(source, StartupProjectRootSource::Fallback);
-                assert_eq!(diagnostic.reason_code, crate::types::CodeIntelligenceDiagnosticCode::Selected);
+                assert_eq!(
+                    diagnostic.reason_code,
+                    crate::types::CodeIntelligenceDiagnosticCode::Selected
+                );
             }
             other => panic!("expected started outcome for fallback project root, got {other:?}"),
         }
@@ -331,5 +337,4 @@ mod tests {
 
         context.state.shutdown_tx.send(true).unwrap();
     }
-
 }

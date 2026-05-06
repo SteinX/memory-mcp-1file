@@ -53,7 +53,9 @@ fn binding_response(status: &crate::codebase::SessionBindingStatus) -> serde_jso
     })
 }
 
-fn binding_lifecycle_response(index_status: Option<&crate::types::IndexStatus>) -> serde_json::Value {
+fn binding_lifecycle_response(
+    index_status: Option<&crate::types::IndexStatus>,
+) -> serde_json::Value {
     match index_status {
         Some(index_status) => {
             let is_partial = index_status.status != crate::types::IndexState::Completed;
@@ -252,7 +254,7 @@ impl MemoryMcpServer {
     }
 
     #[tool(
-        description = "Knowledge graph ops. Actions: create_entity(name, entity_type?, description?) | create_relation(from_entity, to_entity, relation_type, weight?) | get_related(entity_id, depth?, direction?) | detect_communities(). get_related returns preferred exported nodes/edges plus additive contract and summary metadata; raw entities/relations remain compatibility fields."
+        description = "Knowledge graph ops. Actions: create_entity(name, entity_type?, description?) | create_relation(from_entity, to_entity, relation_type, weight?) | get_related(entity_id, depth?, direction?) | detect_communities(). create_relation from_entity/to_entity must be entity IDs returned by create_entity, not display names. get_related returns preferred exported nodes/edges plus additive contract and summary metadata; raw entities/relations remain compatibility fields."
     )]
     async fn knowledge_graph(
         &self,
@@ -382,7 +384,9 @@ impl MemoryMcpServer {
             .map_err(to_rpc_error)
     }
 
-    #[tool(description = "Index codebase directory for code search.")]
+    #[tool(
+        description = "Index codebase directory for code search. Retrying a previously failed full index requires force=true and confirm_failed_restart=true."
+    )]
     async fn index_project(
         &self,
         params: Parameters<IndexProjectParams>,
@@ -424,7 +428,7 @@ impl MemoryMcpServer {
     }
 
     #[tool(
-        description = "Project indexing information. Actions: list() | status(project_id) | stats(project_id) | projection(project_id) | projection_by_locator() | bind(project_id) | unbind() | binding_status(). Status/stats/list responses include additive contract and normalized summary metadata, including lifecycle, generation, and projection/materialization contract fields. Projection returns an on-demand, export-only project projection document built from current canonical data."
+        description = "Project indexing information. Actions: list() | index(path, force?, confirm_failed_restart?) | status(project_id) | stats(project_id) | projection(project_id) | projection_by_locator() | bind(project_id) | unbind() | binding_status(). Status/stats/list responses include additive contract and normalized summary metadata, including lifecycle, generation, and projection/materialization contract fields. Projection returns an on-demand, export-only project projection document built from current canonical data."
     )]
     async fn project_info(
         &self,
@@ -444,6 +448,21 @@ impl MemoryMcpServer {
                     _placeholder: false,
                 };
                 logic::code::list_projects(&self.state, list_params)
+                    .await
+                    .map_err(to_rpc_error)
+            }
+            "index" => {
+                let path = params.0.path.ok_or_else(|| ErrorData {
+                    code: ErrorCode(-32602),
+                    message: "path required for index action".into(),
+                    data: None,
+                })?;
+                let index_params = IndexProjectParams {
+                    path,
+                    force: params.0.force,
+                    confirm_failed_restart: params.0.confirm_failed_restart,
+                };
+                logic::code::index_project(&self.state, index_params)
                     .await
                     .map_err(to_rpc_error)
             }
@@ -590,7 +609,7 @@ impl MemoryMcpServer {
             }
             other => Err(ErrorData {
                 code: ErrorCode(-32602),
-                message: format!("Invalid action '{}'. Use: list, status, stats, projection, projection_by_locator, bind, unbind, binding_status", other).into(),
+                message: format!("Invalid action '{}'. Use: list, index, status, stats, projection, projection_by_locator, bind, unbind, binding_status", other).into(),
                 data: None,
             }),
         }
@@ -809,7 +828,10 @@ mod tests {
         let headerless_extensions = extensions_with_request_headers(&[]);
 
         assert_eq!(extract_session_id_from_extensions(&empty_extensions), None);
-        assert_eq!(extract_session_id_from_extensions(&headerless_extensions), None);
+        assert_eq!(
+            extract_session_id_from_extensions(&headerless_extensions),
+            None
+        );
     }
 
     #[tokio::test]
@@ -827,7 +849,13 @@ mod tests {
             .expect("session context should be present");
 
         assert_eq!(session_context.session_id(), Some(session_id));
-        assert_eq!(session_context.bound_project_id(&ctx.state).await.as_deref(), Some(project_id));
+        assert_eq!(
+            session_context
+                .bound_project_id(&ctx.state)
+                .await
+                .as_deref(),
+            Some(project_id)
+        );
 
         let result = server
             .search_symbols_with_session(
@@ -923,6 +951,9 @@ mod tests {
                 .project_info(Parameters(ProjectInfoParams {
                     action: action.to_string(),
                     project_id: None,
+                    path: None,
+                    force: None,
+                    confirm_failed_restart: None,
                     locator: None,
                     relation_scope: None,
                     sort_mode: None,
@@ -935,8 +966,52 @@ mod tests {
                 .expect("binding response should be JSON");
 
             assert_eq!(body.get("binding"), Some(&Value::Null));
-            assert_eq!(body.get("reason_code").and_then(Value::as_str), Some("unsupported"));
+            assert_eq!(
+                body.get("reason_code").and_then(Value::as_str),
+                Some("unsupported")
+            );
         }
+    }
+
+    #[tokio::test]
+    async fn project_info_index_action_queues_one_shot_index_task() {
+        let ctx = TestContext::new().await;
+        let server = MemoryMcpServer::new(ctx.state.clone());
+        let project_path = ctx._temp_dir.path().join("project-info-index-action");
+        std::fs::create_dir_all(&project_path).expect("project path should exist");
+
+        let result = server
+            .project_info(Parameters(ProjectInfoParams {
+                action: "index".to_string(),
+                project_id: None,
+                path: Some(project_path.to_string_lossy().to_string()),
+                force: None,
+                confirm_failed_restart: None,
+                locator: None,
+                relation_scope: None,
+                sort_mode: None,
+            }))
+            .await
+            .expect("project_info index should succeed")
+            .into_typed::<Value>()
+            .expect("index response should be json");
+
+        assert_eq!(result["project_id"], "project-info-index-action");
+        assert_eq!(
+            result["root_path"],
+            project_path
+                .canonicalize()
+                .unwrap()
+                .to_string_lossy()
+                .to_string()
+        );
+        assert_eq!(result["status"], "indexing");
+        assert_eq!(result["background_task"]["state"], "queued");
+        assert_eq!(result["background_task"]["runner"], "local_tokio_task");
+        assert!(result["message"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("one-shot background task"));
     }
 
     #[tokio::test]
@@ -958,6 +1033,9 @@ mod tests {
                 Parameters(ProjectInfoParams {
                     action: "bind".to_string(),
                     project_id: Some(project_id.to_string()),
+                    path: None,
+                    force: None,
+                    confirm_failed_restart: None,
                     locator: None,
                     relation_scope: None,
                     sort_mode: None,
@@ -977,6 +1055,9 @@ mod tests {
                 Parameters(ProjectInfoParams {
                     action: "binding_status".to_string(),
                     project_id: None,
+                    path: None,
+                    force: None,
+                    confirm_failed_restart: None,
                     locator: None,
                     relation_scope: None,
                     sort_mode: None,
@@ -996,6 +1077,9 @@ mod tests {
                 Parameters(ProjectInfoParams {
                     action: "unbind".to_string(),
                     project_id: None,
+                    path: None,
+                    force: None,
+                    confirm_failed_restart: None,
                     locator: None,
                     relation_scope: None,
                     sort_mode: None,
@@ -1029,6 +1113,9 @@ mod tests {
                 Parameters(ProjectInfoParams {
                     action: "bind".to_string(),
                     project_id: Some("project-a".to_string()),
+                    path: None,
+                    force: None,
+                    confirm_failed_restart: None,
                     locator: None,
                     relation_scope: None,
                     sort_mode: None,
@@ -1082,9 +1169,10 @@ mod tests {
             let mut retries = 0;
             loop {
                 tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
-                let res = crate::server::logic::code::get_index_status(&ctx.state, status_params.clone())
-                    .await
-                    .unwrap();
+                let res =
+                    crate::server::logic::code::get_index_status(&ctx.state, status_params.clone())
+                        .await
+                        .unwrap();
                 if let rmcp::model::RawContent::Text(t) = &res.content[0].raw {
                     let indexing_done = t.text.contains("\"status\":\"completed\"")
                         || t.text.contains("\"status\":\"embedding_pending\"");
@@ -1094,7 +1182,10 @@ mod tests {
                     }
                 }
                 retries += 1;
-                assert!(retries <= 100, "Indexing timed out for stdio no-session regression test");
+                assert!(
+                    retries <= 100,
+                    "Indexing timed out for stdio no-session regression test"
+                );
             }
         }
 
@@ -1137,6 +1228,9 @@ mod tests {
                 Parameters(ProjectInfoParams {
                     action: "bind".to_string(),
                     project_id: Some("missing-project-id".to_string()),
+                    path: None,
+                    force: None,
+                    confirm_failed_restart: None,
                     locator: None,
                     relation_scope: None,
                     sort_mode: None,
@@ -1190,6 +1284,9 @@ mod tests {
                 Parameters(ProjectInfoParams {
                     action: "bind".to_string(),
                     project_id: Some(project_id.to_string()),
+                    path: None,
+                    force: None,
+                    confirm_failed_restart: None,
                     locator: None,
                     relation_scope: None,
                     sort_mode: None,
@@ -1303,6 +1400,8 @@ mod tests {
             .and_then(Value::as_str)
             .unwrap_or_default();
         assert!(project_info_desc.contains("status") || project_info_desc.contains("indexing"));
+        assert!(project_info_desc.contains("index(path"));
+        assert!(project_info_desc.contains("confirm_failed_restart"));
         let project_info_required = schema_value(project_info)
             .get("required")
             .and_then(Value::as_array)
@@ -1311,6 +1410,13 @@ mod tests {
         assert!(project_info_required
             .iter()
             .any(|value| value.as_str() == Some("action")));
+
+        let knowledge_graph = get_tool("knowledge_graph");
+        let knowledge_graph_desc = knowledge_graph
+            .get("description")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        assert!(knowledge_graph_desc.contains("entity IDs returned by create_entity"));
 
         let recall = get_tool("recall");
         let recall_desc = recall

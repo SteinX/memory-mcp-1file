@@ -99,7 +99,11 @@ struct Cli {
     )]
     bind: String,
 
-    #[arg(long, env = "PROJECT_PATH", help = "Explicit project root for code intelligence startup")]
+    #[arg(
+        long,
+        env = "PROJECT_PATH",
+        help = "Explicit project root for code intelligence startup"
+    )]
     project_path: Option<PathBuf>,
 
     #[arg(

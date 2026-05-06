@@ -106,6 +106,7 @@ DEFINE INDEX IF NOT EXISTS idx_chunks_hash ON code_chunks FIELDS content_hash;
 -- Index status table
 DEFINE TABLE IF NOT EXISTS index_status SCHEMAFULL;
 DEFINE FIELD project_id       ON index_status TYPE string;
+DEFINE FIELD root_path        ON index_status TYPE option<string>;
 DEFINE FIELD status           ON index_status TYPE string;
 DEFINE FIELD total_files      ON index_status TYPE int DEFAULT 0;
 DEFINE FIELD indexed_files    ON index_status TYPE int DEFAULT 0;
