@@ -722,7 +722,7 @@ Search:  recall (hybrid vector+keyword+graph RRF)
          search_memory (mode: vector|bm25)
 Code:    recall_code (mode: vector|hybrid, DEFAULT=hybrid)
          search_symbols, symbol_graph (symbol_id, action: callers|callees|related)
-         index_project, delete_project, project_info (action: list|status|stats)
+         index_project, delete_project, project_info (action: list|index|status|stats)
 System:  get_status, reset_all_memory
 ```
 
