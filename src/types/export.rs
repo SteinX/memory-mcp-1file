@@ -1,6 +1,9 @@
 use serde::{Deserialize, Serialize};
 
-use super::{CodeSymbol, Datetime, Entity, IndexStatus, Relation, SymbolRelation};
+use super::{CodeSymbol, Datetime, Entity, IndexStatus, MemoryType, Relation, SymbolRelation};
+
+pub const MEMORY_MIGRATION_SCHEMA_VERSION: u32 = 1;
+pub const MEMORY_MIGRATION_RECORD_TYPE: &str = "memory";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CompatibilityPolicy {
@@ -26,6 +29,298 @@ pub struct SurfaceGuidance {
     pub preferred_response_fields: Vec<String>,
     pub legacy_compatibility_fields: Vec<String>,
     pub forbidden_to_depend_fields: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MigrationRecordType {
+    Memory,
+}
+
+impl Default for MigrationRecordType {
+    fn default() -> Self {
+        Self::Memory
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ImportConflictStrategy {
+    Remap,
+    Skip,
+    Fail,
+}
+
+impl Default for ImportConflictStrategy {
+    fn default() -> Self {
+        Self::Remap
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ImportErrorCode {
+    UnsupportedSchemaVersion,
+    InvalidJsonl,
+    InvalidRecordType,
+    MissingRequiredField,
+    InvalidMemoryType,
+    StorageError,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MigrationMemoryRecord {
+    pub schema_version: u32,
+    pub record_type: MigrationRecordType,
+    pub id: String,
+    pub content: String,
+    pub memory_type: MemoryType,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub user_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub agent_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub run_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub namespace: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub project_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub metadata: Option<serde_json::Value>,
+    pub importance_score: f32,
+    pub created_at: Datetime,
+    pub updated_at: Datetime,
+    pub valid_from: Datetime,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub valid_until: Option<Datetime>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub superseded_by: Option<String>,
+    pub invalidated: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub invalidation_reason: Option<String>,
+}
+
+impl MigrationMemoryRecord {
+    pub fn unsupported_schema_version_error(
+        &self,
+        line_number: Option<usize>,
+    ) -> Option<ImportError> {
+        if self.schema_version == MEMORY_MIGRATION_SCHEMA_VERSION {
+            return None;
+        }
+
+        Some(ImportError {
+            code: ImportErrorCode::UnsupportedSchemaVersion,
+            message: format!(
+                "Unsupported memory migration schema_version {}. Supported schema_version is {}.",
+                self.schema_version, MEMORY_MIGRATION_SCHEMA_VERSION
+            ),
+            line_number,
+            source_id: Some(self.id.clone()),
+            field: Some("schema_version".to_string()),
+        })
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct MigrationSummary {
+    pub schema_version: u32,
+    pub record_type: MigrationRecordType,
+    pub total_records: usize,
+    pub memory_records: usize,
+    pub exported_records: usize,
+    pub imported_records: usize,
+    pub skipped_records: usize,
+    pub failed_records: usize,
+    pub valid_records: usize,
+    pub invalidated_records: usize,
+    pub dry_run: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExportMemoryResponse {
+    pub schema_version: u32,
+    pub record_type: MigrationRecordType,
+    pub jsonl: String,
+    pub exported_count: usize,
+    pub truncated: bool,
+    pub summary: MigrationSummary,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ImportIdMapping {
+    pub old_id: String,
+    pub new_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ImportError {
+    pub code: ImportErrorCode,
+    pub message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub line_number: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub field: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ImportMemoryResponse {
+    pub schema_version: u32,
+    pub record_type: MigrationRecordType,
+    pub conflict_strategy: ImportConflictStrategy,
+    pub dry_run: bool,
+    pub imported_count: usize,
+    pub skipped_count: usize,
+    pub failed_count: usize,
+    pub summary: MigrationSummary,
+    pub id_mappings: Vec<ImportIdMapping>,
+    pub errors: Vec<ImportError>,
+}
+
+#[cfg(test)]
+mod migration_tests {
+    use super::*;
+
+    fn migration_record() -> MigrationMemoryRecord {
+        let now = Datetime::default();
+        MigrationMemoryRecord {
+            schema_version: MEMORY_MIGRATION_SCHEMA_VERSION,
+            record_type: MigrationRecordType::Memory,
+            id: "memory-1".to_string(),
+            content: "portable memory content".to_string(),
+            memory_type: MemoryType::Semantic,
+            user_id: Some("user-1".to_string()),
+            agent_id: Some("agent-1".to_string()),
+            run_id: Some("run-1".to_string()),
+            namespace: Some("namespace-1".to_string()),
+            project_id: Some("project-1".to_string()),
+            metadata: Some(serde_json::json!({ "source": "unit-test" })),
+            importance_score: 2.5,
+            created_at: now,
+            updated_at: now,
+            valid_from: now,
+            valid_until: None,
+            superseded_by: Some("memory-2".to_string()),
+            invalidated: true,
+            invalidation_reason: Some("superseded".to_string()),
+        }
+    }
+
+    #[test]
+    fn export_memory_schema_serializes_jsonl_line() {
+        let record = migration_record();
+        let line = serde_json::to_string(&record).unwrap();
+        assert!(!line.contains('\n'));
+
+        let value: serde_json::Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(value["schema_version"], MEMORY_MIGRATION_SCHEMA_VERSION);
+        assert_eq!(value["record_type"], MEMORY_MIGRATION_RECORD_TYPE);
+        assert_eq!(value["id"], "memory-1");
+        assert_eq!(value["content"], "portable memory content");
+        assert_eq!(value["memory_type"], "semantic");
+        assert_eq!(value["user_id"], "user-1");
+        assert_eq!(value["agent_id"], "agent-1");
+        assert_eq!(value["run_id"], "run-1");
+        assert_eq!(value["namespace"], "namespace-1");
+        assert_eq!(value["project_id"], "project-1");
+        assert_eq!(value["metadata"]["source"], "unit-test");
+        assert_eq!(value["importance_score"], 2.5);
+        assert!(value.get("created_at").is_some());
+        assert!(value.get("updated_at").is_some());
+        assert!(value.get("valid_from").is_some());
+        assert!(value.get("valid_until").is_none());
+        assert_eq!(value["superseded_by"], "memory-2");
+        assert_eq!(value["invalidated"], true);
+        assert_eq!(value["invalidation_reason"], "superseded");
+        assert!(value.get("embedding").is_none());
+        assert!(value.get("embeddings").is_none());
+        assert!(value.get("vector").is_none());
+        assert!(value.get("vectors").is_none());
+        assert!(value.get("embedding_state").is_none());
+    }
+
+    #[test]
+    fn import_memory_rejects_unsupported_schema_version() {
+        let mut record = migration_record();
+        record.schema_version = 2;
+
+        let error = record.unsupported_schema_version_error(Some(7)).unwrap();
+        assert_eq!(error.code, ImportErrorCode::UnsupportedSchemaVersion);
+        assert_eq!(error.line_number, Some(7));
+        assert_eq!(error.source_id.as_deref(), Some("memory-1"));
+        assert_eq!(error.field.as_deref(), Some("schema_version"));
+        assert!(error.message.contains("Unsupported memory migration schema_version 2"));
+        assert!(error.message.contains("Supported schema_version is 1"));
+
+        let response = ImportMemoryResponse {
+            schema_version: MEMORY_MIGRATION_SCHEMA_VERSION,
+            record_type: MigrationRecordType::Memory,
+            conflict_strategy: ImportConflictStrategy::Remap,
+            dry_run: true,
+            imported_count: 0,
+            skipped_count: 0,
+            failed_count: 1,
+            summary: MigrationSummary {
+                schema_version: MEMORY_MIGRATION_SCHEMA_VERSION,
+                record_type: MigrationRecordType::Memory,
+                total_records: 1,
+                memory_records: 1,
+                exported_records: 0,
+                imported_records: 0,
+                skipped_records: 0,
+                failed_records: 1,
+                valid_records: 0,
+                invalidated_records: 0,
+                dry_run: true,
+            },
+            id_mappings: Vec::new(),
+            errors: vec![error],
+        };
+        let value = serde_json::to_value(response).unwrap();
+        assert_eq!(value["errors"][0]["code"], "unsupported_schema_version");
+        assert_eq!(value["conflict_strategy"], "remap");
+        assert_eq!(value["dry_run"], true);
+        assert_eq!(value["imported_count"], 0);
+        assert_eq!(value["skipped_count"], 0);
+        assert_eq!(value["failed_count"], 1);
+        assert!(value["id_mappings"].as_array().unwrap().is_empty());
+        assert_eq!(value["summary"]["failed_records"], 1);
+    }
+
+    #[test]
+    fn export_memory_response_serializes_top_level_report_fields() {
+        let record_line = serde_json::to_string(&migration_record()).unwrap();
+        let response = ExportMemoryResponse {
+            schema_version: MEMORY_MIGRATION_SCHEMA_VERSION,
+            record_type: MigrationRecordType::Memory,
+            jsonl: record_line,
+            exported_count: 1,
+            truncated: false,
+            summary: MigrationSummary {
+                schema_version: MEMORY_MIGRATION_SCHEMA_VERSION,
+                record_type: MigrationRecordType::Memory,
+                total_records: 1,
+                memory_records: 1,
+                exported_records: 1,
+                imported_records: 0,
+                skipped_records: 0,
+                failed_records: 0,
+                valid_records: 0,
+                invalidated_records: 1,
+                dry_run: false,
+            },
+        };
+
+        let value = serde_json::to_value(response).unwrap();
+        assert_eq!(value["schema_version"], MEMORY_MIGRATION_SCHEMA_VERSION);
+        assert_eq!(value["record_type"], MEMORY_MIGRATION_RECORD_TYPE);
+        assert_eq!(value["exported_count"], 1);
+        assert_eq!(value["truncated"], false);
+        assert!(value["jsonl"].as_str().unwrap().contains("portable memory content"));
+        assert_eq!(value["summary"]["exported_records"], 1);
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

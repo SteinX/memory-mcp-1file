@@ -106,13 +106,16 @@ pub use entity::{Direction, Entity, Relation};
 pub use error::{AppError, Result};
 pub use export::{
     CompatibilityPolicy, ContractReasonCode, CountSummary, ExportContractMeta, ExportIdentity,
-    ExportResponseSummary, ExportedGraphEdge, ExportedGraphNode, ExportedProjectProjection,
-    ExportedSymbolEdge, ExportedSymbolNode, FrontierSummary, GenerationBasis, LifecycleView,
-    PartialSummary, ProjectProjectionInputs, ProjectProjectionRequest, ProjectionContractState,
-    ProjectionEnvelope, ProjectionLifecycleView, ProjectionLocatorLifecycle,
-    ProjectionLocatorLookup, ProjectionLocatorLookupState, ProjectionLocatorRecord,
-    ProjectionMaterializationEnvelope, ProjectionShapingSummary, SemanticLifecycleView,
-    StructuralLifecycleView, SurfaceGuidance, TraversalDefaults, TraversalSummary,
+    ExportMemoryResponse, ExportResponseSummary, ExportedGraphEdge, ExportedGraphNode,
+    ExportedProjectProjection, ExportedSymbolEdge, ExportedSymbolNode, FrontierSummary,
+    GenerationBasis, ImportConflictStrategy, ImportError, ImportErrorCode, ImportIdMapping,
+    ImportMemoryResponse, LifecycleView, MigrationMemoryRecord, MigrationRecordType,
+    MigrationSummary, PartialSummary, ProjectProjectionInputs, ProjectProjectionRequest,
+    ProjectionContractState, ProjectionEnvelope, ProjectionLifecycleView,
+    ProjectionLocatorLifecycle, ProjectionLocatorLookup, ProjectionLocatorLookupState,
+    ProjectionLocatorRecord, ProjectionMaterializationEnvelope, ProjectionShapingSummary,
+    SemanticLifecycleView, StructuralLifecycleView, SurfaceGuidance, TraversalDefaults,
+    TraversalSummary, MEMORY_MIGRATION_RECORD_TYPE, MEMORY_MIGRATION_SCHEMA_VERSION,
 };
 pub use memory::{Memory, MemoryType, MemoryUpdate};
 pub use project_id::{derive_project_id, derive_project_id_with_existing, ProjectIdError};
