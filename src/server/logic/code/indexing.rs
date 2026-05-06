@@ -206,10 +206,105 @@ fn index_status_summary(
     }
 }
 
+fn lost_one_shot_recovery_json(project_id: &str) -> serde_json::Value {
+    json!({
+        "reason": "lost_one_shot_indexing_task_after_restart",
+        "guidance": "The project is persisted as indexing, but the local one-shot task does not survive process restart. Verify resources and retry with force=true and confirm_failed_restart=true.",
+        "recommended_action": "retry_with_force_and_confirmation",
+        "example": {
+            "tool": "index_project",
+            "arguments": {
+                "project_id": project_id,
+                "force": true,
+                "confirm_failed_restart": true
+            }
+        }
+    })
+}
+
+fn lost_one_shot_indexing_summary(
+    status: &IndexStatus,
+    indexed_files: u32,
+    total_chunks: u32,
+    total_symbols: u32,
+    overall_progress_percent: f32,
+) -> crate::types::ExportResponseSummary {
+    summary_index_status_response_with_reason(
+        status.total_files,
+        indexed_files,
+        total_chunks,
+        total_symbols,
+        overall_progress_percent,
+        true,
+        Some(ContractReasonCode::Degraded),
+        Some("lost_one_shot_indexing_task_after_restart".to_string()),
+        Some(
+            "Indexing cannot be observed in this process because the local one-shot task was lost after restart. Retry with force=true and confirm_failed_restart=true."
+                .to_string(),
+        ),
+    )
+}
+
+fn lost_one_shot_contract_json(status: &IndexStatus) -> serde_json::Value {
+    let lifecycle = lifecycle_json(status);
+    let mut contract =
+        phase1_contract_json(Some(&status.project_id), Some(&lifecycle), Some(status));
+    if let Some(object) = contract.as_object_mut() {
+        object.insert("generated_at".to_string(), json!("unknown_after_restart"));
+    }
+    contract
+}
+
+async fn is_lost_one_shot_indexing_task_after_restart(
+    state: &Arc<AppState>,
+    project_id: &str,
+    status: &IndexStatus,
+    background_task: &serde_json::Value,
+    sync_queue_size: usize,
+) -> bool {
+    if status.status != IndexState::Indexing || sync_queue_size > 0 {
+        return false;
+    }
+
+    if background_task
+        .get("state")
+        .and_then(|value| value.as_str())
+        != Some("unknown_after_restart")
+        || background_task
+            .get("operation_id")
+            .is_some_and(|value| !value.is_null())
+        || background_task
+            .get("runner")
+            .and_then(|value| value.as_str())
+            != Some("local_tokio_task")
+    {
+        return false;
+    }
+
+    if state.progress.get(project_id).await.is_some() {
+        return false;
+    }
+
+    state
+        .indexing_projects
+        .lock()
+        .map(|projects| !projects.contains(project_id))
+        .unwrap_or(false)
+}
+
 fn monitor_one_shot_index_task_json(monitor: &IndexMonitor) -> serde_json::Value {
+    let task_state = read_monitor_string(&monitor.task_state);
+    let phase = match task_state.as_str() {
+        "queued" => "queued",
+        "running" => "task_spawned",
+        "idle" => "accepted",
+        other => other,
+    };
+
     json!({
         "operation_id": read_monitor_optional_string(&monitor.operation_id),
-        "state": read_monitor_string(&monitor.task_state),
+        "state": task_state,
+        "phase": phase,
         "runner": "local_tokio_task",
         "registry_lifecycle_scope": "manual_project_registration_only",
         "current_file": read_monitor_string(&monitor.current_file),
@@ -237,6 +332,7 @@ async fn one_shot_index_task_json(
     json!({
         "operation_id": null,
         "state": task_state,
+        "phase": if task_state == "already_running" { "task_spawned" } else { "accepted" },
         "runner": "local_tokio_task",
         "registry_lifecycle_scope": "manual_project_registration_only",
         "survives_process_restart": false,
@@ -254,12 +350,23 @@ async fn status_background_task_json(
     }
 
     if status.status == IndexState::Indexing {
+        let phase = if status.total_files == 0 && status.total_chunks == 0 {
+            "before_file_enumeration"
+        } else {
+            "lost_task_after_restart"
+        };
+
         return json!({
             "operation_id": null,
             "state": "unknown_after_restart",
+            "phase": phase,
+            "status": "failed",
+            "retryable": true,
+            "reason_code": "lost_one_shot_indexing_task_after_restart",
             "runner": "local_tokio_task",
             "registry_lifecycle_scope": "manual_project_registration_only",
             "survives_process_restart": false,
+            "recovery": lost_one_shot_recovery_json(&status.project_id),
             "message": "Index status is persisted as indexing, but no same-process one-shot task is registered. The server likely restarted or reconnected after queuing; verify resources, then retry with force=true and confirm_failed_restart=true if progress remains unchanged."
         });
     }
@@ -470,7 +577,44 @@ pub async fn index_project(
                 );
             }
             crate::types::IndexState::Indexing => {
-                // Will be caught by in-memory atomic lock below; DB state may lag
+                let background_task =
+                    status_background_task_json(state, &project_id, &status).await;
+                if is_lost_one_shot_indexing_task_after_restart(
+                    state,
+                    &project_id,
+                    &status,
+                    &background_task,
+                    0,
+                )
+                .await
+                    && (!force || !confirm_failed_restart)
+                {
+                    let root_path = status
+                        .root_path
+                        .clone()
+                        .unwrap_or_else(|| canonical_root_path.clone());
+                    return Ok(success_json(json!({
+                        "project_id": project_id,
+                        "root_path": root_path,
+                        "status": "failed",
+                        "state": "blocked",
+                        "can_retry": true,
+                        "retryable": true,
+                        "requires_force": true,
+                        "requires_confirmation": true,
+                        "recommended_action": "retry_with_force_and_confirmation",
+                        "reason_code": "lost_one_shot_indexing_task_after_restart",
+                        "total_files": status.total_files,
+                        "indexed_files": status.indexed_files,
+                        "total_chunks": status.total_chunks,
+                        "lifecycle": registry_lifecycle,
+                        "background_task": background_task,
+                        "recovery": lost_one_shot_recovery_json(&project_id),
+                        "message": "Previous indexing was interrupted after process restart. Refusing to restart full indexing unless force=true and confirm_failed_restart=true are both provided.",
+                        "error_message": status.error_message,
+                        "failed_files": status.failed_files
+                    })));
+                }
             }
         }
     }
@@ -721,6 +865,14 @@ pub async fn get_index_status(
 
             let overall_progress =
                 parse_ratio * (PARSE_WEIGHT + embed_ratio * EMBED_WEIGHT) * 100.0;
+            let lost_one_shot_after_restart = is_lost_one_shot_indexing_task_after_restart(
+                state,
+                &project_id,
+                &status,
+                &background_task,
+                sync_queue_size,
+            )
+            .await;
 
             let parsing_done = status.total_files > 0 && indexed_files >= status.total_files;
             let indexing_message = match status.status {
@@ -736,21 +888,44 @@ pub async fn get_index_status(
             Ok(success_json(json!({
                 "project_id": status.project_id,
                 "root_path": status.root_path,
-                "status": status.status.to_string(),
-                "code_intelligence": project_state_diagnostic(status.status.clone(), false).as_json(),
-                "contract": phase1_contract_json(
-                    Some(&status.project_id),
-                    Some(&lifecycle_json(&status)),
-                    Some(&status),
-                ),
-                "summary": index_status_summary(
-                    &status,
-                    indexed_files,
-                    total_chunks,
-                    total_symbols,
-                    overall_progress,
-                    indexing_message,
-                ),
+                "status": if lost_one_shot_after_restart { "failed".to_string() } else { status.status.to_string() },
+                "retryable": if lost_one_shot_after_restart { Some(true) } else { None },
+                "reason_code": if lost_one_shot_after_restart { Some("lost_one_shot_indexing_task_after_restart") } else { None },
+                "recovery": if lost_one_shot_after_restart { Some(lost_one_shot_recovery_json(&project_id)) } else { None },
+                "code_intelligence": if lost_one_shot_after_restart {
+                    CodeIntelligenceDiagnostic::degraded(
+                        "Code intelligence indexing was interrupted after restart; retry with force=true and confirm_failed_restart=true."
+                    ).as_json()
+                } else {
+                    project_state_diagnostic(status.status.clone(), false).as_json()
+                },
+                "contract": if lost_one_shot_after_restart {
+                    lost_one_shot_contract_json(&status)
+                } else {
+                    phase1_contract_json(
+                        Some(&status.project_id),
+                        Some(&lifecycle_json(&status)),
+                        Some(&status),
+                    )
+                },
+                "summary": if lost_one_shot_after_restart {
+                    lost_one_shot_indexing_summary(
+                        &status,
+                        indexed_files,
+                        total_chunks,
+                        total_symbols,
+                        overall_progress,
+                    )
+                } else {
+                    index_status_summary(
+                        &status,
+                        indexed_files,
+                        total_chunks,
+                        total_symbols,
+                        overall_progress,
+                        indexing_message,
+                    )
+                },
                 "is_syncing": is_syncing,
                 "sync_queue_size": sync_queue_size,
                 "total_files": status.total_files,
@@ -759,15 +934,30 @@ pub async fn get_index_status(
                 "completed_at": status.completed_at,
                 "lifecycle": lifecycle_json(&status),
                 "background_task": background_task,
+                "files": {
+                    "total": status.total_files,
+                    "indexed": indexed_files,
+                    "parse_percent": format!("{:.1}", parse_ratio * 100.0)
+                },
+                "chunks": {
+                    "total": total_chunks,
+                    "embedded": embedded_chunks,
+                    "progress_percent": format!("{:.1}", vector_progress)
+                },
+                "symbols": {
+                    "total": total_symbols,
+                    "embedded": embedded_symbols,
+                    "progress_percent": format!("{:.1}", graph_progress)
+                },
 
                 "parsing": {
-                    "status": if indexed_files >= status.total_files { "completed" } else { "in_progress" },
+                    "status": if lost_one_shot_after_restart { "failed" } else if indexed_files >= status.total_files { "completed" } else { "in_progress" },
                     "progress": format!("{}/{}", indexed_files, status.total_files),
                     "current_file": current_file
                 },
 
                 "vector_embeddings": {
-                    "status": if status.status == crate::types::IndexState::Completed
+                    "status": if lost_one_shot_after_restart { "pending" } else if status.status == crate::types::IndexState::Completed
                         || (parsing_done && embedded_chunks >= total_chunks && total_chunks > 0)
                         { "completed" } else { "in_progress" },
                     "total": total_chunks,
@@ -776,7 +966,7 @@ pub async fn get_index_status(
                 },
 
                 "graph_embeddings": {
-                    "status": if status.status == crate::types::IndexState::Completed
+                    "status": if lost_one_shot_after_restart { "pending" } else if status.status == crate::types::IndexState::Completed
                         || (parsing_done && embedded_symbols >= total_symbols && total_symbols > 0)
                         { "completed" } else { "in_progress" },
                     "total": total_symbols,
@@ -786,11 +976,12 @@ pub async fn get_index_status(
 
                 "overall_progress": {
                     "percent": format!("{:.1}", overall_progress),
-                    "is_complete": status.status == crate::types::IndexState::Completed
+                    "is_complete": !lost_one_shot_after_restart
+                        && (status.status == crate::types::IndexState::Completed
                         || (parsing_done
                             && embedded_chunks >= total_chunks
                             && embedded_symbols >= total_symbols
-                            && total_chunks > 0)
+                            && total_chunks > 0))
                 },
                 "error_message": status.error_message,
                 "failed_files": status.failed_files
@@ -1204,6 +1395,14 @@ pub async fn get_project_stats(
         1.0
     };
     let overall_progress = parse_ratio * (PARSE_WEIGHT + embed_ratio * EMBED_WEIGHT) * 100.0;
+    let lost_one_shot_after_restart = is_lost_one_shot_indexing_task_after_restart(
+        state,
+        &project_id,
+        &status,
+        &background_task,
+        sync_queue_size,
+    )
+    .await;
     let indexing_message = if status_metadata_missing {
         status.error_message.clone()
     } else {
@@ -1222,25 +1421,50 @@ pub async fn get_project_stats(
     Ok(success_json(json!({
         "project_id": project_id,
         "root_path": status.root_path,
-        "status": status.status.to_string(),
-        "code_intelligence": project_state_diagnostic(status.status.clone(), status_metadata_missing).as_json(),
-        "contract": phase1_contract_json(
-            Some(&status.project_id),
-            Some(&lifecycle_json(&status)),
-            Some(&status),
-        ),
-        "summary": index_status_summary(
-            &status,
-            indexed_files,
-            total_chunks,
-            total_symbols,
-            overall_progress,
-            indexing_message,
-        ),
+        "status": if lost_one_shot_after_restart { "failed".to_string() } else { status.status.to_string() },
+        "retryable": if lost_one_shot_after_restart { Some(true) } else { None },
+        "reason_code": if lost_one_shot_after_restart { Some("lost_one_shot_indexing_task_after_restart") } else { None },
+        "recovery": if lost_one_shot_after_restart { Some(lost_one_shot_recovery_json(&project_id)) } else { None },
+        "code_intelligence": if lost_one_shot_after_restart {
+            CodeIntelligenceDiagnostic::degraded(
+                "Code intelligence indexing was interrupted after restart; retry with force=true and confirm_failed_restart=true."
+            ).as_json()
+        } else {
+            project_state_diagnostic(status.status.clone(), status_metadata_missing).as_json()
+        },
+        "contract": if lost_one_shot_after_restart {
+            lost_one_shot_contract_json(&status)
+        } else {
+            phase1_contract_json(
+                Some(&status.project_id),
+                Some(&lifecycle_json(&status)),
+                Some(&status),
+            )
+        },
+        "summary": if lost_one_shot_after_restart {
+            lost_one_shot_indexing_summary(
+                &status,
+                indexed_files,
+                total_chunks,
+                total_symbols,
+                overall_progress,
+            )
+        } else {
+            index_status_summary(
+                &status,
+                indexed_files,
+                total_chunks,
+                total_symbols,
+                overall_progress,
+                indexing_message,
+            )
+        },
         "diagnostics": {
             "status_metadata_missing": status_metadata_missing,
-            "reason_code": if status_metadata_missing { "degraded" } else { "ok" },
-            "message": if status_metadata_missing { status.error_message.clone() } else { None }
+            "reason_code": if lost_one_shot_after_restart { "lost_one_shot_indexing_task_after_restart" } else if status_metadata_missing { "degraded" } else { "ok" },
+            "message": if lost_one_shot_after_restart {
+                Some("Persisted indexing lost its same-process one-shot task after restart.".to_string())
+            } else if status_metadata_missing { status.error_message.clone() } else { None }
         },
         "is_syncing": is_syncing,
         "sync_queue_size": sync_queue_size,
@@ -1262,6 +1486,10 @@ pub async fn get_project_stats(
             "progress_percent": format!("{:.1}", graph_progress)
         },
         "overall_progress_percent": format!("{:.1}", overall_progress),
+        "overall_progress": {
+            "percent": format!("{:.1}", overall_progress),
+            "is_complete": !lost_one_shot_after_restart && status.status == crate::types::IndexState::Completed
+        },
         "started_at": status.started_at,
         "completed_at": status.completed_at,
         "failed_files": status.failed_files
@@ -1515,6 +1743,106 @@ mod tests {
     use crate::test_utils::TestContext;
     use crate::types::{CodeIntelligenceDiagnostic, IndexState, IndexStatus};
 
+    fn call_result_json(result: &CallToolResult) -> serde_json::Value {
+        let value = serde_json::to_value(result).unwrap();
+        let text = value["content"][0]["text"].as_str().unwrap();
+        serde_json::from_str(text).unwrap()
+    }
+
+    fn assert_stale_lost_one_shot_contract(json: &serde_json::Value) {
+        assert_eq!(json["status"], "failed");
+        assert_eq!(json["retryable"], true);
+        assert_eq!(
+            json["reason_code"],
+            "lost_one_shot_indexing_task_after_restart"
+        );
+        assert_eq!(json["background_task"]["state"], "unknown_after_restart");
+        assert_eq!(json["background_task"]["phase"], "before_file_enumeration");
+        assert_eq!(
+            json["background_task"]["operation_id"],
+            serde_json::Value::Null
+        );
+        assert_eq!(json["background_task"]["runner"], "local_tokio_task");
+        assert_eq!(json["files"]["total"], 0);
+        assert_eq!(json["chunks"]["total"], 0);
+        assert_eq!(json["overall_progress"]["is_complete"], false);
+        assert_eq!(json["summary"]["partial"]["is_partial"], true);
+        assert_eq!(json["summary"]["partial"]["reason_code"], "degraded");
+        assert_eq!(
+            json["summary"]["partial"]["reason"],
+            "lost_one_shot_indexing_task_after_restart"
+        );
+
+        let guidance = serde_json::to_string(&json["recovery"]).unwrap();
+        assert!(guidance.contains("force=true"));
+        assert!(guidance.contains("confirm_failed_restart=true"));
+        assert_eq!(json["recovery"]["example"]["arguments"]["force"], true);
+        assert_eq!(
+            json["recovery"]["example"]["arguments"]["confirm_failed_restart"],
+            true
+        );
+    }
+
+    async fn persist_lost_one_shot_indexing_status(ctx: &TestContext, project_id: &str) {
+        let mut stale = IndexStatus::new(project_id.to_string());
+        stale.status = IndexState::Indexing;
+        stale.total_files = 0;
+        stale.indexed_files = 0;
+        stale.total_chunks = 0;
+        stale.total_symbols = 0;
+        stale.refresh_lifecycle_states();
+        ctx.state.storage.update_index_status(stale).await.unwrap();
+
+        assert!(ctx.state.progress.get(project_id).await.is_none());
+        assert!(!ctx
+            .state
+            .indexing_projects
+            .lock()
+            .expect("indexing_projects mutex poisoned")
+            .contains(project_id));
+    }
+
+    fn assert_no_lost_one_shot_reason(json: &serde_json::Value) {
+        assert_ne!(
+            json.get("reason_code").and_then(|value| value.as_str()),
+            Some("lost_one_shot_indexing_task_after_restart")
+        );
+        assert_ne!(
+            json["summary"]["partial"]["reason"].as_str(),
+            Some("lost_one_shot_indexing_task_after_restart")
+        );
+    }
+
+    async fn persist_active_indexing_status(ctx: &TestContext, project_id: &str) {
+        let mut active = IndexStatus::new(project_id.to_string());
+        active.status = IndexState::Indexing;
+        active.total_files = 0;
+        active.indexed_files = 0;
+        active.total_chunks = 0;
+        active.total_symbols = 0;
+        active.refresh_lifecycle_states();
+        ctx.state.storage.update_index_status(active).await.unwrap();
+
+        let monitor = ctx.state.progress.get_or_create(project_id).await;
+        set_monitor_optional_string(
+            &monitor.operation_id,
+            Some(format!("idx-{project_id}-active-test")),
+        );
+        set_monitor_string(&monitor.task_state, "running");
+        monitor
+            .total_files
+            .store(0, std::sync::atomic::Ordering::Relaxed);
+        monitor
+            .indexed_files
+            .store(0, std::sync::atomic::Ordering::Relaxed);
+
+        ctx.state
+            .indexing_projects
+            .lock()
+            .expect("indexing_projects mutex poisoned")
+            .insert(project_id.to_string());
+    }
+
     #[tokio::test]
     async fn root_diagnostic_reports_disabled_when_no_roots_are_available() {
         let temp = tempfile::tempdir().unwrap();
@@ -1679,22 +2007,31 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn index_project_recovers_stale_indexing_status_after_restart() {
+    async fn lost_one_shot_retry_requires_failed_restart_confirmation() {
         let ctx = TestContext::new().await;
         let project_dir = ctx._temp_dir.path().join("stale-indexing-project");
         std::fs::create_dir_all(&project_dir).unwrap();
 
-        let mut stale = IndexStatus::new("stale-indexing-project".to_string());
-        stale.status = IndexState::Indexing;
-        stale.total_files = 7;
-        stale.indexed_files = 3;
-        ctx.state.storage.update_index_status(stale).await.unwrap();
+        persist_lost_one_shot_indexing_status(&ctx, "stale-indexing-project").await;
+
+        let before = get_index_status(
+            &ctx.state,
+            GetIndexStatusParams {
+                project_id: "stale-indexing-project".to_string(),
+            },
+        )
+        .await
+        .unwrap();
+        let before_value = serde_json::to_value(&before).unwrap();
+        let before_text = before_value["content"][0]["text"].as_str().unwrap();
+        let before_json: serde_json::Value = serde_json::from_str(before_text).unwrap();
+        assert_stale_lost_one_shot_contract(&before_json);
 
         let result = index_project(
             &ctx.state,
             IndexProjectParams {
                 path: project_dir.to_string_lossy().to_string(),
-                force: None,
+                force: Some(true),
                 confirm_failed_restart: None,
             },
         )
@@ -1706,13 +2043,25 @@ mod tests {
         let json: serde_json::Value = serde_json::from_str(text).unwrap();
 
         assert_eq!(json["project_id"], "stale-indexing-project");
-        assert_eq!(json["status"], "indexing");
-        assert_eq!(json["background_task"]["state"], "queued");
+        assert_eq!(json["status"], "failed");
+        assert_eq!(json["state"], "blocked");
+        assert_eq!(json["can_retry"], true);
+        assert_eq!(json["requires_force"], true);
+        assert_eq!(json["requires_confirmation"], true);
+        assert_eq!(
+            json["recommended_action"],
+            "retry_with_force_and_confirmation"
+        );
+        assert_eq!(json["background_task"]["state"], "unknown_after_restart");
+        assert_eq!(
+            json["background_task"]["operation_id"],
+            serde_json::Value::Null
+        );
         assert_eq!(json["background_task"]["runner"], "local_tokio_task");
         assert!(json["message"]
             .as_str()
             .unwrap_or_default()
-            .contains("one-shot background task"));
+            .contains("confirm_failed_restart=true"));
         assert_eq!(json["lifecycle"]["project_id"], "stale-indexing-project");
         assert_eq!(json["lifecycle"]["state"], "registered");
         assert_eq!(ctx.state.project_registry.len().await, 1);
@@ -1723,7 +2072,7 @@ mod tests {
             .lock()
             .expect("indexing_projects mutex poisoned")
             .contains("stale-indexing-project");
-        assert!(marked_active);
+        assert!(!marked_active);
 
         let stored = ctx
             .state
@@ -1733,6 +2082,91 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(stored.status, IndexState::Indexing);
+
+        let after = get_index_status(
+            &ctx.state,
+            GetIndexStatusParams {
+                project_id: "stale-indexing-project".to_string(),
+            },
+        )
+        .await
+        .unwrap();
+        let after_value = serde_json::to_value(&after).unwrap();
+        let after_text = after_value["content"][0]["text"].as_str().unwrap();
+        let after_json: serde_json::Value = serde_json::from_str(after_text).unwrap();
+        assert_stale_lost_one_shot_contract(&after_json);
+    }
+
+    #[tokio::test]
+    async fn explicit_retry_after_lost_one_shot_starts_new_operation() {
+        let ctx = TestContext::new().await;
+        let project_dir = ctx
+            ._temp_dir
+            .path()
+            .join("stale-indexing-project-confirmed");
+        std::fs::create_dir_all(&project_dir).unwrap();
+
+        persist_lost_one_shot_indexing_status(&ctx, "stale-indexing-project-confirmed").await;
+
+        let result = index_project(
+            &ctx.state,
+            IndexProjectParams {
+                path: project_dir.to_string_lossy().to_string(),
+                force: Some(true),
+                confirm_failed_restart: Some(true),
+            },
+        )
+        .await
+        .unwrap();
+
+        let value = serde_json::to_value(&result).unwrap();
+        let text = value["content"][0]["text"].as_str().unwrap();
+        let json: serde_json::Value = serde_json::from_str(text).unwrap();
+
+        assert_eq!(json["project_id"], "stale-indexing-project-confirmed");
+        assert_eq!(json["status"], "indexing");
+        assert_eq!(json["background_task"]["runner"], "local_tokio_task");
+        assert_ne!(json["background_task"]["state"], "unknown_after_restart");
+        assert!(matches!(
+            json["background_task"]["state"].as_str(),
+            Some("queued") | Some("running") | Some("indexing")
+        ));
+        assert!(json["background_task"]["operation_id"]
+            .as_str()
+            .map(|value| !value.is_empty())
+            .unwrap_or(false));
+        assert_no_lost_one_shot_reason(&json);
+
+        let active = ctx
+            .state
+            .indexing_projects
+            .lock()
+            .expect("indexing_projects mutex poisoned")
+            .contains("stale-indexing-project-confirmed");
+        assert!(active);
+
+        let status = get_index_status(
+            &ctx.state,
+            GetIndexStatusParams {
+                project_id: "stale-indexing-project-confirmed".to_string(),
+            },
+        )
+        .await
+        .unwrap();
+        let status_value = serde_json::to_value(&status).unwrap();
+        let status_text = status_value["content"][0]["text"].as_str().unwrap();
+        let status_json: serde_json::Value = serde_json::from_str(status_text).unwrap();
+        assert_eq!(status_json["status"], "indexing");
+        assert_eq!(status_json["background_task"]["runner"], "local_tokio_task");
+        assert_ne!(
+            status_json["background_task"]["state"],
+            "unknown_after_restart"
+        );
+        assert!(status_json["background_task"]["operation_id"]
+            .as_str()
+            .map(|value| !value.is_empty())
+            .unwrap_or(false));
+        assert_no_lost_one_shot_reason(&status_json);
     }
 
     #[tokio::test]
@@ -2025,6 +2459,201 @@ mod tests {
         assert_eq!(json["summary"]["counts"]["files"], 0);
         assert_eq!(json["summary"]["counts"]["indexed_files"], 0);
         assert_eq!(json["summary"]["partial"]["is_partial"], true);
+    }
+
+    #[tokio::test]
+    async fn stale_indexing_status_marks_lost_one_shot_task_failed_and_retryable() {
+        let ctx = TestContext::new().await;
+        persist_lost_one_shot_indexing_status(&ctx, "stale-indexing-status-project").await;
+
+        let result = get_index_status(
+            &ctx.state,
+            GetIndexStatusParams {
+                project_id: "stale-indexing-status-project".to_string(),
+            },
+        )
+        .await
+        .unwrap();
+
+        let json = call_result_json(&result);
+        assert_stale_lost_one_shot_contract(&json);
+        assert_eq!(json["parsing"]["status"], "failed");
+        assert_eq!(json["vector_embeddings"]["status"], "pending");
+        assert_eq!(json["graph_embeddings"]["status"], "pending");
+    }
+
+    #[tokio::test]
+    async fn stale_indexing_stats_marks_lost_one_shot_task_failed_and_retryable() {
+        let ctx = TestContext::new().await;
+        persist_lost_one_shot_indexing_status(&ctx, "stale-indexing-stats-project").await;
+
+        let result = get_project_stats(
+            &ctx.state,
+            GetProjectStatsParams {
+                project_id: "stale-indexing-stats-project".to_string(),
+            },
+        )
+        .await
+        .unwrap();
+
+        let json = call_result_json(&result);
+        assert_stale_lost_one_shot_contract(&json);
+        assert_eq!(json["files"]["indexed"], 0);
+        assert_eq!(json["chunks"]["embedded"], 0);
+        assert_eq!(json["symbols"]["total"], 0);
+        assert_eq!(json["overall_progress_percent"], "0.0");
+    }
+
+    #[tokio::test]
+    async fn stale_indexing_false_positive_completed_empty_project_not_failed() {
+        let ctx = TestContext::new().await;
+        let project_id = "completed-empty-project";
+        let mut completed = IndexStatus::new(project_id.to_string());
+        completed.status = IndexState::Completed;
+        completed.total_files = 0;
+        completed.indexed_files = 0;
+        completed.total_chunks = 0;
+        completed.total_symbols = 0;
+        completed.refresh_lifecycle_states();
+        ctx.state
+            .storage
+            .update_index_status(completed)
+            .await
+            .unwrap();
+
+        let status_result = get_index_status(
+            &ctx.state,
+            GetIndexStatusParams {
+                project_id: project_id.to_string(),
+            },
+        )
+        .await
+        .unwrap();
+        let status_json = call_result_json(&status_result);
+
+        assert_eq!(status_json["status"], "completed");
+        assert_eq!(status_json["code_intelligence"]["status"], "ready");
+        assert_eq!(status_json["background_task"]["runner"], "none");
+        assert_eq!(status_json["total_files"], 0);
+        assert_eq!(status_json["summary"]["partial"]["is_partial"], false);
+        assert_no_lost_one_shot_reason(&status_json);
+
+        let stats_result = get_project_stats(
+            &ctx.state,
+            GetProjectStatsParams {
+                project_id: project_id.to_string(),
+            },
+        )
+        .await
+        .unwrap();
+        let stats_json = call_result_json(&stats_result);
+
+        assert_eq!(stats_json["status"], "completed");
+        assert_eq!(stats_json["code_intelligence"]["status"], "ready");
+        assert_eq!(stats_json["background_task"]["runner"], "none");
+        assert_eq!(stats_json["files"]["total"], 0);
+        assert_eq!(stats_json["chunks"]["total"], 0);
+        assert_no_lost_one_shot_reason(&stats_json);
+    }
+
+    #[tokio::test]
+    async fn active_indexing_status_not_marked_failed() {
+        let ctx = TestContext::new().await;
+        let project_id = "active-indexing-project";
+        persist_active_indexing_status(&ctx, project_id).await;
+
+        let result = get_index_status(
+            &ctx.state,
+            GetIndexStatusParams {
+                project_id: project_id.to_string(),
+            },
+        )
+        .await
+        .unwrap();
+
+        let json = call_result_json(&result);
+        assert_eq!(json["status"], "indexing");
+        assert_eq!(json["background_task"]["state"], "running");
+        assert_eq!(
+            json["background_task"]["operation_id"],
+            format!("idx-{project_id}-active-test")
+        );
+        assert_eq!(json["background_task"]["runner"], "local_tokio_task");
+        assert_eq!(json["summary"]["partial"]["is_partial"], true);
+        assert_no_lost_one_shot_reason(&json);
+        assert!(ctx
+            .state
+            .indexing_projects
+            .lock()
+            .expect("indexing_projects mutex poisoned")
+            .contains(project_id));
+    }
+
+    #[tokio::test]
+    async fn stale_indexing_status_idempotent() {
+        let ctx = TestContext::new().await;
+        let project_id = "stale-indexing-idempotent-project";
+        persist_lost_one_shot_indexing_status(&ctx, project_id).await;
+
+        let first_status = get_index_status(
+            &ctx.state,
+            GetIndexStatusParams {
+                project_id: project_id.to_string(),
+            },
+        )
+        .await
+        .unwrap();
+        let first_status_json = call_result_json(&first_status);
+
+        let first_stats = get_project_stats(
+            &ctx.state,
+            GetProjectStatsParams {
+                project_id: project_id.to_string(),
+            },
+        )
+        .await
+        .unwrap();
+        let first_stats_json = call_result_json(&first_stats);
+
+        let second_status = get_index_status(
+            &ctx.state,
+            GetIndexStatusParams {
+                project_id: project_id.to_string(),
+            },
+        )
+        .await
+        .unwrap();
+        let second_status_json = call_result_json(&second_status);
+
+        let second_stats = get_project_stats(
+            &ctx.state,
+            GetProjectStatsParams {
+                project_id: project_id.to_string(),
+            },
+        )
+        .await
+        .unwrap();
+        let second_stats_json = call_result_json(&second_stats);
+
+        assert_stale_lost_one_shot_contract(&first_status_json);
+        assert_stale_lost_one_shot_contract(&first_stats_json);
+        assert_eq!(first_status_json, second_status_json);
+        assert_eq!(first_stats_json, second_stats_json);
+        assert_eq!(
+            second_status_json["background_task"]["operation_id"],
+            serde_json::Value::Null
+        );
+        assert_eq!(
+            second_stats_json["background_task"]["operation_id"],
+            serde_json::Value::Null
+        );
+        assert!(ctx.state.progress.get(project_id).await.is_none());
+        assert!(!ctx
+            .state
+            .indexing_projects
+            .lock()
+            .expect("indexing_projects mutex poisoned")
+            .contains(project_id));
     }
 
     #[tokio::test]

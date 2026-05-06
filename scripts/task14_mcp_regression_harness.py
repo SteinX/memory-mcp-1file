@@ -40,6 +40,31 @@ TASK3_BASELINE = EVIDENCE_DIR / "task-3-tool-selection-baseline.json"
 SCENARIO_SET_VERSION = "task3-ts-001-012"
 FORBIDDEN_TOOL_NAMES = {"search", "search_code"}
 SCRIPTED_PUBLIC_TOOL_NAMES = {"project_info", "recall_code"}
+DEFAULT_SCENARIO = "default"
+STALE_INDEXING_AFTER_RETRY_SCENARIO = "stale-indexing-after-retry"
+
+STALE_SCENARIO_TEST_STAGES: list[tuple[str, list[str], str]] = [
+    (
+        "stale status contract",
+        ["cargo", "test", "stale_indexing_status_marks_lost_one_shot_task_failed_and_retryable", "--", "--nocapture"],
+        "stale_indexing_status_marks_lost_one_shot_task_failed_and_retryable",
+    ),
+    (
+        "stale stats contract",
+        ["cargo", "test", "stale_indexing_stats_marks_lost_one_shot_task_failed_and_retryable", "--", "--nocapture"],
+        "stale_indexing_stats_marks_lost_one_shot_task_failed_and_retryable",
+    ),
+    (
+        "no auto-requeue/idempotency",
+        ["cargo", "test", "stale_indexing_status_idempotent", "--", "--nocapture"],
+        "stale_indexing_status_idempotent",
+    ),
+    (
+        "confirmed retry",
+        ["cargo", "test", "explicit_retry_after_lost_one_shot_starts_new_operation", "--", "--nocapture"],
+        "explicit_retry_after_lost_one_shot_starts_new_operation",
+    ),
+]
 
 
 @dataclass
@@ -220,13 +245,96 @@ def extract_project_id(project_info_list_payload: dict[str, Any]) -> str | None:
     return None
 
 
+def _tail_lines(text: str, n: int = 30) -> list[str]:
+    return text.splitlines()[-n:] if text else []
+
+
+def _run_rust_test_stage(stage_label: str, command: list[str], test_name: str, timeout_seconds: float) -> dict[str, Any]:
+    started = time.perf_counter()
+    proc = subprocess.run(  # noqa: S603
+        command,
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        timeout=timeout_seconds,
+        env=os.environ.copy(),
+    )
+    elapsed = round(time.perf_counter() - started, 2)
+
+    combined = f"{proc.stdout}\n{proc.stderr}"
+    assert proc.returncode == 0, f"{stage_label}: command failed with exit={proc.returncode}"
+    assert test_name in combined, f"{stage_label}: expected test marker not found: {test_name}"
+
+    return {
+        "verification_source": "rust_test_subprocess",
+        "command": command,
+        "command_str": shlex.join(command),
+        "expected_test_name": test_name,
+        "exit_code": proc.returncode,
+        "elapsed_seconds": elapsed,
+        "stdout_tail": _tail_lines(proc.stdout),
+        "stderr_tail": _tail_lines(proc.stderr),
+    }
+
+
+def run_stale_indexing_after_retry_scenario(timeout_seconds: float) -> tuple[int, dict[str, Any]]:
+    started = time.time()
+    stages: list[StageResult] = []
+
+    stage_timeout = max(120.0, timeout_seconds * 4)
+    for stage_label, command, test_name in STALE_SCENARIO_TEST_STAGES:
+        stages.append(
+            stage_call(
+                f"real {stage_label}",
+                lambda stage_label=stage_label, command=command, test_name=test_name: _run_rust_test_stage(
+                    stage_label=stage_label,
+                    command=command,
+                    test_name=test_name,
+                    timeout_seconds=stage_timeout,
+                ),
+            )
+        )
+
+    failed = [s.name for s in stages if not s.ok]
+    payload = {
+        "scenario": STALE_INDEXING_AFTER_RETRY_SCENARIO,
+        "timestamp_utc": now_iso(),
+        "contract_path": "rust_test_subprocess",
+        "stage_timeout_seconds": stage_timeout,
+        "harness_status": "ok" if not failed else "failed",
+        "duration_seconds": round(time.time() - started, 3),
+        "critical_failures": failed,
+        "stages": [
+            {
+                "name": s.name,
+                "ok": s.ok,
+                "duration_ms": s.duration_ms,
+                "detail": s.detail,
+            }
+            for s in stages
+        ],
+    }
+    return (0 if not failed else 2), payload
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Task 14 MCP regression harness")
     parser.add_argument("--command", help="Explicit server command, e.g. 'target/release/memory-mcp --stdio'")
     parser.add_argument("--timeout", type=float, default=30.0, help="Per-stage timeout in seconds")
+    parser.add_argument(
+        "--scenario",
+        choices=[DEFAULT_SCENARIO, STALE_INDEXING_AFTER_RETRY_SCENARIO],
+        default=DEFAULT_SCENARIO,
+        help="Harness scenario to run",
+    )
     args = parser.parse_args()
 
     EVIDENCE_DIR.mkdir(parents=True, exist_ok=True)
+
+    if args.scenario == STALE_INDEXING_AFTER_RETRY_SCENARIO:
+        exit_code, scenario_payload = run_stale_indexing_after_retry_scenario(args.timeout)
+        print(json.dumps(scenario_payload, indent=2, sort_keys=True))
+        return exit_code
 
     command = choose_command(args.command)
     env = os.environ.copy()
@@ -315,24 +423,33 @@ def main() -> int:
             )
             stages.append(project_info_status)
 
-        recall_args: dict[str, Any] = {
-            "query": "find the RRF merge function",
-            "mode": "hybrid",
-            "limit": 5,
-        }
         if project_id:
-            recall_args["projectId"] = project_id
+            recall_args: dict[str, Any] = {
+                "query": "find the RRF merge function",
+                "mode": "hybrid",
+                "limit": 5,
+                "projectId": project_id,
+            }
 
-        recall_code = stage_call(
-            "tools/call recall_code",
-            lambda: parse_tool_text_result(
-                client.request(
-                    "tools/call",
-                    {"name": "recall_code", "arguments": recall_args},
-                    timeout=args.timeout,
-                )
-            ),
-        )
+            recall_code = stage_call(
+                "tools/call recall_code",
+                lambda: parse_tool_text_result(
+                    client.request(
+                        "tools/call",
+                        {"name": "recall_code", "arguments": recall_args},
+                        timeout=args.timeout,
+                    )
+                ),
+            )
+        else:
+            recall_code = stage_call(
+                "tools/call recall_code",
+                lambda: {
+                    "skipped": True,
+                    "reason": "No indexed project available from project_info(list)",
+                    "reason_code": "missing_project_id",
+                },
+            )
         stages.append(recall_code)
 
         tools_list_names: list[str] = []
@@ -463,6 +580,24 @@ def main() -> int:
         exit_code = 3
     finally:
         client.close()
+
+    print(
+        json.dumps(
+            {
+                "scenario": args.scenario,
+                "harness_status": run_payload.get("harness_status"),
+                "critical_failures": run_payload.get("critical_failures"),
+                "duration_seconds": run_payload.get("duration_seconds"),
+                "evidence": {
+                    "run_json": str(TASK14_RUN_JSON.relative_to(ROOT)),
+                    "summary_md": str(TASK14_SUMMARY_MD.relative_to(ROOT)),
+                    "tool_validation_md": str(TASK14_TOOL_VALIDATION_MD.relative_to(ROOT)),
+                },
+            },
+            indent=2,
+            sort_keys=True,
+        )
+    )
 
     return exit_code
 

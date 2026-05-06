@@ -22,6 +22,29 @@ use crate::types::symbol::{CodeReference, CodeSymbol};
 
 const PARSE_TIMEOUT_SECS: u64 = 30;
 
+fn emit_index_timing(
+    project_id: &str,
+    phase: &'static str,
+    elapsed_ms: u128,
+    file_count: u64,
+    chunk_count: u64,
+    symbol_count: u64,
+    relation_count: u64,
+    failed_count: u64,
+) {
+    tracing::info!(
+        project_id = %project_id,
+        phase,
+        elapsed_ms,
+        file_count,
+        chunk_count,
+        symbol_count,
+        relation_count,
+        failed_count,
+        "Code indexing phase timing"
+    );
+}
+
 pub async fn index_project(state: Arc<AppState>, project_path: &Path) -> Result<IndexStatus> {
     let project_id = derive_project_id(project_path)
         .map_err(|error| crate::AppError::InvalidPath(error.to_string()))?;
@@ -93,10 +116,28 @@ async fn do_index_project(
     project_path: &Path,
     project_id: &str,
 ) -> Result<IndexStatus> {
+    let total_started = Instant::now();
+    let mut file_read_hash_elapsed_ms = 0u128;
+    let mut parse_chunk_elapsed_ms = 0u128;
+    let mut chunk_db_write_elapsed_ms = 0u128;
+    let mut symbol_db_write_elapsed_ms = 0u128;
+    let mut embedding_enqueue_elapsed_ms = 0u128;
+    let mut relation_create_elapsed_ms = 0u128;
+    let mut status_update_elapsed_ms = 0u128;
+    let mut chunks_written = 0u64;
+    let mut symbols_written = 0u64;
+    let mut embeddings_enqueued = 0u64;
+    let mut files_read = 0u64;
+
     tracing::info!(
         project_id = %project_id,
         root_path = %project_path.display(),
         "One-shot code index task started"
+    );
+    tracing::info!(
+        project_id = %project_id,
+        phase = "accepted",
+        "One-shot code index task accepted"
     );
     let mut status = IndexStatus::new(project_id.to_string());
     status.root_path = Some(
@@ -125,7 +166,20 @@ async fn do_index_project(
         root_path = status.root_path.as_deref().unwrap_or_default(),
         "Persisting initial indexing metadata before cleanup"
     );
+    tracing::info!(project_id = %project_id, phase = "task_spawned", "One-shot code index task spawned");
+    let status_started = Instant::now();
     state.storage.update_index_status(status.clone()).await?;
+    status_update_elapsed_ms += status_started.elapsed().as_millis();
+    emit_index_timing(
+        project_id,
+        "status_update",
+        status_started.elapsed().as_millis(),
+        status.indexed_files as u64,
+        status.total_chunks as u64,
+        status.total_symbols as u64,
+        0,
+        status.failed_files.len() as u64,
+    );
 
     tracing::info!(project_id = %project_id, "Clearing stale code intelligence rows");
 
@@ -168,6 +222,16 @@ async fn do_index_project(
         total_elapsed_ms = cleanup_started.elapsed().as_millis(),
         "Deleted stale manifest entries"
     );
+    emit_index_timing(
+        project_id,
+        "cleanup",
+        cleanup_started.elapsed().as_millis(),
+        status.indexed_files as u64,
+        status.total_chunks as u64,
+        status.total_symbols as u64,
+        0,
+        status.failed_files.len() as u64,
+    );
 
     // `scan_directory` uses `ignore::WalkBuilder` — a synchronous blocking I/O walk.
     // Wrap in `spawn_blocking` to avoid starving the Tokio async thread pool.
@@ -176,10 +240,13 @@ async fn do_index_project(
         root_path = %project_path.display(),
         "Scanning project files"
     );
+    tracing::info!(project_id = %project_id, phase = "file_enumeration_started", "Project file enumeration started");
     let project_path_for_scan = project_path.to_path_buf();
+    let scan_started = Instant::now();
     let files = tokio::task::spawn_blocking(move || scan_directory(&project_path_for_scan))
         .await
         .map_err(|e| crate::AppError::Internal(format!("scan_directory panicked: {e}").into()))??;
+    tracing::info!(project_id = %project_id, phase = "file_enumeration_completed", total_files = files.len(), "Project file enumeration completed");
     status.total_files = files.len() as u32;
     tracing::info!(
         project = %project_id,
@@ -191,7 +258,29 @@ async fn do_index_project(
         .total_files
         .store(status.total_files, std::sync::atomic::Ordering::Relaxed);
 
+    emit_index_timing(
+        project_id,
+        "scan",
+        scan_started.elapsed().as_millis(),
+        status.total_files as u64,
+        status.total_chunks as u64,
+        status.total_symbols as u64,
+        0,
+        status.failed_files.len() as u64,
+    );
+    let status_started = Instant::now();
     state.storage.update_index_status(status.clone()).await?;
+    status_update_elapsed_ms += status_started.elapsed().as_millis();
+    emit_index_timing(
+        project_id,
+        "status_update",
+        status_started.elapsed().as_millis(),
+        status.indexed_files as u64,
+        status.total_chunks as u64,
+        status.total_symbols as u64,
+        0,
+        status.failed_files.len() as u64,
+    );
 
     let batch_size = 100;
     let mut chunk_buffer = Vec::with_capacity(batch_size);
@@ -202,6 +291,8 @@ async fn do_index_project(
     // Buffer file hashes for batched UPSERT (Bug 3 fix: avoids N sequential DB round-trips)
     let mut hash_buffer: Vec<(String, String)> = Vec::with_capacity(batch_size);
     const HASH_FLUSH_SIZE: usize = 50;
+
+    tracing::info!(project_id = %project_id, phase = "parsing_chunking_started", total_files = status.total_files, "Parsing and chunking started");
 
     // Issue 4 fix: Parse files with bounded concurrency using JoinSet instead of
     // sequential spawn_blocking. Up to max_concurrent_parses files are parsed on
@@ -214,16 +305,28 @@ async fn do_index_project(
         Vec<CodeSymbol>,
         Vec<CodeReference>,
         String,
+        u128,
     )> = tokio::task::JoinSet::new();
 
     // Macro to process one completed parse result (used in drain-when-full and final drain).
     // Expands in place so it can mutate surrounding locals and use `.await`.
     macro_rules! drain_one_parse {
         ($join_result:expr) => {{
-            let (chunks, symbols, references, fp_str) = $join_result
+            let (chunks, symbols, references, fp_str, parse_elapsed_ms) = $join_result
                 .map_err(|e| crate::AppError::Internal(
                     format!("parse/chunk panicked: {e}").into(),
                 ))?;
+            parse_chunk_elapsed_ms += parse_elapsed_ms;
+            emit_index_timing(
+                project_id,
+                "parse_chunk",
+                parse_elapsed_ms,
+                1,
+                chunks.len() as u64,
+                symbols.len() as u64,
+                references.len() as u64,
+                status.failed_files.len() as u64,
+            );
 
             for chunk in chunks {
                 chunk_buffer.push(chunk);
@@ -231,7 +334,9 @@ async fn do_index_project(
 
                 if chunk_buffer.len() >= batch_size {
                     let batch = std::mem::take(&mut chunk_buffer);
+                    let batch_len = batch.len() as u64;
                     let _permit = state.db_semaphore.acquire().await;
+                    let chunk_write_started = Instant::now();
                     let results = state
                         .storage
                         .create_code_chunks_batch(batch)
@@ -239,8 +344,22 @@ async fn do_index_project(
                         .map_err(|e| crate::AppError::Internal(
                             format!("failed to persist code chunks for {fp_str}: {e}").into(),
                         ))?;
+                    let chunk_write_elapsed = chunk_write_started.elapsed().as_millis();
+                    chunk_db_write_elapsed_ms += chunk_write_elapsed;
+                    chunks_written += batch_len;
+                    emit_index_timing(
+                        project_id,
+                        "chunk_db_write",
+                        chunk_write_elapsed,
+                        status.indexed_files as u64,
+                        batch_len,
+                        status.total_symbols as u64,
+                        (total_relation_stats.created + total_relation_stats.failed) as u64,
+                        status.failed_files.len() as u64,
+                    );
 
                     for (id, chunk) in results {
+                        let enqueue_started = Instant::now();
                         if let Err(e) = state
                             .embedding_queue
                             .send(EmbeddingRequest {
@@ -253,6 +372,8 @@ async fn do_index_project(
                         {
                             tracing::warn!(chunk_id = %id, error = %e, "Failed to enqueue chunk embedding");
                         }
+                        embedding_enqueue_elapsed_ms += enqueue_started.elapsed().as_millis();
+                        embeddings_enqueued += 1;
                     }
                 }
             }
@@ -277,14 +398,30 @@ async fn do_index_project(
 
                 if symbol_buffer.len() >= batch_size {
                     let batch = std::mem::take(&mut symbol_buffer);
+                    let batch_len = batch.len() as u64;
                     let _permit = state.db_semaphore.acquire().await;
+                    let symbol_write_started = Instant::now();
                     match state.storage.create_code_symbols_batch(batch.clone()).await {
                         Ok(ids) => {
+                            let symbol_write_elapsed = symbol_write_started.elapsed().as_millis();
+                            symbol_db_write_elapsed_ms += symbol_write_elapsed;
+                            symbols_written += batch_len;
+                            emit_index_timing(
+                                project_id,
+                                "symbol_db_write",
+                                symbol_write_elapsed,
+                                status.indexed_files as u64,
+                                status.total_chunks as u64,
+                                batch_len,
+                                (total_relation_stats.created + total_relation_stats.failed) as u64,
+                                status.failed_files.len() as u64,
+                            );
                             for (id, sym) in ids.iter().zip(batch.iter()) {
                                 let embed_text = sym
                                     .signature
                                     .clone()
                                     .unwrap_or_else(|| format!("{} {}", sym.symbol_type, sym.name));
+                                let enqueue_started = Instant::now();
                                 if let Err(e) = state
                                     .embedding_queue
                                     .send(EmbeddingRequest {
@@ -297,6 +434,8 @@ async fn do_index_project(
                                 {
                                     tracing::warn!(symbol_id = %id, error = %e, "Failed to enqueue symbol embedding");
                                 }
+                                embedding_enqueue_elapsed_ms += enqueue_started.elapsed().as_millis();
+                                embeddings_enqueued += 1;
                             }
                         }
                         Err(e) => {
@@ -319,6 +458,7 @@ async fn do_index_project(
             // small), so flushing at this threshold keeps peak RSS low.
             if relation_buffer.len() >= 5000 {
                 let batch = std::mem::take(&mut relation_buffer);
+                let relation_started = Instant::now();
                 let stats = create_symbol_relations(
                     state.storage.as_ref(),
                     project_id,
@@ -329,6 +469,17 @@ async fn do_index_project(
                 total_relation_stats.created += stats.created;
                 total_relation_stats.failed += stats.failed;
                 total_relation_stats.unresolved += stats.unresolved;
+                relation_create_elapsed_ms += relation_started.elapsed().as_millis();
+                emit_index_timing(
+                    project_id,
+                    "relation_create",
+                    relation_started.elapsed().as_millis(),
+                    status.indexed_files as u64,
+                    status.total_chunks as u64,
+                    status.total_symbols as u64,
+                    (stats.created + stats.failed) as u64,
+                    status.failed_files.len() as u64,
+                );
             }
 
             status.indexed_files += 1;
@@ -348,9 +499,21 @@ async fn do_index_project(
                     failed = status.failed_files.len(),
                     "Indexing progress"
                 );
+                let status_started = Instant::now();
                 if let Err(e) = state.storage.update_index_status(status.clone()).await {
                     tracing::warn!("Failed to update intermediate status: {}", e);
                 }
+                status_update_elapsed_ms += status_started.elapsed().as_millis();
+                emit_index_timing(
+                    project_id,
+                    "status_update",
+                    status_started.elapsed().as_millis(),
+                    status.indexed_files as u64,
+                    status.total_chunks as u64,
+                    status.total_symbols as u64,
+                    (total_relation_stats.created + total_relation_stats.failed) as u64,
+                    status.failed_files.len() as u64,
+                );
             }
         }};
     }
@@ -382,13 +545,26 @@ async fn do_index_project(
             }
         }
 
+        let read_hash_started = Instant::now();
         let content = match fs::read_to_string(file_path).await {
             Ok(c) => c,
             Err(e) => {
+                let read_hash_elapsed = read_hash_started.elapsed().as_millis();
+                file_read_hash_elapsed_ms += read_hash_elapsed;
                 tracing::warn!("Failed to read file {:?}: {}", file_path, e);
                 status
                     .failed_files
                     .push(file_path.to_string_lossy().to_string());
+                emit_index_timing(
+                    project_id,
+                    "file_read_hash",
+                    read_hash_elapsed,
+                    files_read,
+                    status.total_chunks as u64,
+                    status.total_symbols as u64,
+                    (total_relation_stats.created + total_relation_stats.failed) as u64,
+                    status.failed_files.len() as u64,
+                );
                 continue;
             }
         };
@@ -396,10 +572,22 @@ async fn do_index_project(
         // Skip massive files to prevent OOM/TreeSitter crashes (e.g. giant bundled JS or Dart files)
         if content.len() > 1_000_000 {
             // > 1MB
+            let read_hash_elapsed = read_hash_started.elapsed().as_millis();
+            file_read_hash_elapsed_ms += read_hash_elapsed;
             tracing::warn!("Skipping large file (>1MB): {:?}", file_path);
             status
                 .failed_files
                 .push(file_path.to_string_lossy().to_string());
+            emit_index_timing(
+                project_id,
+                "file_read_hash",
+                read_hash_elapsed,
+                files_read,
+                status.total_chunks as u64,
+                status.total_symbols as u64,
+                (total_relation_stats.created + total_relation_stats.failed) as u64,
+                status.failed_files.len() as u64,
+            );
             continue;
         }
 
@@ -407,6 +595,19 @@ async fn do_index_project(
         let file_path_str = file_path.to_string_lossy().to_string();
         let file_hash = blake3::hash(content.as_bytes()).to_hex().to_string();
         hash_buffer.push((file_path_str, file_hash));
+        let read_hash_elapsed = read_hash_started.elapsed().as_millis();
+        file_read_hash_elapsed_ms += read_hash_elapsed;
+        files_read += 1;
+        emit_index_timing(
+            project_id,
+            "file_read_hash",
+            read_hash_elapsed,
+            files_read,
+            status.total_chunks as u64,
+            status.total_symbols as u64,
+            (total_relation_stats.created + total_relation_stats.failed) as u64,
+            status.failed_files.len() as u64,
+        );
 
         // Flush hash buffer periodically to avoid unbounded growth
         if hash_buffer.len() >= HASH_FLUSH_SIZE {
@@ -457,11 +658,18 @@ async fn do_index_project(
         let file_path_for_blocking = file_path.clone();
         let project_id_for_blocking = project_id.to_string();
         parse_set.spawn_blocking(move || {
+            let parse_started = Instant::now();
             let fp_str = file_path_for_blocking.to_string_lossy().to_string();
             let chunks = chunk_file(&file_path_for_blocking, &content, &project_id_for_blocking);
             let (symbols, references) =
                 CodeParser::parse_file(&file_path_for_blocking, &content, &project_id_for_blocking);
-            (chunks, symbols, references, fp_str)
+            (
+                chunks,
+                symbols,
+                references,
+                fp_str,
+                parse_started.elapsed().as_millis(),
+            )
         });
     }
 
@@ -513,11 +721,16 @@ async fn do_index_project(
             .await;
     }
 
+    tracing::info!(project_id = %project_id, phase = "embedding_started", total_chunks = status.total_chunks, total_symbols = status.total_symbols, "Embedding dispatch started");
+
     if !chunk_buffer.is_empty() {
+        let batch = chunk_buffer;
+        let batch_len = batch.len() as u64;
         let _permit = state.db_semaphore.acquire().await;
+        let chunk_write_started = Instant::now();
         let results = state
             .storage
-            .create_code_chunks_batch(chunk_buffer)
+            .create_code_chunks_batch(batch)
             .await
             .map_err(|e| {
                 crate::AppError::Internal(
@@ -527,8 +740,22 @@ async fn do_index_project(
                     .into(),
                 )
             })?;
+        let chunk_write_elapsed = chunk_write_started.elapsed().as_millis();
+        chunk_db_write_elapsed_ms += chunk_write_elapsed;
+        chunks_written += batch_len;
+        emit_index_timing(
+            project_id,
+            "chunk_db_write",
+            chunk_write_elapsed,
+            status.indexed_files as u64,
+            batch_len,
+            status.total_symbols as u64,
+            (total_relation_stats.created + total_relation_stats.failed) as u64,
+            status.failed_files.len() as u64,
+        );
 
         for (id, chunk) in results {
+            let enqueue_started = Instant::now();
             let _ = state
                 .embedding_queue
                 .send(EmbeddingRequest {
@@ -538,22 +765,40 @@ async fn do_index_project(
                     retry_count: 0,
                 })
                 .await;
+            embedding_enqueue_elapsed_ms += enqueue_started.elapsed().as_millis();
+            embeddings_enqueued += 1;
         }
     }
 
     if !symbol_buffer.is_empty() {
         let batch = symbol_buffer;
+        let batch_len = batch.len() as u64;
         let _permit = state.db_semaphore.acquire().await;
+        let symbol_write_started = Instant::now();
         let ids = state
             .storage
             .create_code_symbols_batch(batch.clone())
             .await?;
+        let symbol_write_elapsed = symbol_write_started.elapsed().as_millis();
+        symbol_db_write_elapsed_ms += symbol_write_elapsed;
+        symbols_written += batch_len;
+        emit_index_timing(
+            project_id,
+            "symbol_db_write",
+            symbol_write_elapsed,
+            status.indexed_files as u64,
+            status.total_chunks as u64,
+            batch_len,
+            (total_relation_stats.created + total_relation_stats.failed) as u64,
+            status.failed_files.len() as u64,
+        );
 
         for (id, sym) in ids.iter().zip(batch.iter()) {
             let embed_text = sym
                 .signature
                 .clone()
                 .unwrap_or_else(|| format!("{} {}", sym.symbol_type, sym.name));
+            let enqueue_started = Instant::now();
             let _ = state
                 .embedding_queue
                 .send(EmbeddingRequest {
@@ -563,11 +808,25 @@ async fn do_index_project(
                     retry_count: 0,
                 })
                 .await;
+            embedding_enqueue_elapsed_ms += enqueue_started.elapsed().as_millis();
+            embeddings_enqueued += 1;
         }
     }
 
+    emit_index_timing(
+        project_id,
+        "embedding_enqueue",
+        embedding_enqueue_elapsed_ms,
+        status.indexed_files as u64,
+        status.total_chunks as u64,
+        status.total_symbols as u64,
+        embeddings_enqueued,
+        status.failed_files.len() as u64,
+    );
+
     // Final flush of remaining relations
     if !relation_buffer.is_empty() {
+        let relation_started = Instant::now();
         let stats = create_symbol_relations(
             state.storage.as_ref(),
             project_id,
@@ -578,6 +837,17 @@ async fn do_index_project(
         total_relation_stats.created += stats.created;
         total_relation_stats.failed += stats.failed;
         total_relation_stats.unresolved += stats.unresolved;
+        relation_create_elapsed_ms += relation_started.elapsed().as_millis();
+        emit_index_timing(
+            project_id,
+            "relation_create",
+            relation_started.elapsed().as_millis(),
+            status.indexed_files as u64,
+            status.total_chunks as u64,
+            status.total_symbols as u64,
+            (stats.created + stats.failed) as u64,
+            status.failed_files.len() as u64,
+        );
     }
 
     // Log relation stats
@@ -590,6 +860,8 @@ async fn do_index_project(
         );
     }
 
+    tracing::info!(project_id = %project_id, phase = "projection_refresh_started", "Projection/materialized read-model refresh started");
+
     status.mark_structural_generation_advanced();
     status.status = if status.total_files == 0 {
         status.mark_semantic_generation_caught_up();
@@ -600,13 +872,110 @@ async fn do_index_project(
     status.completed_at = Some(crate::types::Datetime::default());
     status.refresh_lifecycle_states();
 
+    let status_started = Instant::now();
     state.storage.update_index_status(status.clone()).await?;
+    let final_status_elapsed = status_started.elapsed().as_millis();
+    status_update_elapsed_ms += final_status_elapsed;
+    emit_index_timing(
+        project_id,
+        "status_update",
+        final_status_elapsed,
+        status.indexed_files as u64,
+        status.total_chunks as u64,
+        status.total_symbols as u64,
+        (total_relation_stats.created + total_relation_stats.failed) as u64,
+        status.failed_files.len() as u64,
+    );
 
     // Rebuild in-memory BM25 index for this project from the freshly inserted chunks
+    let bm25_started = Instant::now();
     state
         .code_search
         .rebuild_from_storage(state.storage.as_ref(), project_id)
         .await;
+    emit_index_timing(
+        project_id,
+        "bm25_rebuild",
+        bm25_started.elapsed().as_millis(),
+        status.indexed_files as u64,
+        status.total_chunks as u64,
+        status.total_symbols as u64,
+        (total_relation_stats.created + total_relation_stats.failed) as u64,
+        status.failed_files.len() as u64,
+    );
+
+    emit_index_timing(
+        project_id,
+        "file_read_hash_total",
+        file_read_hash_elapsed_ms,
+        files_read,
+        status.total_chunks as u64,
+        status.total_symbols as u64,
+        (total_relation_stats.created + total_relation_stats.failed) as u64,
+        status.failed_files.len() as u64,
+    );
+    emit_index_timing(
+        project_id,
+        "parse_chunk_total",
+        parse_chunk_elapsed_ms,
+        status.indexed_files as u64,
+        status.total_chunks as u64,
+        status.total_symbols as u64,
+        (total_relation_stats.created + total_relation_stats.failed) as u64,
+        status.failed_files.len() as u64,
+    );
+    emit_index_timing(
+        project_id,
+        "chunk_db_write_total",
+        chunk_db_write_elapsed_ms,
+        status.indexed_files as u64,
+        chunks_written,
+        status.total_symbols as u64,
+        (total_relation_stats.created + total_relation_stats.failed) as u64,
+        status.failed_files.len() as u64,
+    );
+    emit_index_timing(
+        project_id,
+        "symbol_db_write_total",
+        symbol_db_write_elapsed_ms,
+        status.indexed_files as u64,
+        status.total_chunks as u64,
+        symbols_written,
+        (total_relation_stats.created + total_relation_stats.failed) as u64,
+        status.failed_files.len() as u64,
+    );
+    emit_index_timing(
+        project_id,
+        "relation_create_total",
+        relation_create_elapsed_ms,
+        status.indexed_files as u64,
+        status.total_chunks as u64,
+        status.total_symbols as u64,
+        (total_relation_stats.created + total_relation_stats.failed) as u64,
+        status.failed_files.len() as u64,
+    );
+    emit_index_timing(
+        project_id,
+        "status_update_total",
+        status_update_elapsed_ms,
+        status.indexed_files as u64,
+        status.total_chunks as u64,
+        status.total_symbols as u64,
+        (total_relation_stats.created + total_relation_stats.failed) as u64,
+        status.failed_files.len() as u64,
+    );
+    emit_index_timing(
+        project_id,
+        "total_index",
+        total_started.elapsed().as_millis(),
+        status.indexed_files as u64,
+        status.total_chunks as u64,
+        status.total_symbols as u64,
+        (total_relation_stats.created + total_relation_stats.failed) as u64,
+        status.failed_files.len() as u64,
+    );
+
+    tracing::info!(project_id = %project_id, phase = "final_persistence_completed", status = %status.status, "One-shot code index task completed");
 
     Ok(status)
 }
@@ -888,6 +1257,63 @@ mod tests {
     use crate::test_utils::TestContext;
     use std::collections::HashSet;
     use std::fs;
+    use std::sync::{Arc, Mutex, OnceLock};
+    use tracing::field::{Field, Visit};
+    use tracing_subscriber::layer::Context;
+    use tracing_subscriber::{Layer, Registry};
+
+    static TIMING_PHASES: OnceLock<Arc<Mutex<Vec<String>>>> = OnceLock::new();
+
+    struct TimingPhaseLayer {
+        phases: Arc<Mutex<Vec<String>>>,
+    }
+
+    impl<S> Layer<S> for TimingPhaseLayer
+    where
+        S: tracing::Subscriber,
+    {
+        fn on_event(&self, event: &tracing::Event<'_>, _ctx: Context<'_, S>) {
+            let mut visitor = PhaseVisitor::default();
+            event.record(&mut visitor);
+            if let Some(phase) = visitor.phase {
+                self.phases.lock().unwrap().push(phase);
+            }
+        }
+    }
+
+    #[derive(Default)]
+    struct PhaseVisitor {
+        phase: Option<String>,
+    }
+
+    impl Visit for PhaseVisitor {
+        fn record_str(&mut self, field: &Field, value: &str) {
+            if field.name() == "phase" {
+                self.phase = Some(value.to_string());
+            }
+        }
+
+        fn record_debug(&mut self, field: &Field, value: &dyn std::fmt::Debug) {
+            if field.name() == "phase" {
+                self.phase = Some(format!("{value:?}").trim_matches('"').to_string());
+            }
+        }
+    }
+
+    fn init_timing_phase_capture() -> Arc<Mutex<Vec<String>>> {
+        let phases = TIMING_PHASES
+            .get_or_init(|| {
+                let phases = Arc::new(Mutex::new(Vec::new()));
+                let subscriber = Registry::default().with(TimingPhaseLayer {
+                    phases: phases.clone(),
+                });
+                let _ = tracing::subscriber::set_global_default(subscriber);
+                phases
+            })
+            .clone();
+        phases.lock().unwrap().clear();
+        phases
+    }
 
     #[tokio::test]
     async fn test_indexer_batching() {
@@ -1024,7 +1450,9 @@ mod tests {
             fs::write(path, "fn ignored() {}\n").unwrap();
         }
 
-        let status = index_project(ctx.state.clone(), &project_dir).await.unwrap();
+        let status = index_project(ctx.state.clone(), &project_dir)
+            .await
+            .unwrap();
         assert_eq!(status.status, IndexState::EmbeddingPending);
         assert_eq!(status.total_files, mixed_files.len() as u32);
         assert!(
@@ -1070,7 +1498,8 @@ mod tests {
             .get_project_symbols(&status.project_id)
             .await
             .unwrap();
-        let symbol_names: HashSet<String> = symbols.iter().map(|symbol| symbol.name.clone()).collect();
+        let symbol_names: HashSet<String> =
+            symbols.iter().map(|symbol| symbol.name.clone()).collect();
 
         for expected in [
             "Worker",
@@ -1088,6 +1517,48 @@ mod tests {
                 symbol_names.contains(expected),
                 "expected symbol '{expected}' in indexed mixed mobile fixture, got {:?}",
                 symbol_names
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn index_project_emits_baseline_timing_events_for_fixture() {
+        let captured_phases = init_timing_phase_capture();
+        let ctx = TestContext::new().await;
+        let project_dir = ctx._temp_dir.path().join("phase-checkpoints-project");
+        fs::create_dir_all(&project_dir).unwrap();
+        fs::write(
+            project_dir.join("lib.rs"),
+            "pub fn alpha() -> i32 { beta() }\nfn beta() -> i32 { 1 }\n",
+        )
+        .unwrap();
+
+        let status = index_project(ctx.state.clone(), &project_dir)
+            .await
+            .unwrap();
+
+        assert_eq!(status.status, IndexState::EmbeddingPending);
+        assert_eq!(status.total_files, 1);
+        assert!(status.total_chunks >= 1);
+        assert!(status.total_symbols >= 2);
+
+        let phases = captured_phases.lock().unwrap().clone();
+        for required_phase in [
+            "cleanup",
+            "scan",
+            "file_read_hash",
+            "parse_chunk",
+            "chunk_db_write",
+            "symbol_db_write",
+            "embedding_enqueue",
+            "status_update",
+            "bm25_rebuild",
+            "total_index",
+        ] {
+            eprintln!("captured_timing_phase={required_phase}");
+            assert!(
+                phases.iter().any(|phase| phase == required_phase),
+                "missing timing phase {required_phase}; captured phases: {phases:?}"
             );
         }
     }
