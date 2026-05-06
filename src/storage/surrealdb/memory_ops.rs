@@ -126,9 +126,7 @@ pub(super) async fn create_memory(db: &Surreal<Db>, mut memory: Memory) -> Resul
 }
 
 pub(super) async fn get_memory(db: &Surreal<Db>, id: &str) -> Result<Option<Memory>> {
-    let sql = format!(
-        "SELECT {MEMORY_SELECT} FROM memories WHERE id = type::record($id) LIMIT 1"
-    );
+    let sql = format!("SELECT {MEMORY_SELECT} FROM memories WHERE id = type::record($id) LIMIT 1");
     let mut response = db
         .query(&sql)
         .bind(("id", format!("memories:{id}")))
