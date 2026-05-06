@@ -821,11 +821,11 @@ impl CodeSearchEngine {
     ///
     /// Uses the same streaming paginated fetch as `load_all_from_storage` to
     /// avoid a transient memory spike.
-    pub async fn rebuild_from_storage(
+    pub async fn try_rebuild_from_storage(
         &self,
         storage: &impl crate::storage::StorageBackend,
         project_id: &str,
-    ) {
+    ) -> crate::Result<usize> {
         match self.rebuild_project_streaming(storage, project_id).await {
             Ok(count) => {
                 tracing::info!(
@@ -833,6 +833,7 @@ impl CodeSearchEngine {
                     chunks = count,
                     "BM25 index rebuilt for project"
                 );
+                Ok(count)
             }
             Err(e) => {
                 tracing::warn!(
@@ -840,8 +841,17 @@ impl CodeSearchEngine {
                     error = %e,
                     "Failed to rebuild BM25 index for project"
                 );
+                Err(e)
             }
         }
+    }
+
+    pub async fn rebuild_from_storage(
+        &self,
+        storage: &impl crate::storage::StorageBackend,
+        project_id: &str,
+    ) {
+        let _ = self.try_rebuild_from_storage(storage, project_id).await;
     }
 }
 

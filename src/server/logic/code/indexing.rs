@@ -694,7 +694,9 @@ pub async fn index_project(
             );
         }
         let path = std::path::Path::new(&path_clone);
-        match crate::codebase::index_project(state_clone.clone(), path).await {
+        match crate::codebase::indexer::index_project_after_admission(state_clone.clone(), path)
+            .await
+        {
             Ok(status) => {
                 let operation_id = state_clone
                     .progress

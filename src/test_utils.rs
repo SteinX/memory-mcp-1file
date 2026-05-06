@@ -23,6 +23,25 @@ impl TestContext {
     pub async fn new_with_registry_policy(
         project_registry_policy: crate::codebase::ProjectRegistryPolicy,
     ) -> Self {
+        Self::new_with_registry_policy_and_code_index_config(
+            project_registry_policy,
+            crate::config::CodeIndexConfig::default(),
+        )
+        .await
+    }
+
+    pub async fn new_with_code_index_config(config: crate::config::CodeIndexConfig) -> Self {
+        Self::new_with_registry_policy_and_code_index_config(
+            crate::codebase::ProjectRegistryPolicy::default(),
+            config,
+        )
+        .await
+    }
+
+    async fn new_with_registry_policy_and_code_index_config(
+        project_registry_policy: crate::codebase::ProjectRegistryPolicy,
+        code_index: crate::config::CodeIndexConfig,
+    ) -> Self {
         let temp_dir = tempfile::tempdir().expect("Failed to create temp dir");
         let db_path = temp_dir.path();
 
@@ -76,6 +95,7 @@ impl TestContext {
             manifest_diff_interval_mins: 10,
             allowed_project_roots: None,
             max_managed_projects: 5,
+            code_index,
         };
 
         let (shutdown_tx, _) = tokio::sync::watch::channel(false);

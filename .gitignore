@@ -25,3 +25,6 @@ _vida
 .sisyphus
 npm/bin/test_ignore.rs
 test_qwen_loading.rs
+
+# Local auth/session file (never commit)
+.redInfo

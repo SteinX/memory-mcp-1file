@@ -492,6 +492,67 @@ Environment variables or CLI args:
 | `--allowed-project-roots` | `ALLOWED_PROJECT_ROOTS` | *(None)* | Optional comma-delimited allowlist for server-visible project roots. When set, startup/manual registration rejects roots outside this allowlist with `reason_code=path_not_allowed`. |
 | `--max-managed-projects` | `MAX_MANAGED_PROJECTS` | `5` | Maximum number of managed lifecycle projects in registry. Additional registrations are rejected with `reason_code=max_project_limit`. |
 
+### 🔧 Code Intelligence Indexing Pipeline
+
+The indexing pipeline has been partially concurrent since its initial implementation. The variables below expose a bounded staged pipeline option and let you tune concurrency, back-pressure, and BM25 finalization behavior. All values are env-only (no CLI arg).
+
+> [!NOTE]
+> `CODE_INDEX_PIPELINE_MODE=legacy` is the default and the rollback-safe path. `staged` is available for validation but is not the default; do not switch the default based on small-tier benchmark evidence alone. Medium/large tier and Docker RSS evidence are required before any default-change recommendation.
+
+| Env | Default | Accepted values | Description |
+|-----|---------|-----------------|-------------|
+| `CODE_INDEX_PIPELINE_MODE` | `legacy` | `legacy`, `staged` | Pipeline mode. `legacy` preserves the original partially-concurrent path. `staged` enables the bounded staged pipeline with ordered result delivery. Use `legacy` for rollback safety. |
+| `CODE_INDEX_READ_WORKERS` | `2` | integer >= 1 | Number of concurrent file-read workers. Increase on I/O-bound machines; keep low in Docker-constrained environments. |
+| `CODE_INDEX_PARSE_WORKERS` | `max(2, min(cpu_count/2, 4))` | integer >= 2 | Number of concurrent parse workers. Defaults to half the available CPU count, capped at 4. Raising this on CPU-bound machines may help; raising it beyond available cores wastes memory. |
+| `CODE_INDEX_COMMIT_BATCH_SIZE` | `100` | integer >= 1 | Number of parsed chunks committed to storage per batch. Larger values reduce DB round-trips but increase peak memory during a commit. |
+| `CODE_INDEX_MAX_INFLIGHT_FILES` | `64` | integer >= 1 | Maximum number of files in flight through the pipeline at once. Acts as a back-pressure bound. |
+| `CODE_INDEX_MAX_INFLIGHT_BYTES` | `134217728` (128 MB) | integer >= 1 | Maximum total bytes in flight through the pipeline. Acts as a memory-pressure bound. Keep this well below your container memory limit. |
+| `CODE_INDEX_STATUS_FLUSH_MS` | `1000` | integer >= 1 | Minimum interval (ms) between indexed-file progress status flushes. Lower values give more granular progress at the cost of more DB writes. |
+| `CODE_INDEX_RELATION_BATCH_SIZE` | `5000` | integer >= 1 | Number of symbol relations written per batch during final relation finalization. |
+| `CODE_INDEX_BM25_MODE` | `final_rebuild` | `final_rebuild`, `incremental` | BM25 finalization strategy. `final_rebuild` (default) rebuilds the lexical index from storage after all chunks are committed and produces a deterministic index state. `incremental` is accepted by the config parser but is not yet consumed by the production indexer; setting it has no effect beyond being stored. |
+
+#### Rollout and rollback
+
+To try the staged pipeline:
+
+```bash
+CODE_INDEX_PIPELINE_MODE=staged memory-mcp
+```
+
+To revert to the legacy path (the default):
+
+```bash
+CODE_INDEX_PIPELINE_MODE=legacy memory-mcp
+# or simply omit the variable; legacy is the default
+```
+
+#### Embedding concurrency caution
+
+The embedding pipeline runs concurrently with indexing. Raising `CODE_INDEX_MAX_INFLIGHT_BYTES` or `CODE_INDEX_PARSE_WORKERS` significantly while the embedding model is active increases peak RSS. In a 3 GB Docker container, keep `CODE_INDEX_MAX_INFLIGHT_BYTES` at or below 128 MB and `CODE_INDEX_PARSE_WORKERS` at or below 4 to leave headroom for the embedding model (~200 MB to 1.2 GB depending on model choice).
+
+#### Benchmark and verification commands
+
+Run the unit test suite for the indexing subsystem:
+
+```bash
+cargo test --lib codebase
+```
+
+Run the MCP regression harness (validates tool-name compatibility and basic tool surface):
+
+```bash
+python3 scripts/task14_mcp_regression_harness.py
+```
+
+Run the deterministic code-retrieval benchmark for both pipeline modes (small tier):
+
+```bash
+CODE_INDEX_PIPELINE_MODE=legacy python3 evals/code_retrieval_benchmark.py --tier small
+CODE_INDEX_PIPELINE_MODE=staged python3 evals/code_retrieval_benchmark.py --tier small
+```
+
+Small-tier evidence (5 files, 190 chunks, 160 symbols): staged preserved hit-rate and failure-bucket parity versus legacy while improving MRR, NDCG, and query latency. Wall-clock indexing time was effectively equal at this scale. Medium/large tier and Docker RSS evidence have not been collected yet; do not treat small-tier results as a general speedup claim.
+
 ### 🧠 Available Models
 
 You can switch the embedding model using the `--model` arg or `EMBEDDING_MODEL` env var.
@@ -614,6 +675,35 @@ If you receive empty results when searching code, check the following:
 3.  **Indexing Status**: Run `project_info(action="stats", project_id="...")` to check if indexing is still in progress or if there are errors.
 4.  **Diagnostic Info**: Use `project_info(action="list")` to see which projects the server has discovered and their current state (e.g., `degraded`, `missing`).
 5.  **Server-Visible Paths**: Remember that HTTP clients must provide paths that are **visible to the server**. The server cannot access paths that exist only on your local client machine unless they are mounted.
+
+### `already_running` response when calling `index_project`
+
+A same-project full-index request returns `already_running` when another indexing task for the same project is still active. This is intentional: the admission guard prevents a second run from clearing chunks and symbols while the first run is still writing them.
+
+Wait for the active task to finish (poll `project_info(action="status", project_id="...")` until `state` is no longer `indexing` or `in_progress`), then retry. If the status is stuck and you are certain no task is running, use `force=true` and `confirm_failed_restart=true` to override the guard.
+
+### Interrupted or lost one-shot indexing task
+
+If the server process restarts while a full-index task is running, the task is lost. On the next `project_info(action="status")` call you will see:
+
+- `background_task.state = "unknown_after_restart"` if the restart happened after the initial `Indexing` status was persisted.
+- `background_task.state = "failed"`, `retryable = true`, `reason_code = "lost_one_shot_indexing_task_after_restart"`, and `background_task.phase = "before_file_enumeration"` if the restart happened before file enumeration began.
+
+In both cases, retry with `index_project(path="...", force=true, confirm_failed_restart=true)` to start a fresh full index.
+
+### BM25 finalization failure
+
+If `project_info(action="stats")` reports a BM25 failure after indexing completes, the lexical index may be in a degraded state. Vector search (`recall_code` with `mode="vector"`) still works. To rebuild the BM25 index, run a fresh full index with `force=true` and `confirm_failed_restart=true`; `final_rebuild` is the only active BM25 finalization strategy and will reconstruct the lexical index from committed chunks.
+
+### Memory pressure during indexing
+
+If the server OOM-kills or RSS grows unexpectedly during indexing, reduce the in-flight bounds:
+
+```bash
+CODE_INDEX_MAX_INFLIGHT_FILES=32 CODE_INDEX_MAX_INFLIGHT_BYTES=67108864 memory-mcp
+```
+
+The defaults (64 files, 128 MB) are conservative for a 3 GB Docker container, but the embedding model adds 200 MB to 1.2 GB on top of the indexing pipeline. If you are using `qwen3` (1.2 GB model) in a 3 GB container, consider reducing `CODE_INDEX_MAX_INFLIGHT_BYTES` to 64 MB or switching to a lighter model like `gemma` (~195 MB).
 
 ## License
 

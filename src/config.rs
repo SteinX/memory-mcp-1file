@@ -2,6 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU32, AtomicUsize};
 use std::sync::Arc;
+use std::str::FromStr;
 
 use tokio::sync::{watch, RwLock, Semaphore};
 
@@ -11,6 +12,131 @@ use crate::forgetting::access::AccessTracker;
 use crate::forgetting::config::ForgettingConfig;
 use crate::search::{CodeSearchEngine, MemorySearchEngine};
 use crate::storage::SurrealStorage;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CodeIndexPipelineMode {
+    Legacy,
+    Staged,
+}
+
+impl Default for CodeIndexPipelineMode {
+    fn default() -> Self {
+        // Rollout stays rollback-safe until benchmark validation flips it.
+        Self::Legacy
+    }
+}
+
+impl FromStr for CodeIndexPipelineMode {
+    type Err = ();
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "legacy" => Ok(Self::Legacy),
+            "staged" => Ok(Self::Staged),
+            _ => Err(()),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CodeIndexBm25Mode {
+    FinalRebuild,
+    Incremental,
+}
+
+impl Default for CodeIndexBm25Mode {
+    fn default() -> Self {
+        Self::FinalRebuild
+    }
+}
+
+impl FromStr for CodeIndexBm25Mode {
+    type Err = ();
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "final_rebuild" => Ok(Self::FinalRebuild),
+            "incremental" => Ok(Self::Incremental),
+            _ => Err(()),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct CodeIndexConfig {
+    pub pipeline_mode: CodeIndexPipelineMode,
+    pub read_workers: usize,
+    pub parse_workers: usize,
+    pub commit_batch_size: usize,
+    pub max_inflight_files: usize,
+    pub max_inflight_bytes: usize,
+    pub status_flush_ms: u64,
+    pub relation_batch_size: usize,
+    pub bm25_mode: CodeIndexBm25Mode,
+}
+
+impl CodeIndexConfig {
+    fn parse_env<T, F>(lookup: &F, key: &str) -> Option<T>
+    where
+        T: FromStr,
+        F: Fn(&str) -> Option<String>,
+    {
+        lookup(key)?.parse().ok()
+    }
+
+    fn parse_env_min<T, F>(lookup: &F, key: &str, min: T, default: T) -> T
+    where
+        T: FromStr + Ord + Copy,
+        F: Fn(&str) -> Option<String>,
+    {
+        Self::parse_env::<T, F>(lookup, key)
+            .map(|value| value.max(min))
+            .unwrap_or(default)
+    }
+
+    pub fn from_env() -> Self {
+        Self::from_env_with(|key| std::env::var(key).ok())
+    }
+
+    pub fn from_env_with<F>(lookup: F) -> Self
+    where
+        F: Fn(&str) -> Option<String>,
+    {
+        let defaults = Self::default();
+
+        Self {
+            pipeline_mode: Self::parse_env::<CodeIndexPipelineMode, _>(&lookup, "CODE_INDEX_PIPELINE_MODE")
+                .unwrap_or(defaults.pipeline_mode),
+            read_workers: Self::parse_env_min(&lookup, "CODE_INDEX_READ_WORKERS", 1, defaults.read_workers),
+            // Keep parse workers bounded for Docker-sized machines.
+            parse_workers: Self::parse_env_min(&lookup, "CODE_INDEX_PARSE_WORKERS", 2, defaults.parse_workers),
+            commit_batch_size: Self::parse_env_min(&lookup, "CODE_INDEX_COMMIT_BATCH_SIZE", 1, defaults.commit_batch_size),
+            max_inflight_files: Self::parse_env_min(&lookup, "CODE_INDEX_MAX_INFLIGHT_FILES", 1, defaults.max_inflight_files),
+            max_inflight_bytes: Self::parse_env_min(&lookup, "CODE_INDEX_MAX_INFLIGHT_BYTES", 1, defaults.max_inflight_bytes),
+            status_flush_ms: Self::parse_env_min(&lookup, "CODE_INDEX_STATUS_FLUSH_MS", 1, defaults.status_flush_ms),
+            relation_batch_size: Self::parse_env_min(&lookup, "CODE_INDEX_RELATION_BATCH_SIZE", 1, defaults.relation_batch_size),
+            bm25_mode: Self::parse_env::<CodeIndexBm25Mode, _>(&lookup, "CODE_INDEX_BM25_MODE")
+                .unwrap_or(defaults.bm25_mode),
+        }
+    }
+}
+
+impl Default for CodeIndexConfig {
+    fn default() -> Self {
+        Self {
+            // Conservative defaults for bounded Docker-sized deployments.
+            pipeline_mode: CodeIndexPipelineMode::default(),
+            read_workers: 2,
+            parse_workers: std::cmp::max(2, std::cmp::min(num_cpus::get() / 2, 4)),
+            commit_batch_size: 100,
+            max_inflight_files: 64,
+            max_inflight_bytes: 128 * 1024 * 1024,
+            status_flush_ms: 1000,
+            relation_batch_size: 5000,
+            bm25_mode: CodeIndexBm25Mode::default(),
+        }
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct AppConfig {
@@ -57,6 +183,8 @@ pub struct AppConfig {
     /// Maximum number of managed projects in the in-memory lifecycle registry.
     /// Default: 5.
     pub max_managed_projects: usize,
+    /// Conservative code-index pipeline defaults and rollout switches.
+    pub code_index: CodeIndexConfig,
 }
 
 impl Default for AppConfig {
@@ -78,6 +206,7 @@ impl Default for AppConfig {
             manifest_diff_interval_mins: 10,
             allowed_project_roots: None,
             max_managed_projects: 5,
+            code_index: CodeIndexConfig::default(),
         }
     }
 }
@@ -200,5 +329,64 @@ impl AppState {
     /// Background tasks should select on `rx.changed()` and exit when `*rx.borrow() == true`.
     pub fn shutdown_rx(&self) -> watch::Receiver<bool> {
         self.shutdown_tx.subscribe()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn code_index_defaults_are_conservative() {
+        let config = CodeIndexConfig::default();
+
+        assert_eq!(config.pipeline_mode, CodeIndexPipelineMode::Legacy);
+        assert_eq!(config.read_workers, 2);
+        assert_eq!(
+            config.parse_workers,
+            std::cmp::max(2, std::cmp::min(num_cpus::get() / 2, 4))
+        );
+        assert_eq!(config.commit_batch_size, 100);
+        assert_eq!(config.max_inflight_files, 64);
+        assert_eq!(config.max_inflight_bytes, 128 * 1024 * 1024);
+        assert_eq!(config.status_flush_ms, 1000);
+        assert_eq!(config.relation_batch_size, 5000);
+        assert_eq!(config.bm25_mode, CodeIndexBm25Mode::FinalRebuild);
+    }
+
+    #[test]
+    fn code_index_env_overrides_apply_and_invalid_values_fallback() {
+        let config = CodeIndexConfig::from_env_with(|key| match key {
+            "CODE_INDEX_PIPELINE_MODE" => Some("staged".to_string()),
+            "CODE_INDEX_READ_WORKERS" => Some("4".to_string()),
+            "CODE_INDEX_PARSE_WORKERS" => Some("0".to_string()),
+            "CODE_INDEX_COMMIT_BATCH_SIZE" => Some("256".to_string()),
+            "CODE_INDEX_MAX_INFLIGHT_FILES" => Some("128".to_string()),
+            "CODE_INDEX_MAX_INFLIGHT_BYTES" => Some("not-a-number".to_string()),
+            "CODE_INDEX_STATUS_FLUSH_MS" => Some("250".to_string()),
+            "CODE_INDEX_RELATION_BATCH_SIZE" => Some("9000".to_string()),
+            "CODE_INDEX_BM25_MODE" => Some("incremental".to_string()),
+            _ => None,
+        });
+
+        assert_eq!(config.pipeline_mode, CodeIndexPipelineMode::Staged);
+        assert_eq!(config.read_workers, 4);
+        assert_eq!(config.parse_workers, 2);
+        assert_eq!(config.commit_batch_size, 256);
+        assert_eq!(config.max_inflight_files, 128);
+        assert_eq!(config.max_inflight_bytes, 128 * 1024 * 1024);
+        assert_eq!(config.status_flush_ms, 250);
+        assert_eq!(config.relation_batch_size, 9000);
+        assert_eq!(config.bm25_mode, CodeIndexBm25Mode::Incremental);
+    }
+
+    #[test]
+    fn code_index_legacy_mode_is_accepted() {
+        let config = CodeIndexConfig::from_env_with(|key| match key {
+            "CODE_INDEX_PIPELINE_MODE" => Some("legacy".to_string()),
+            _ => None,
+        });
+
+        assert_eq!(config.pipeline_mode, CodeIndexPipelineMode::Legacy);
     }
 }
