@@ -3,7 +3,8 @@ pub mod languages;
 
 use std::path::Path;
 
-use crate::codebase::scanner::detect_language;
+use crate::codebase::scanner::detect_language_with_content;
+use crate::types::Language;
 use crate::types::symbol::{CodeReference, CodeSymbol};
 
 use extractor::Extractor;
@@ -11,12 +12,16 @@ use extractor::Extractor;
 pub struct CodeParser;
 
 impl CodeParser {
+    pub(crate) fn detect_language_for_parse(path: &Path, content: &str) -> Language {
+        detect_language_with_content(path, content)
+    }
+
     pub fn parse_file(
         path: &Path,
         content: &str,
         project_id: &str,
     ) -> (Vec<CodeSymbol>, Vec<CodeReference>) {
-        let language = detect_language(path);
+        let language = Self::detect_language_for_parse(path, content);
         let Some(mut extractor) = Extractor::new(language) else {
             return (vec![], vec![]);
         };
@@ -28,7 +33,7 @@ impl CodeParser {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::symbol::CodeRelationType;
+    use crate::types::symbol::{CodeRelationType, SymbolType};
     use std::path::PathBuf;
 
     #[test]
@@ -37,6 +42,26 @@ mod tests {
         let path = PathBuf::from("test.rs");
         let (symbols, _) = CodeParser::parse_file(&path, content, "test");
         assert!(!symbols.is_empty());
+    }
+
+    #[test]
+    fn parser_flow_uses_content_aware_header_detection() {
+        let objc_header = "@interface ViewController : NSObject\n@end";
+        let cpp_header = "namespace demo { template <typename T> class Box {}; }";
+        let c_header = "typedef struct { int count; } Counter;";
+
+        assert_eq!(
+            CodeParser::detect_language_for_parse(Path::new("ViewController.h"), objc_header),
+            Language::ObjectiveC
+        );
+        assert_eq!(
+            CodeParser::detect_language_for_parse(Path::new("box.h"), cpp_header),
+            Language::Cpp
+        );
+        assert_eq!(
+            CodeParser::detect_language_for_parse(Path::new("counter.h"), c_header),
+            Language::C
+        );
     }
 
     #[test]
@@ -492,6 +517,324 @@ class AdminRepository extends UserRepository implements Auditable, Cacheable {
             implements.iter().any(|i| i.to_symbol == "LoggingMixin"),
             "Should find 'with LoggingMixin' (as implements)"
         );
+    }
+
+    #[test]
+    fn test_c_parser_contract_extracts_syntax_symbols_and_references() {
+        let content = r#"
+#include <stdio.h>
+#include "worker.h"
+
+typedef unsigned long WorkerId;
+
+struct Worker {
+    WorkerId id;
+};
+
+enum WorkerState {
+    WorkerIdle,
+    WorkerBusy,
+};
+
+static int helper(void) {
+    return puts("help");
+}
+
+int run_worker(struct Worker *worker) {
+    helper();
+    printf("%lu", worker->id);
+    return 0;
+}
+"#;
+        let path = PathBuf::from("src/worker.c");
+        let (symbols, refs) = CodeParser::parse_file(&path, content, "test");
+
+        println!("=== C CONTRACT SYMBOLS ({}) ===", symbols.len());
+        print_symbols(&symbols);
+        println!("\n=== C CONTRACT REFERENCES ({}) ===", refs.len());
+        print_refs(&refs);
+
+        assert_symbol(&symbols, "WorkerId", SymbolType::Struct);
+        assert_symbol(&symbols, "Worker", SymbolType::Struct);
+        assert_symbol(&symbols, "WorkerState", SymbolType::Enum);
+        assert_symbol(&symbols, "helper", SymbolType::Function);
+        assert_symbol(&symbols, "run_worker", SymbolType::Function);
+        assert_ref(&refs, CodeRelationType::Imports, "stdio.h");
+        assert_ref(&refs, CodeRelationType::Imports, "worker.h");
+        assert_ref(&refs, CodeRelationType::Calls, "helper");
+        assert_ref(&refs, CodeRelationType::Calls, "printf");
+    }
+
+    #[test]
+    fn test_cpp_parser_contract_extracts_syntax_symbols_and_references() {
+        let content = r#"
+#include <vector>
+#include "engine.hpp"
+
+namespace app {
+enum class Mode { Idle, Running };
+
+class Engine {
+public:
+    Engine();
+    void start();
+};
+
+Engine::Engine() {}
+
+void Engine::start() {
+    tick();
+}
+
+void tick() {
+    log_event();
+}
+}
+
+int main() {
+    app::Engine engine;
+    engine.start();
+    return 0;
+}
+"#;
+        let path = PathBuf::from("src/engine.cpp");
+        let (symbols, refs) = CodeParser::parse_file(&path, content, "test");
+
+        println!("=== C++ CONTRACT SYMBOLS ({}) ===", symbols.len());
+        print_symbols(&symbols);
+        println!("\n=== C++ CONTRACT REFERENCES ({}) ===", refs.len());
+        print_refs(&refs);
+
+        assert_symbol(&symbols, "app", SymbolType::Module);
+        assert_symbol(&symbols, "Mode", SymbolType::Enum);
+        assert_symbol(&symbols, "Engine", SymbolType::Class);
+        assert_symbol(&symbols, "Engine", SymbolType::Method);
+        assert_symbol(&symbols, "start", SymbolType::Method);
+        assert_symbol(&symbols, "tick", SymbolType::Function);
+        assert_symbol(&symbols, "main", SymbolType::Function);
+        assert_ref(&refs, CodeRelationType::Imports, "vector");
+        assert_ref(&refs, CodeRelationType::Imports, "engine.hpp");
+        assert_ref(&refs, CodeRelationType::Calls, "tick");
+        assert_ref(&refs, CodeRelationType::Calls, "log_event");
+        assert_ref(&refs, CodeRelationType::Calls, "start");
+    }
+
+    #[test]
+    fn test_swift_parser_contract_extracts_syntax_symbols_and_references() {
+        let content = r#"
+import Foundation
+import SwiftUI
+
+protocol Renderable {
+    func render()
+}
+
+struct Model {
+    let id: String
+}
+
+enum ScreenState {
+    case loading
+    case ready
+}
+
+class ScreenController: Renderable {
+    init(model: Model) {
+        configure(model)
+    }
+
+    func render() {
+        draw()
+    }
+}
+
+extension ScreenController {
+    func refresh() {
+        render()
+    }
+}
+
+func bootstrap() {
+    ScreenController(model: Model(id: "1")).refresh()
+}
+"#;
+        let path = PathBuf::from("Sources/App/ScreenController.swift");
+        let (symbols, refs) = CodeParser::parse_file(&path, content, "test");
+
+        println!("=== SWIFT CONTRACT SYMBOLS ({}) ===", symbols.len());
+        print_symbols(&symbols);
+        println!("\n=== SWIFT CONTRACT REFERENCES ({}) ===", refs.len());
+        print_refs(&refs);
+
+        assert_symbol(&symbols, "Renderable", SymbolType::Interface);
+        assert_symbol(&symbols, "Model", SymbolType::Struct);
+        assert_symbol(&symbols, "ScreenState", SymbolType::Enum);
+        assert_symbol(&symbols, "ScreenController", SymbolType::Class);
+        assert_symbol(&symbols, "init", SymbolType::Method);
+        assert_symbol(&symbols, "render", SymbolType::Method);
+        assert_symbol(&symbols, "refresh", SymbolType::Method);
+        assert_symbol(&symbols, "bootstrap", SymbolType::Function);
+        assert_ref(&refs, CodeRelationType::Imports, "Foundation");
+        assert_ref(&refs, CodeRelationType::Imports, "SwiftUI");
+        assert_ref(&refs, CodeRelationType::Calls, "configure");
+        assert_ref(&refs, CodeRelationType::Calls, "draw");
+        assert_ref(&refs, CodeRelationType::Calls, "render");
+        assert_ref(&refs, CodeRelationType::Calls, "refresh");
+    }
+
+    #[test]
+    fn test_kotlin_parser_contract_extracts_syntax_symbols_and_references() {
+        let content = r#"
+package com.example.app
+
+import kotlinx.coroutines.delay
+import kotlin.time.Duration
+
+interface Repository {
+    suspend fun load(): String
+}
+
+class UserRepository : Repository {
+    companion object {
+        fun create(): UserRepository = UserRepository()
+    }
+
+    override suspend fun load(): String {
+        delay(1)
+        return fetchUser()
+    }
+}
+
+object UserCache {
+    fun clear() {
+        println("clear")
+    }
+}
+
+suspend fun String.refreshWith(repository: Repository): String {
+    return repository.load()
+}
+
+fun fetchUser(): String = "user"
+"#;
+        let path = PathBuf::from("src/main/kotlin/com/example/app/UserRepository.kt");
+        let (symbols, refs) = CodeParser::parse_file(&path, content, "test");
+
+        println!("=== KOTLIN CONTRACT SYMBOLS ({}) ===", symbols.len());
+        print_symbols(&symbols);
+        println!("\n=== KOTLIN CONTRACT REFERENCES ({}) ===", refs.len());
+        print_refs(&refs);
+
+        assert_symbol(&symbols, "com.example.app", SymbolType::Module);
+        assert_symbol(&symbols, "Repository", SymbolType::Interface);
+        assert_symbol(&symbols, "UserRepository", SymbolType::Class);
+        assert_symbol(&symbols, "Companion", SymbolType::Class);
+        assert_symbol(&symbols, "UserCache", SymbolType::Class);
+        assert_symbol(&symbols, "create", SymbolType::Function);
+        assert_symbol(&symbols, "load", SymbolType::Method);
+        assert_symbol(&symbols, "refreshWith", SymbolType::Function);
+        assert_symbol(&symbols, "fetchUser", SymbolType::Function);
+        assert_ref(&refs, CodeRelationType::Imports, "kotlinx.coroutines.delay");
+        assert_ref(&refs, CodeRelationType::Imports, "kotlin.time.Duration");
+        assert_ref(&refs, CodeRelationType::Calls, "delay");
+        assert_ref(&refs, CodeRelationType::Calls, "fetchUser");
+        assert_ref(&refs, CodeRelationType::Calls, "load");
+        assert_ref(&refs, CodeRelationType::Calls, "println");
+    }
+
+    #[test]
+    fn test_objective_c_parser_contract_uses_gate_or_fallback_extraction() {
+        let content = r#"
+#import <Foundation/Foundation.h>
+#import "Worker.h"
+
+@protocol WorkerDelegate
+- (void)workerDidFinish:(id)worker;
+@end
+
+@interface Worker : NSObject
+- (instancetype)initWithName:(NSString *)name;
+- (void)start;
+@end
+
+@implementation Worker
+- (instancetype)initWithName:(NSString *)name {
+    self = [super init];
+    return self;
+}
+
+- (void)start {
+    NSLog(@"start");
+    [self notifyDelegate];
+}
+
+- (void)notifyDelegate {
+}
+@end
+"#;
+        let path = PathBuf::from("Sources/Worker.m");
+        let (symbols, refs) = CodeParser::parse_file(&path, content, "test");
+
+        println!("=== OBJECTIVE-C CONTRACT SYMBOLS ({}) ===", symbols.len());
+        print_symbols(&symbols);
+        println!("\n=== OBJECTIVE-C CONTRACT REFERENCES ({}) ===", refs.len());
+        print_refs(&refs);
+
+        assert_symbol(&symbols, "WorkerDelegate", SymbolType::Interface);
+        assert_symbol(&symbols, "Worker", SymbolType::Class);
+        assert_symbol(&symbols, "initWithName", SymbolType::Method);
+        assert_symbol(&symbols, "start", SymbolType::Method);
+        assert_symbol(&symbols, "notifyDelegate", SymbolType::Method);
+        assert_ref(&refs, CodeRelationType::Imports, "Foundation/Foundation.h");
+        assert_ref(&refs, CodeRelationType::Imports, "Worker.h");
+        assert_ref(&refs, CodeRelationType::Calls, "init");
+        assert_ref(&refs, CodeRelationType::Calls, "NSLog");
+        assert_ref(&refs, CodeRelationType::Calls, "notifyDelegate");
+    }
+
+    fn assert_symbol(symbols: &[CodeSymbol], name: &str, symbol_type: SymbolType) {
+        assert!(
+            symbols
+                .iter()
+                .any(|symbol| symbol.name == name && symbol.symbol_type == symbol_type),
+            "Should find {symbol_type:?} symbol '{name}'. Symbols: {:?}",
+            symbols
+                .iter()
+                .map(|symbol| (&symbol.name, &symbol.symbol_type))
+                .collect::<Vec<_>>()
+        );
+    }
+
+    fn assert_ref(refs: &[CodeReference], relation_type: CodeRelationType, to_symbol: &str) {
+        assert!(
+            refs.iter().any(|reference| reference.relation_type == relation_type
+                && reference.to_symbol == to_symbol),
+            "Should find {relation_type:?} reference to '{to_symbol}'. References: {:?}",
+            refs.iter()
+                .map(|reference| (&reference.from_symbol, &reference.to_symbol, &reference.relation_type))
+                .collect::<Vec<_>>()
+        );
+    }
+
+    fn print_symbols(symbols: &[CodeSymbol]) {
+        for symbol in symbols {
+            println!(
+                "  {} ({:?}) L{}-{}",
+                symbol.name, symbol.symbol_type, symbol.start_line, symbol.end_line
+            );
+        }
+    }
+
+    fn print_refs(refs: &[CodeReference]) {
+        for reference in refs {
+            println!(
+                "  {} -> {} ({:?}) L{}",
+                reference.from_symbol,
+                reference.to_symbol,
+                reference.relation_type,
+                reference.line
+            );
+        }
     }
 
     fn dump_node(node: tree_sitter::Node, source: &str, indent: usize) {

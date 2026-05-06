@@ -63,6 +63,11 @@ pub enum Language {
     Go,
     Java,
     Dart,
+    C,
+    Cpp,
+    Swift,
+    Kotlin,
+    ObjectiveC,
     #[default]
     Unknown,
 }
@@ -73,6 +78,13 @@ pub struct IndexStatus {
     pub id: Option<Thing>,
 
     pub project_id: String,
+
+    /// Canonical project root path used to derive project_id.
+    /// Stored so list/stats can prove which workspace a project belongs to
+    /// even after process restart, when the in-memory registry is empty.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub root_path: Option<String>,
+
     pub status: IndexState,
 
     #[serde(default)]
@@ -210,6 +222,7 @@ impl IndexStatus {
         let mut status = Self {
             id: None,
             project_id,
+            root_path: None,
             status: IndexState::Indexing,
             total_files: 0,
             indexed_files: 0,

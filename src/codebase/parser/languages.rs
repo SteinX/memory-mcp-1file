@@ -9,6 +9,10 @@ pub trait LanguageSupport: Send + Sync {
     fn map_symbol_type(&self, kind: &str) -> SymbolType;
     fn map_relation_type(&self, kind: &str) -> CodeRelationType;
 
+    fn extract_symbol_name(&self, _kind: &str, raw_name: &str) -> String {
+        raw_name.to_string()
+    }
+
     fn extract_signature(&self, parent_node: &tree_sitter::Node, content: &[u8]) -> Option<String> {
         let text = parent_node.utf8_text(content).ok()?;
         let sig = extract_until_body_start(text);
@@ -18,6 +22,16 @@ pub trait LanguageSupport: Send + Sync {
             Some(sig.chars().take(500).collect())
         }
     }
+
+    fn extract_reference_name(&self, _kind: &str, raw_name: &str) -> String {
+        raw_name.to_string()
+    }
+}
+
+
+fn clean_c_include_name(name: &str) -> String {
+    name.trim_matches(|ch| ch == '<' || ch == '>' || ch == '"')
+        .to_string()
 }
 
 fn extract_until_body_start(text: &str) -> String {
@@ -73,6 +87,13 @@ impl LanguageSupport for RustSupport {
         "#
     }
 
+    fn extract_symbol_name(&self, kind: &str, raw_name: &str) -> String {
+        match kind {
+            "method" if raw_name.trim_start().starts_with("init") => "init".to_string(),
+            _ => raw_name.to_string(),
+        }
+    }
+
     fn map_symbol_type(&self, kind: &str) -> SymbolType {
         match kind {
             "function" => SymbolType::Function,
@@ -88,7 +109,7 @@ impl LanguageSupport for RustSupport {
     fn map_relation_type(&self, kind: &str) -> CodeRelationType {
         match kind {
             "call" | "method_call" => CodeRelationType::Calls,
-            "import" => CodeRelationType::Imports,
+            "import" | "system_import" => CodeRelationType::Imports,
             "implements" => CodeRelationType::Implements,
             "extends" => CodeRelationType::Extends,
             _ => CodeRelationType::Calls,
@@ -130,7 +151,7 @@ impl LanguageSupport for PythonSupport {
     fn map_relation_type(&self, kind: &str) -> CodeRelationType {
         match kind {
             "call" | "method_call" => CodeRelationType::Calls,
-            "import" => CodeRelationType::Imports,
+            "import" | "system_import" => CodeRelationType::Imports,
             "implements" => CodeRelationType::Implements,
             "extends" => CodeRelationType::Extends,
             _ => CodeRelationType::Calls,
@@ -177,7 +198,7 @@ impl LanguageSupport for TypeScriptSupport {
     fn map_relation_type(&self, kind: &str) -> CodeRelationType {
         match kind {
             "call" | "method_call" => CodeRelationType::Calls,
-            "import" => CodeRelationType::Imports,
+            "import" | "system_import" => CodeRelationType::Imports,
             "implements" => CodeRelationType::Implements,
             "extends" => CodeRelationType::Extends,
             _ => CodeRelationType::Calls,
@@ -220,7 +241,7 @@ impl LanguageSupport for JavaScriptSupport {
     fn map_relation_type(&self, kind: &str) -> CodeRelationType {
         match kind {
             "call" | "method_call" => CodeRelationType::Calls,
-            "import" => CodeRelationType::Imports,
+            "import" | "system_import" => CodeRelationType::Imports,
             "implements" => CodeRelationType::Implements,
             "extends" => CodeRelationType::Extends,
             _ => CodeRelationType::Calls,
@@ -262,7 +283,7 @@ impl LanguageSupport for GoSupport {
     fn map_relation_type(&self, kind: &str) -> CodeRelationType {
         match kind {
             "call" | "method_call" => CodeRelationType::Calls,
-            "import" => CodeRelationType::Imports,
+            "import" | "system_import" => CodeRelationType::Imports,
             "implements" => CodeRelationType::Implements,
             "extends" => CodeRelationType::Extends,
             _ => CodeRelationType::Calls,
@@ -307,7 +328,211 @@ impl LanguageSupport for JavaSupport {
     fn map_relation_type(&self, kind: &str) -> CodeRelationType {
         match kind {
             "call" | "method_call" => CodeRelationType::Calls,
-            "import" => CodeRelationType::Imports,
+            "import" | "system_import" => CodeRelationType::Imports,
+            "implements" => CodeRelationType::Implements,
+            "extends" => CodeRelationType::Extends,
+            _ => CodeRelationType::Calls,
+        }
+    }
+}
+
+
+pub struct CSupport;
+impl LanguageSupport for CSupport {
+    fn get_language(&self) -> tree_sitter::Language {
+        tree_sitter_c::LANGUAGE.into()
+    }
+
+    fn get_definition_query(&self) -> &str {
+        r#"
+        (function_definition
+          declarator: (function_declarator
+            declarator: (identifier) @function))
+        (function_definition
+          declarator: (pointer_declarator
+            declarator: (function_declarator
+              declarator: (identifier) @function)))
+        (struct_specifier name: (type_identifier) @struct)
+        (enum_specifier name: (type_identifier) @enum)
+        (type_definition declarator: (type_identifier) @struct)
+        (type_definition
+          declarator: (pointer_declarator
+            declarator: (type_identifier) @struct))
+        "#
+    }
+
+    fn get_reference_query(&self) -> &str {
+        r#"
+        (call_expression
+          function: (identifier) @call)
+        (preproc_include path: (system_lib_string) @system_import)
+        (preproc_include path: (string_literal (string_content) @import))
+        "#
+    }
+
+
+
+    fn extract_reference_name(&self, kind: &str, raw_name: &str) -> String {
+        match kind {
+            "import" | "system_import" => clean_c_include_name(raw_name),
+            _ => raw_name.to_string(),
+        }
+    }
+
+    fn map_symbol_type(&self, kind: &str) -> SymbolType {
+        match kind {
+            "function" => SymbolType::Function,
+            "struct" => SymbolType::Struct,
+            "enum" => SymbolType::Enum,
+            _ => SymbolType::Function,
+        }
+    }
+
+    fn map_relation_type(&self, kind: &str) -> CodeRelationType {
+        match kind {
+            "call" | "method_call" => CodeRelationType::Calls,
+            "import" | "system_import" => CodeRelationType::Imports,
+            "implements" => CodeRelationType::Implements,
+            "extends" => CodeRelationType::Extends,
+            _ => CodeRelationType::Calls,
+        }
+    }
+}
+
+pub struct CppSupport;
+impl LanguageSupport for CppSupport {
+    fn get_language(&self) -> tree_sitter::Language {
+        tree_sitter_cpp::LANGUAGE.into()
+    }
+
+    fn get_definition_query(&self) -> &str {
+        r#"
+        (namespace_definition name: (namespace_identifier) @module)
+        (function_definition
+          declarator: (function_declarator
+            declarator: (identifier) @function))
+        (function_definition
+          declarator: (qualified_identifier
+            name: (identifier) @function))
+        (function_definition
+          declarator: (function_declarator
+            declarator: (qualified_identifier
+              name: (identifier) @method)))
+        (function_definition
+          declarator: (function_declarator
+            declarator: (field_identifier) @method))
+        (function_definition
+          declarator: (pointer_declarator
+            declarator: (function_declarator
+              declarator: (identifier) @function)))
+        (class_specifier name: (type_identifier) @class)
+        (struct_specifier name: (type_identifier) @struct)
+        (enum_specifier name: (type_identifier) @enum)
+        (declaration
+          declarator: (function_declarator
+            declarator: (identifier) @method))
+        (declaration
+          declarator: (function_declarator
+            declarator: (field_identifier) @method))
+        "#
+    }
+
+    fn get_reference_query(&self) -> &str {
+        r#"
+        (call_expression
+          function: (identifier) @call)
+        (call_expression
+          function: (field_expression
+            field: (field_identifier) @method_call))
+        (call_expression
+          function: (qualified_identifier
+            name: (identifier) @call))
+        (preproc_include path: (system_lib_string) @system_import)
+        (preproc_include path: (string_literal (string_content) @import))
+        "#
+    }
+
+
+    fn extract_reference_name(&self, kind: &str, raw_name: &str) -> String {
+        match kind {
+            "import" | "system_import" => clean_c_include_name(raw_name),
+            _ => raw_name.to_string(),
+        }
+    }
+
+    fn map_symbol_type(&self, kind: &str) -> SymbolType {
+        match kind {
+            "module" => SymbolType::Module,
+            "class" => SymbolType::Class,
+            "struct" => SymbolType::Struct,
+            "method" => SymbolType::Method,
+            "function" => SymbolType::Function,
+            "enum" => SymbolType::Enum,
+            _ => SymbolType::Function,
+        }
+    }
+
+    fn map_relation_type(&self, kind: &str) -> CodeRelationType {
+        match kind {
+            "call" | "method_call" => CodeRelationType::Calls,
+            "import" | "system_import" => CodeRelationType::Imports,
+            "implements" => CodeRelationType::Implements,
+            "extends" => CodeRelationType::Extends,
+            _ => CodeRelationType::Calls,
+        }
+    }
+}
+
+pub struct SwiftSupport;
+impl LanguageSupport for SwiftSupport {
+    fn get_language(&self) -> tree_sitter::Language {
+        tree_sitter_swift::LANGUAGE.into()
+    }
+
+    fn get_definition_query(&self) -> &str {
+        r#"
+        (protocol_declaration name: (type_identifier) @interface)
+        (class_declaration declaration_kind: "class" name: (type_identifier) @class)
+        (class_declaration declaration_kind: "struct" name: (type_identifier) @struct)
+        (class_declaration declaration_kind: "enum" name: (type_identifier) @enum)
+        (source_file (function_declaration name: (simple_identifier) @function))
+        (class_body (function_declaration name: (simple_identifier) @method))
+        (enum_class_body (function_declaration name: (simple_identifier) @method))
+        (protocol_body (protocol_function_declaration name: (simple_identifier) @method))
+        (class_body (init_declaration name: "init" @method))
+        (enum_class_body (init_declaration name: "init" @method))
+        "#
+    }
+
+    fn get_reference_query(&self) -> &str {
+        r#"
+        (import_declaration (identifier) @import)
+        (call_expression
+          (simple_identifier) @call
+          (call_suffix))
+        (call_expression
+          (navigation_expression
+            (navigation_suffix suffix: (simple_identifier) @method_call))
+          (call_suffix))
+        "#
+    }
+
+    fn map_symbol_type(&self, kind: &str) -> SymbolType {
+        match kind {
+            "class" => SymbolType::Class,
+            "struct" => SymbolType::Struct,
+            "enum" => SymbolType::Enum,
+            "interface" => SymbolType::Interface,
+            "method" => SymbolType::Method,
+            "function" => SymbolType::Function,
+            _ => SymbolType::Function,
+        }
+    }
+
+    fn map_relation_type(&self, kind: &str) -> CodeRelationType {
+        match kind {
+            "call" | "method_call" => CodeRelationType::Calls,
+            "import" | "system_import" => CodeRelationType::Imports,
             "implements" => CodeRelationType::Implements,
             "extends" => CodeRelationType::Extends,
             _ => CodeRelationType::Calls,
@@ -386,7 +611,114 @@ impl LanguageSupport for DartSupport {
     fn map_relation_type(&self, kind: &str) -> CodeRelationType {
         match kind {
             "call" | "method_call" => CodeRelationType::Calls,
-            "import" => CodeRelationType::Imports,
+            "import" | "system_import" => CodeRelationType::Imports,
+            "implements" => CodeRelationType::Implements,
+            "extends" => CodeRelationType::Extends,
+            _ => CodeRelationType::Calls,
+        }
+    }
+}
+
+pub struct KotlinSupport;
+impl LanguageSupport for KotlinSupport {
+    fn get_language(&self) -> tree_sitter::Language {
+        tree_sitter_kotlin_ng::LANGUAGE.into()
+    }
+
+    fn get_definition_query(&self) -> &str {
+        r#"
+        (package_header (qualified_identifier) @module)
+        (class_declaration name: (identifier) @class)
+        (class_declaration "interface" name: (identifier) @interface)
+        (object_declaration name: (identifier) @class)
+        (companion_object) @class
+        (companion_object name: (identifier) @class)
+        (class_body (function_declaration name: (identifier) @method))
+        (function_declaration name: (identifier) @function)
+        "#
+    }
+
+    fn get_reference_query(&self) -> &str {
+        r#"
+        (import (qualified_identifier) @import)
+        (call_expression (identifier) @call)
+        (call_expression (navigation_expression (identifier) @method_call))
+        "#
+    }
+
+    fn extract_symbol_name(&self, kind: &str, raw_name: &str) -> String {
+        match kind {
+            "class" if raw_name.starts_with("companion object") => "Companion".to_string(),
+            _ => raw_name.to_string(),
+        }
+    }
+
+    fn map_symbol_type(&self, kind: &str) -> SymbolType {
+        match kind {
+            "module" => SymbolType::Module,
+            "interface" => SymbolType::Interface,
+            "class" => SymbolType::Class,
+            "method" => SymbolType::Method,
+            "function" => SymbolType::Function,
+            _ => SymbolType::Function,
+        }
+    }
+
+    fn map_relation_type(&self, kind: &str) -> CodeRelationType {
+        match kind {
+            "call" | "method_call" => CodeRelationType::Calls,
+            "import" | "system_import" => CodeRelationType::Imports,
+            "implements" => CodeRelationType::Implements,
+            "extends" => CodeRelationType::Extends,
+            _ => CodeRelationType::Calls,
+        }
+    }
+}
+
+pub struct ObjectiveCSupport;
+impl LanguageSupport for ObjectiveCSupport {
+    fn get_language(&self) -> tree_sitter::Language {
+        tree_sitter_objc::LANGUAGE.into()
+    }
+
+    fn get_definition_query(&self) -> &str {
+        r#"
+        (protocol_declaration (identifier) @interface)
+        (class_interface (identifier) @class)
+        (method_declaration (identifier) @method)
+        (method_definition (identifier) @method)
+        "#
+    }
+
+    fn get_reference_query(&self) -> &str {
+        r#"
+        (preproc_include path: (system_lib_string) @system_import)
+        (preproc_include path: (string_literal (string_content) @import))
+        (call_expression function: (identifier) @call)
+        (message_expression method: (identifier) @method_call)
+        "#
+    }
+
+    fn extract_reference_name(&self, kind: &str, raw_name: &str) -> String {
+        match kind {
+            "import" | "system_import" => clean_c_include_name(raw_name),
+            _ => raw_name.to_string(),
+        }
+    }
+
+    fn map_symbol_type(&self, kind: &str) -> SymbolType {
+        match kind {
+            "class" => SymbolType::Class,
+            "interface" => SymbolType::Interface,
+            "method" => SymbolType::Method,
+            _ => SymbolType::Function,
+        }
+    }
+
+    fn map_relation_type(&self, kind: &str) -> CodeRelationType {
+        match kind {
+            "call" | "method_call" => CodeRelationType::Calls,
+            "import" | "system_import" => CodeRelationType::Imports,
             "implements" => CodeRelationType::Implements,
             "extends" => CodeRelationType::Extends,
             _ => CodeRelationType::Calls,
@@ -403,6 +735,35 @@ pub fn get_language_support(lang: Language) -> Option<Box<dyn LanguageSupport>> 
         Language::Go => Some(Box::new(GoSupport)),
         Language::Java => Some(Box::new(JavaSupport)),
         Language::Dart => Some(Box::new(DartSupport)),
+        Language::C => Some(Box::new(CSupport)),
+        Language::Cpp => Some(Box::new(CppSupport)),
+        Language::Swift => Some(Box::new(SwiftSupport)),
+        Language::Kotlin => Some(Box::new(KotlinSupport)),
+        Language::ObjectiveC => Some(Box::new(ObjectiveCSupport)),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod grammar_compatibility_tests {
+    use tree_sitter::Parser;
+
+    fn accepts_language(language: tree_sitter::Language, source: &str) {
+        let mut parser = Parser::new();
+        parser.set_language(&language).unwrap();
+        let tree = parser.parse(source, None).unwrap();
+        assert!(!tree.root_node().has_error());
+    }
+
+    #[test]
+    fn mobile_grammar_crates_match_tree_sitter_026_language_api() {
+        accepts_language(tree_sitter_c::LANGUAGE.into(), "int main(void) { return 0; }");
+        accepts_language(tree_sitter_cpp::LANGUAGE.into(), "int main() { return 0; }");
+        accepts_language(tree_sitter_swift::LANGUAGE.into(), "func main() { print(\"ok\") }");
+        accepts_language(tree_sitter_kotlin_ng::LANGUAGE.into(), "fun main() { println(\"ok\") }");
+        accepts_language(
+            tree_sitter_objc::LANGUAGE.into(),
+            "@interface Foo @end @implementation Foo @end",
+        );
     }
 }

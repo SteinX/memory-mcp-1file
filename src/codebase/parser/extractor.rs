@@ -73,6 +73,7 @@ impl Extractor {
 
                 if let Ok(name) = node.utf8_text(content.as_bytes()) {
                     let symbol_type = self.support.map_symbol_type(capture_name);
+                    let name = self.support.extract_symbol_name(capture_name, name);
 
                     // node is the identifier, parent is the full definition (function_item, struct_item, etc.)
                     let definition_node = node.parent().unwrap_or(node);
@@ -84,7 +85,7 @@ impl Extractor {
                         .extract_signature(&definition_node, content.as_bytes());
 
                     let mut symbol = CodeSymbol::new(
-                        name.to_string(),
+                        name,
                         symbol_type,
                         file_path.to_string(),
                         start_line,
@@ -130,7 +131,7 @@ impl Extractor {
                 let node = capture.node;
                 let capture_name = query.capture_names()[capture.index as usize];
 
-                if let Ok(name) = node.utf8_text(content.as_bytes()) {
+                if let Ok(raw_name) = node.utf8_text(content.as_bytes()) {
                     let start_line = node.start_position().row as u32 + 1;
                     let column = node.start_position().column as u32;
 
@@ -142,13 +143,14 @@ impl Extractor {
                         .unwrap_or_else(|| ("global".to_string(), 0));
 
                     let relation_type = self.support.map_relation_type(capture_name);
+                    let name = self.support.extract_reference_name(capture_name, raw_name);
 
                     references.push(
                         CodeReference::builder()
-                            .name(name.to_string())
+                            .name(name.clone())
                             .from_symbol(from_symbol)
                             .from_symbol_line(from_symbol_line)
-                            .to_symbol(name.to_string()) // to_symbol is the same as name for now
+                            .to_symbol(name) // to_symbol is the same as name for now
                             .relation_type(relation_type)
                             .file_path(file_path.to_string())
                             .line(start_line)

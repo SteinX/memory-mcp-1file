@@ -1,6 +1,7 @@
 use num_cpus;
 use std::path::Path;
 use std::sync::Arc;
+use std::time::Instant;
 
 use tokio::fs;
 
@@ -33,6 +34,12 @@ pub async fn index_project(state: Arc<AppState>, project_path: &Path) -> Result<
     let handle = tokio::spawn(async move {
         do_index_project(state_clone, &project_path_clone, &project_id_clone).await
     });
+
+    tracing::info!(
+        project_id = %project_id,
+        root_path = %project_path.display(),
+        "Awaiting one-shot code index task"
+    );
 
     let result = match handle.await {
         Ok(res) => res,
@@ -86,16 +93,89 @@ async fn do_index_project(
     project_path: &Path,
     project_id: &str,
 ) -> Result<IndexStatus> {
+    tracing::info!(
+        project_id = %project_id,
+        root_path = %project_path.display(),
+        "One-shot code index task started"
+    );
     let mut status = IndexStatus::new(project_id.to_string());
+    status.root_path = Some(
+        project_path
+            .canonicalize()
+            .unwrap_or_else(|_| project_path.to_path_buf())
+            .to_string_lossy()
+            .into_owned(),
+    );
     let monitor = state.progress.get_or_create(project_id).await;
+    monitor
+        .total_files
+        .store(0, std::sync::atomic::Ordering::Relaxed);
+    monitor
+        .indexed_files
+        .store(0, std::sync::atomic::Ordering::Relaxed);
+    if let Ok(mut current_file) = monitor.current_file.write() {
+        current_file.clear();
+    }
 
-    state.storage.delete_project_chunks(project_id).await?;
-    state.storage.delete_project_symbols(project_id).await?;
+    // Persist the indexing state before destructive cleanup. If the server
+    // restarts while rebuilding from scratch, status/stats can report
+    // "indexing/unknown_after_restart" instead of "metadata missing".
+    tracing::info!(
+        project_id = %project_id,
+        root_path = status.root_path.as_deref().unwrap_or_default(),
+        "Persisting initial indexing metadata before cleanup"
+    );
+    state.storage.update_index_status(status.clone()).await?;
+
+    tracing::info!(project_id = %project_id, "Clearing stale code intelligence rows");
+
+    let cleanup_started = Instant::now();
+    let phase_started = Instant::now();
+    tracing::info!(project_id = %project_id, "Deleting stale code chunks");
+    let deleted_chunks = state.storage.delete_project_chunks(project_id).await?;
+    tracing::info!(
+        project_id = %project_id,
+        deleted = deleted_chunks,
+        elapsed_ms = phase_started.elapsed().as_millis(),
+        "Deleted stale code chunks"
+    );
+
+    let phase_started = Instant::now();
+    tracing::info!(project_id = %project_id, "Deleting stale code symbols");
+    let deleted_symbols = state.storage.delete_project_symbols(project_id).await?;
+    tracing::info!(
+        project_id = %project_id,
+        deleted = deleted_symbols,
+        elapsed_ms = phase_started.elapsed().as_millis(),
+        "Deleted stale code symbols"
+    );
+
+    let phase_started = Instant::now();
+    tracing::info!(project_id = %project_id, "Deleting stale file hashes");
     state.storage.delete_file_hashes(project_id).await?;
+    tracing::info!(
+        project_id = %project_id,
+        elapsed_ms = phase_started.elapsed().as_millis(),
+        "Deleted stale file hashes"
+    );
+
+    let phase_started = Instant::now();
+    tracing::info!(project_id = %project_id, "Deleting stale manifest entries");
     state.storage.delete_manifest_entries(project_id).await?;
+    tracing::info!(
+        project_id = %project_id,
+        elapsed_ms = phase_started.elapsed().as_millis(),
+        total_elapsed_ms = cleanup_started.elapsed().as_millis(),
+        "Deleted stale manifest entries"
+    );
 
     // `scan_directory` uses `ignore::WalkBuilder` — a synchronous blocking I/O walk.
     // Wrap in `spawn_blocking` to avoid starving the Tokio async thread pool.
+    tracing::info!(
+        project_id = %project_id,
+        root_path = %project_path.display(),
+        "Scanning project files"
+    );
     let project_path_for_scan = project_path.to_path_buf();
     let files = tokio::task::spawn_blocking(move || scan_directory(&project_path_for_scan))
         .await
@@ -103,15 +183,13 @@ async fn do_index_project(
     status.total_files = files.len() as u32;
     tracing::info!(
         project = %project_id,
+        root_path = %project_path.display(),
         total_files = status.total_files,
         "Indexing started"
     );
     monitor
         .total_files
         .store(status.total_files, std::sync::atomic::Ordering::Relaxed);
-    monitor
-        .indexed_files
-        .store(0, std::sync::atomic::Ordering::Relaxed);
 
     state.storage.update_index_status(status.clone()).await?;
 
@@ -808,6 +886,7 @@ pub async fn incremental_index(
 mod tests {
     use super::*;
     use crate::test_utils::TestContext;
+    use std::collections::HashSet;
     use std::fs;
 
     #[tokio::test]
@@ -847,7 +926,9 @@ mod tests {
         let project_dir = ctx._temp_dir.path().join("empty-project");
         fs::create_dir_all(&project_dir).unwrap();
 
-        let status = index_project(ctx.state.clone(), &project_dir).await.unwrap();
+        let status = index_project(ctx.state.clone(), &project_dir)
+            .await
+            .unwrap();
 
         assert_eq!(status.project_id, "empty-project");
         assert_eq!(status.status, IndexState::Completed);
@@ -855,7 +936,10 @@ mod tests {
         assert_eq!(status.indexed_files, 0);
         assert_eq!(status.total_chunks, 0);
         assert_eq!(status.total_symbols, 0);
-        assert_eq!(status.structural_state, crate::types::StructuralState::Ready);
+        assert_eq!(
+            status.structural_state,
+            crate::types::StructuralState::Ready
+        );
         assert_eq!(status.semantic_state, crate::types::SemanticState::Ready);
         assert_eq!(status.structural_generation, 1);
         assert_eq!(status.semantic_generation, 1);
@@ -868,6 +952,143 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(stored.status, IndexState::Completed);
-        assert_eq!(ctx.state.storage.count_manifest_entries("empty-project").await.unwrap(), 0);
+        assert_eq!(
+            ctx.state
+                .storage
+                .count_manifest_entries("empty-project")
+                .await
+                .unwrap(),
+            0
+        );
+    }
+
+    #[tokio::test]
+    async fn index_project_mixed_mobile_fixture_is_stable_and_extracts_symbols() {
+        let ctx = TestContext::new().await;
+        let project_dir = ctx._temp_dir.path().join("mobile-mixed-project");
+
+        let mixed_files = [
+            (
+                "ios/Worker.h",
+                "@interface Worker : NSObject\n- (void)start;\n@end\n",
+            ),
+            (
+                "ios/Worker.m",
+                "#import <Foundation/Foundation.h>\n@interface Worker : NSObject\n- (void)start;\n@end\n@implementation Worker\n- (void)start { NSLog(@\"start\"); }\n@end\n",
+            ),
+            (
+                "ios/Bridge.mm",
+                "#import <Foundation/Foundation.h>\n@interface Bridge : NSObject\n- (void)bridgeRun;\n@end\n@implementation Bridge\n- (void)bridgeRun { [self bridgeRun]; }\n@end\n",
+            ),
+            (
+                "swift/App.swift",
+                "import Foundation\nclass SwiftScreen {\n    func render() { swiftHelper() }\n}\nfunc swiftHelper() {}\n",
+            ),
+            (
+                "kotlin/App.kt",
+                "package com.example\nimport kotlin.collections.List\nclass KotlinRepo {\n    fun run() { println(\"ok\") }\n}\n",
+            ),
+            (
+                "kotlin/buildLogic.kts",
+                "fun configureBuild() { println(\"kts\") }\nconfigureBuild()\n",
+            ),
+            (
+                "native/main.c",
+                "#include <stdio.h>\nint c_entry(void) { printf(\"c\"); return 0; }\n",
+            ),
+            (
+                "native/main.cpp",
+                "#include <vector>\nint cpp_entry() { return 0; }\n",
+            ),
+        ];
+
+        let ignored_files = [
+            "Pods/SDK/Generated.m",
+            ".gradle/cache/Cache.kt",
+            ".android/generated/Build.kt",
+            ".symlinks/plugins/Plugin.swift",
+            "build/intermediates/Gen.cpp",
+            "generated/schema/Auto.c",
+            ".generated/code/Auto.mm",
+        ];
+
+        for (relative_path, content) in &mixed_files {
+            let path = project_dir.join(relative_path);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, content).unwrap();
+        }
+
+        for relative_path in &ignored_files {
+            let path = project_dir.join(relative_path);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, "fn ignored() {}\n").unwrap();
+        }
+
+        let status = index_project(ctx.state.clone(), &project_dir).await.unwrap();
+        assert_eq!(status.status, IndexState::EmbeddingPending);
+        assert_eq!(status.total_files, mixed_files.len() as u32);
+        assert!(
+            status.failed_files.is_empty(),
+            "indexing should not fail for mixed mobile files: {:?}",
+            status.failed_files
+        );
+
+        let scanned = crate::codebase::scanner::scan_directory(&project_dir).unwrap();
+        let scanned_set: HashSet<String> = scanned
+            .iter()
+            .map(|path| {
+                path.strip_prefix(&project_dir)
+                    .unwrap()
+                    .to_string_lossy()
+                    .replace('\\', "/")
+            })
+            .collect();
+        assert_eq!(scanned_set.len(), mixed_files.len());
+        for forbidden in ["Pods/", ".gradle/", ".android/", ".symlinks/", "build/"] {
+            assert!(
+                scanned_set.iter().all(|path| !path.starts_with(forbidden)),
+                "scanner unexpectedly included file under {forbidden}: {:?}",
+                scanned_set
+            );
+        }
+        assert!(
+            scanned_set.iter().all(|path| !path.contains("/generated/")),
+            "scanner unexpectedly included generated directory file: {:?}",
+            scanned_set
+        );
+        assert!(
+            scanned_set
+                .iter()
+                .all(|path| !path.starts_with(".generated/")),
+            "scanner unexpectedly included .generated directory file: {:?}",
+            scanned_set
+        );
+
+        let symbols = ctx
+            .state
+            .storage
+            .get_project_symbols(&status.project_id)
+            .await
+            .unwrap();
+        let symbol_names: HashSet<String> = symbols.iter().map(|symbol| symbol.name.clone()).collect();
+
+        for expected in [
+            "Worker",
+            "start",
+            "bridgeRun",
+            "SwiftScreen",
+            "render",
+            "swiftHelper",
+            "KotlinRepo",
+            "run",
+            "c_entry",
+            "cpp_entry",
+        ] {
+            assert!(
+                symbol_names.contains(expected),
+                "expected symbol '{expected}' in indexed mixed mobile fixture, got {:?}",
+                symbol_names
+            );
+        }
     }
 }

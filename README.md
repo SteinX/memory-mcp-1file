@@ -164,6 +164,40 @@ The server uses a deterministic priority matrix to establish the primary project
 3.  **Default Fallback**: If no path is configured and `/project` exists, the server uses `/project` and preserves the legacy `project_id="project"` for compatibility.
 4.  **Disabled**: If no path is configured and `/project` is missing, code intelligence is disabled (reported in diagnostics), but the server remains functional for other memory tools.
 
+#### Code Intelligence Language Contract
+
+This code intelligence path is static and tree-sitter-based. It does **not** require SourceKit, clangd, Kotlin LSP, Gradle model parsing, Xcode project parsing, or compiler invocation.
+
+It also stays syntactic rather than compiler-accurate: there is no overload resolution, macro expansion, dynamic dispatch resolution, generated-code awareness, build-configuration awareness, type inference, or compiler-accurate call graph construction.
+
+| Language | Status | Contract |
+|---|---|---|
+| Rust | Supported now | AST-based indexing with symbol and relation extraction. |
+| Python | Supported now | AST-based indexing with symbol and relation extraction. |
+| JavaScript | Supported now | AST-based indexing with symbol and relation extraction. |
+| TypeScript | Supported now | AST-based indexing with symbol and relation extraction. |
+| Go | Supported now | AST-based indexing with symbol and relation extraction. |
+| Java | Supported now | AST-based indexing with symbol and relation extraction. |
+| Dart | Supported now | AST-based indexing with symbol and relation extraction. |
+| C | Supported now | tree-sitter-backed syntactic indexing for functions, structs/enums/typedefs, includes, and obvious direct calls; no compiler semantics. |
+| C++ | Supported now | tree-sitter-backed syntactic indexing for namespaces, classes/methods/functions, includes, and obvious direct calls; no compiler semantics. |
+| Swift | Supported now | tree-sitter-backed syntactic indexing for imports, classes/structs/enums/protocols, methods/functions, and obvious direct calls; no compiler semantics. |
+| Kotlin | Supported now | tree-sitter-backed syntactic indexing for package/imports, classes/interfaces/objects, methods/functions, and obvious direct calls; no compiler semantics. |
+| Objective-C | Supported now | tree-sitter-backed syntactic indexing for imports, classes/protocols, methods, C-style calls, and obvious message sends; no compiler semantics. |
+
+For `.h` files, detection is heuristic and ordered exactly as: Objective-C markers first, then C++ markers, then C fallback.
+
+#### Code Intelligence Verification Commands
+
+If you need to validate parser/scanner behavior locally, run:
+
+```bash
+cargo check
+cargo test codebase::scanner -- --nocapture
+cargo test codebase::parser -- --nocapture
+cargo test
+```
+
 #### JSON Configuration (Claude Desktop, etc.)
 
 Add this to your configuration file (e.g., `claude_desktop_config.json`):
@@ -215,6 +249,10 @@ docker run --init -i --rm --memory=3g \
 
 > [!NOTE]
 > The published Docker image defaults to **HTTP SSE** mode for standalone/server use. When wiring it into MCP desktop or CLI clients, append `--stdio` as shown above so the container speaks the stdio transport the client expects.
+
+#### HTTP Health Checks
+
+In HTTP SSE mode, `GET /health` is a liveness probe for the HTTP process and returns `200 OK` when the server is accepting requests. It intentionally does not query the embedded database, so extension heartbeats remain stable while long code-indexing or embedding jobs are using storage heavily. Use the MCP `get_status` tool when you need database or embedding readiness details.
 
 ### NPX / Bunx (No Docker required)
 
@@ -341,7 +379,7 @@ Or with Docker:
 - **Replacement Links Preserved**: `invalidate(..., superseded_by=...)` now round-trips on reads, so replacement chains survive retrieval and inspection.
 - **Consolidation Preview**: `preview_consolidate_memory` shows exact-duplicate matches, replacement scope, and supersede reason before any write occurs.
 - **Graph Memory**: Tracks entities (`User`, `Project`, `Tech`) and their relations (`uses`, `likes`). Supports PageRank-based traversal.
-- **Code Intelligence**: Indexes local project directories (AST-based chunking) for Rust, Python, TypeScript, JavaScript, Go, Java, and **Dart/Flutter**. Tracks **calls, imports, extends, implements, and mixin** relationships between symbols.
+- **Code Intelligence**: Indexes local project directories (AST-based chunking) for Rust, Python, TypeScript, JavaScript, Go, Java, **Dart/Flutter**, C, C++, Swift, Kotlin, and Objective-C using static tree-sitter-backed syntactic indexing. Tracks **calls, imports, extends, implements, and mixin** relationships between symbols when the grammar supports them.
 - **Deterministic Code Scoping**: Code intelligence tools use a strict project resolution order:
   1. **Explicit `project_id`**: Always takes highest priority if provided in the tool arguments.
   2. **Session Binding**: If no explicit `project_id` is provided, the server uses the project bound to the current HTTP MCP session.
@@ -380,25 +418,28 @@ The server exposes **21 tools** to the AI model, organized into logical categori
 ### 🕸️ Knowledge Graph
 | Tool | Description |
 |------|-------------|
-| `knowledge_graph` | Knowledge graph ops. Actions: create_entity(name, entity_type?, description?) \| create_relation(from_entity, to_entity, relation_type, weight?) \| get_related(entity_id, depth?, direction?) \| detect_communities(). get_related returns preferred exported nodes/edges plus additive contract and summary metadata; raw entities/relations remain compatibility fields. |
+| `knowledge_graph` | Knowledge graph ops. Actions: create_entity(name, entity_type?, description?) \| create_relation(from_entity, to_entity, relation_type, weight?) \| get_related(entity_id, depth?, direction?) \| detect_communities(). `create_relation.from_entity` and `to_entity` must be entity IDs returned by `create_entity`, not display names. get_related returns preferred exported nodes/edges plus additive contract and summary metadata; raw entities/relations remain compatibility fields. |
 
 ### 💻 Codebase Intelligence
 | Tool | Description |
 |------|-------------|
-| `index_project` | Index codebase directory for code search. |
+| `index_project` | Index codebase directory for code search. Retrying a previously failed full index requires `force=true` and `confirm_failed_restart=true`. |
 | `delete_project` | Delete indexed project. |
 | `recall_code` | Hybrid code retrieval (vector+BM25+graph) with additive `contract`/`summary` metadata. `results[].id` is a local chunk-record reference; stable refind locator is `project_id + file_path + start_line + end_line`. |
 | `search_symbols` | Symbol lookup by name with additive contract/summary metadata. |
 | `symbol_graph` | Symbol relationship traversal with additive contract/summary metadata; `frontier` is an unexpanded boundary hint, not a cursor. |
-| `project_info` | Project indexing information. Actions: list() \| status(project_id) \| stats(project_id) \| projection(project_id) \| projection_by_locator() \| bind(project_id) \| unbind() \| binding_status(). bind/unbind/status actions manage session-scoped project binding for HTTP MCP clients. Responses include additive contract/summary metadata, including lifecycle, generation, and projection/materialization fields. |
+| `project_info` | Project indexing information. Actions: list() \| index(path, force?, confirm_failed_restart?) \| status(project_id) \| stats(project_id) \| projection(project_id) \| projection_by_locator() \| bind(project_id) \| unbind() \| binding_status(). bind/unbind/status actions manage session-scoped project binding for HTTP MCP clients. Responses include additive contract/summary metadata, including lifecycle, generation, and projection/materialization fields. |
 
 ### Contract compatibility notes for plugin / MCP integrators
 
 - `contract` and `summary` remain **additive-first** surfaces. Clients must ignore unknown fields and unknown enum values.
 - `summary.partial.reason_code` is the canonical machine-readable contract reason. Current Phase 5A values are: `missing`, `stale`, `partial`, `degraded`, `invalid_locator`, `generation_mismatch`, and `unsupported`.
 - `summary.partial.reason` is retained as a legacy compatibility string. Existing values like `projection_stale`, `indexing_in_progress`, and `progress:NN.N` remain readable, but new integrations should key off `reason_code`.
-- `project_info(action="list")` discovers projects from the union of index status metadata, code chunks, code symbols, and file manifests, so partially indexed or degraded projects remain operator-visible.
-- `project_info(action="stats")` returns degraded diagnostics when code intelligence rows exist but `index_status` metadata is missing; it only returns `Project not found` when no status, chunks, symbols, or manifest entries exist for that project.
+- `project_info(action="list")` discovers projects from the union of index status metadata, code chunks, code symbols, and file manifests, so partially indexed or degraded projects remain operator-visible. Each project entry includes persisted `root_path` when index metadata is available, allowing clients to verify which canonical workspace a `project_id` belongs to even when multiple same-shard projects exist.
+- `project_info(action="index", path="...")` is a compatibility entrypoint for the same behavior as `index_project`. Manual index requests run as one-shot background tasks; the returned `lifecycle` describes registry-managed watchers/workers only, while `background_task` and `project_info(action="status")` describe the one-shot indexing task. Client wrappers may expose the same surface as `project_status`; in that case use `project_status(action="status")` to inspect `background_task.operation_id`, `state`, progress, and restart guidance.
+- Immediately after queuing, `project_info(action="status")` can return the in-memory `background_task` even before persistent index metadata has been written, so clients do not see a transient `Project not found` during the queued-to-running handoff.
+- Force rebuild persists `status="indexing"` before clearing stale chunks/symbols/manifest rows. If the process restarts during rebuild, `status/stats` report `background_task.state="unknown_after_restart"` instead of degrading to missing metadata, so operators can decide whether to retry with `force=true` and `confirm_failed_restart=true`.
+- `project_info(action="status")` and `project_info(action="stats")` include `root_path` when persisted index metadata is present. `project_info(action="stats")` returns degraded diagnostics when code intelligence rows exist but `index_status` metadata is missing; it only returns `Project not found` when no status, chunks, symbols, or manifest entries exist for that project.
 - `project_info(action="projection")` returns `locator.lookup.state = "created"`; `project_info(action="projection_by_locator")` returns `locator.lookup.state = "resolved"` on success and `"missing"` on miss.
 - **Session-Bound Project Resolution**:
   - `project_info(action="bind", project_id="...")` binds the current HTTP MCP session to a project.
