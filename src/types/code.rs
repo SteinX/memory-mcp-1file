@@ -1,4 +1,5 @@
 use super::{Datetime, SurrealValue, Thing};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 fn default_datetime() -> Datetime {
@@ -36,6 +37,11 @@ pub struct CodeChunk {
 
     #[serde(skip_serializing_if = "Option::is_none")]
     pub project_id: Option<String>,
+
+    /// Structural generation that produced this row. Missing generation means
+    /// a legacy row that belongs to active generation 0.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub generation: Option<u64>,
 
     #[serde(default = "default_datetime")]
     pub indexed_at: Datetime,
@@ -149,6 +155,281 @@ pub enum IndexState {
     EmbeddingPending,
     Completed,
     Failed,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum IndexJobState {
+    Queued,
+    Running,
+    Paused,
+    Interrupted,
+    Resumable,
+    Completed,
+    Failed,
+    CancelRequested,
+    Cancelled,
+    Abandoned,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum IndexJobPhase {
+    Discover,
+    Parse,
+    Chunk,
+    Symbols,
+    Relations,
+    Embed,
+    EmbedEnqueue,
+    Bm25,
+    Finalize,
+    Promote,
+    Cleanup,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum IndexJobReasonCode {
+    CancelledByUser,
+    InterruptedByShutdown,
+    LostSameProcessTask,
+    StorageError,
+    ParseError,
+    EmbeddingError,
+    Bm25Error,
+    Unknown,
+    ActiveIndexRunning,
+    ResumableInterruptedJob,
+    LostOneShotIndexingTaskAfterRestart,
+    CheckpointGenerationMissing,
+    WorkspaceChangedSinceCheckpoint,
+    StaleGeneration,
+    IndexStorageCorrupt,
+    IllegalStateTransition,
+    ResumeTokenRequired,
+    ForceRestartConfirmationRequired,
+    CancellationRequested,
+    CleanupRequested,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum IndexJobRequestMode {
+    StartNew,
+    Resume,
+    ForceRestart,
+    Cancel,
+    Cleanup,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+pub struct InvalidIndexJobTransition {
+    pub from: IndexJobState,
+    pub to: IndexJobState,
+    pub reason_code: IndexJobReasonCode,
+}
+
+impl std::fmt::Display for InvalidIndexJobTransition {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "illegal index job transition: {:?} -> {:?}",
+            self.from, self.to
+        )
+    }
+}
+
+impl std::error::Error for InvalidIndexJobTransition {}
+
+pub fn validate_index_job_transition(
+    current: IndexJobState,
+    proposed: IndexJobState,
+) -> Result<(), InvalidIndexJobTransition> {
+    use IndexJobState::*;
+
+    let legal = matches!(
+        (&current, &proposed),
+        (Queued, Running)
+            | (Running, Interrupted)
+            | (Running, Completed)
+            | (Running, Failed)
+            | (Running, CancelRequested)
+            | (Interrupted, Resumable)
+            | (Resumable, Running)
+            | (CancelRequested, Cancelled)
+            | (Cancelled, Abandoned)
+    );
+
+    if legal {
+        Ok(())
+    } else {
+        Err(InvalidIndexJobTransition {
+            from: current,
+            to: proposed,
+            reason_code: IndexJobReasonCode::IllegalStateTransition,
+        })
+    }
+}
+
+pub fn validate_job_transition(
+    from: IndexJobState,
+    to: IndexJobState,
+) -> Result<(), String> {
+    validate_index_job_transition(from, to).map_err(|error| error.to_string())
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, SurrealValue, JsonSchema, PartialEq, Eq)]
+pub struct IndexJobError {
+    pub code: IndexJobReasonCode,
+    pub message: String,
+    pub retryable: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, SurrealValue, JsonSchema, PartialEq, Eq)]
+pub struct IndexJobResumeState {
+    pub supported: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub token: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub checkpoint_generation: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason_if_not_supported: Option<IndexJobReasonCode>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, SurrealValue, JsonSchema, Default, PartialEq, Eq)]
+pub struct IndexJobProgress {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub total_files: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub discovered_files: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parsed_files: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub indexed_files: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub embedded_chunks: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub current_file: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, SurrealValue, PartialEq, Eq)]
+pub struct IndexJobRecord {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<Thing>,
+    pub job_id: String,
+    pub project_id: String,
+    #[serde(default)]
+    pub target_generation: u64,
+    #[serde(default)]
+    pub workspace_path: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target_fingerprint: Option<String>,
+    pub structural_generation: u64,
+    pub state: IndexJobState,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stored_phase: Option<IndexJobPhase>,
+    pub phase: IndexJobPhase,
+    #[serde(default)]
+    pub resume_token: String,
+    #[serde(default = "default_datetime")]
+    pub created_at: Datetime,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub started_at: Option<Datetime>,
+    #[serde(default = "default_datetime")]
+    pub updated_at: Datetime,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub completed_at: Option<Datetime>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<IndexJobError>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resume: Option<IndexJobResumeState>,
+    #[serde(default)]
+    pub completed_files_count: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub total_files_count: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason_code: Option<IndexJobReasonCode>,
+    #[serde(default)]
+    pub progress: IndexJobProgress,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, SurrealValue, PartialEq, Eq)]
+pub struct IndexFileCheckpoint {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<Thing>,
+    #[serde(default)]
+    pub job_id: String,
+    pub project_id: String,
+    #[serde(default)]
+    pub generation: u64,
+    #[serde(default)]
+    pub relative_file_path: String,
+    pub file_path: String,
+    pub content_hash: String,
+    pub checkpoint_generation: u64,
+    pub phase: IndexJobPhase,
+    #[serde(default)]
+    pub completed: bool,
+    #[serde(default = "default_datetime")]
+    pub completed_at: Datetime,
+    #[serde(default)]
+    pub chunks_written: u64,
+    #[serde(default)]
+    pub symbols_written: u64,
+    #[serde(default = "default_datetime")]
+    pub updated_at: Datetime,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        validate_index_job_transition, validate_job_transition, IndexJobReasonCode, IndexJobState,
+    };
+
+    #[test]
+    fn index_job_state_machine_allows_legal_transitions() {
+        let transitions = [
+            (IndexJobState::Queued, IndexJobState::Running),
+            (IndexJobState::Running, IndexJobState::Interrupted),
+            (IndexJobState::Running, IndexJobState::Completed),
+            (IndexJobState::Running, IndexJobState::Failed),
+            (IndexJobState::Running, IndexJobState::CancelRequested),
+            (IndexJobState::Interrupted, IndexJobState::Resumable),
+            (IndexJobState::Resumable, IndexJobState::Running),
+            (IndexJobState::CancelRequested, IndexJobState::Cancelled),
+            (IndexJobState::Cancelled, IndexJobState::Abandoned),
+        ];
+
+        for (from, to) in transitions {
+            assert!(
+                validate_index_job_transition(from.clone(), to.clone()).is_ok(),
+                "expected {from:?} -> {to:?} to be legal"
+            );
+        }
+    }
+
+    #[test]
+    fn index_job_state_machine_rejects_invalid_transition() {
+        let error = validate_job_transition(IndexJobState::Completed, IndexJobState::Running)
+            .expect_err("completed jobs are terminal and cannot return to running");
+
+        assert!(error.contains("Completed"));
+        assert!(error.contains("Running"));
+    }
+
+    #[test]
+    fn index_job_state_machine_rejects_invalid_transition_with_typed_error() {
+        let error = validate_index_job_transition(IndexJobState::Completed, IndexJobState::Running)
+            .expect_err("completed jobs are terminal and cannot return to running");
+
+        assert_eq!(error.from, IndexJobState::Completed);
+        assert_eq!(error.to, IndexJobState::Running);
+        assert_eq!(
+            error.reason_code,
+            IndexJobReasonCode::IllegalStateTransition
+        );
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]

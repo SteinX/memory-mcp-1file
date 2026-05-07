@@ -16,6 +16,7 @@ mkl = ["candle-core/mkl", "candle-nn/mkl", "candle-transformers/mkl"]
 [dependencies]
 # Database
 surrealdb = { version = "3.0", default-features = false, features = [
+    "kv-mem",
     "kv-surrealkv",
     "rustls",
 ] }

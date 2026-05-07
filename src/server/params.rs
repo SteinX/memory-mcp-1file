@@ -571,13 +571,65 @@ pub struct GetStatusParams {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[schemars(title = "")]
 pub struct IndexProjectParams {
-    pub path: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none", alias = "projectId")]
+    pub project_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resume: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub job_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resume_token: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub allow_full_restart_fallback: Option<bool>,
     /// Force re-index (default: false)
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub force: Option<bool>,
     /// Required together with force=true when retrying a previously failed full index.
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub confirm_failed_restart: Option<bool>,
+}
+
+#[cfg(test)]
+mod index_project_param_tests {
+    use super::IndexProjectParams;
+
+    #[test]
+    fn index_project_params_legacy_deserializes() {
+        let params: IndexProjectParams = serde_json::from_str(r#"{"path":"/tmp/p"}"#)
+        .expect("legacy index_project payload should deserialize");
+
+        assert_eq!(params.path.as_deref(), Some("/tmp/p"));
+        assert_eq!(params.project_id, None);
+        assert_eq!(params.resume, None);
+        assert_eq!(params.job_id, None);
+        assert_eq!(params.resume_token, None);
+        assert_eq!(params.allow_full_restart_fallback, None);
+        assert_eq!(params.force, None);
+        assert_eq!(params.confirm_failed_restart, None);
+    }
+
+    #[test]
+    fn index_project_params_resume_deserializes() {
+        let params: IndexProjectParams = serde_json::from_value(serde_json::json!({
+            "project_id": "project",
+            "resume": true,
+            "job_id": "job-123",
+            "resume_token": "resume-token-456",
+            "allow_full_restart_fallback": false
+        }))
+        .expect("resume index_project payload should deserialize");
+
+        assert_eq!(params.path, None);
+        assert_eq!(params.project_id.as_deref(), Some("project"));
+        assert_eq!(params.resume, Some(true));
+        assert_eq!(params.job_id.as_deref(), Some("job-123"));
+        assert_eq!(params.resume_token.as_deref(), Some("resume-token-456"));
+        assert_eq!(params.allow_full_restart_fallback, Some(false));
+        assert_eq!(params.force, None);
+        assert_eq!(params.confirm_failed_restart, None);
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
