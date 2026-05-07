@@ -406,11 +406,20 @@ pub(crate) async fn search_code_with_context(
     // Run vector search and BM25 in parallel for robust results.
     // Previously BM25 was only a fallback — degenerate vectors masked BM25 entirely.
     let project_id = project_id.as_deref();
+    let active_generation = match project_id {
+        Some(ref project_id) => state
+            .storage
+            .get_active_generation(&project_id)
+            .await
+            .ok()
+            .flatten(),
+        None => None,
+    };
     let (vector_results, bm25_results) = tokio::join!(
         async {
             match state
                 .storage
-                .vector_search_code(&query_embedding, project_id, limit)
+                .vector_search_code(&query_embedding, project_id, active_generation, limit)
                 .await
             {
                 Ok(results) => {
@@ -584,6 +593,15 @@ pub(crate) async fn recall_code_with_context(
 
     let stage_start = Instant::now();
     let limit = normalize_limit(limit);
+    let active_generation = match project_id {
+        Some(ref project_id) => state
+            .storage
+            .get_active_generation(project_id.as_str())
+            .await
+            .ok()
+            .flatten(),
+        None => None,
+    };
 
     if project_resolution.is_stale_binding() {
         let mut response = json!({
@@ -700,7 +718,7 @@ pub(crate) async fn recall_code_with_context(
     let stage_start = Instant::now();
     let vector_results: Vec<_> = match state
         .storage
-        .vector_search_code(&query_embedding, project_id, fetch_limit)
+        .vector_search_code(&query_embedding, project_id, active_generation, fetch_limit)
         .await
     {
         Ok(results) => {
@@ -745,7 +763,15 @@ pub(crate) async fn recall_code_with_context(
     for probe in &symbol_probes {
         if let Ok((symbols, _)) = state
             .storage
-            .search_symbols(probe, project_id, 20, 0, None, path_prefix)
+            .search_symbols(
+                probe,
+                project_id,
+                20,
+                0,
+                None,
+                path_prefix,
+                active_generation,
+            )
             .await
         {
             for s in symbols {
@@ -818,7 +844,7 @@ pub(crate) async fn recall_code_with_context(
             if !symbol_keys.is_empty() {
                 if let Ok(mapped) = state
                     .storage
-                    .get_mapped_chunks_for_symbols(pid, &symbol_keys, 80)
+                    .get_mapped_chunks_for_symbols(pid, &symbol_keys, active_generation, 80)
                     .await
                 {
                     mapped_chunks_count = mapped.len();
@@ -829,7 +855,11 @@ pub(crate) async fn recall_code_with_context(
                         .collect();
                     missing_chunk_ids_count = missing_ids.len();
                     if !missing_ids.is_empty() {
-                        if let Ok(chunks) = state.storage.get_chunks_by_ids(&missing_ids).await {
+                        if let Ok(chunks) = state
+                            .storage
+                            .get_chunks_by_ids(&missing_ids, active_generation)
+                            .await
+                        {
                             for chunk in chunks {
                                 let Some(id) = chunk
                                     .id
@@ -884,7 +914,11 @@ pub(crate) async fn recall_code_with_context(
             files_to_fetch_count = files_to_fetch.len();
 
             for file_path in files_to_fetch {
-                if let Ok(chunks) = state.storage.get_chunks_by_path(pid, &file_path).await {
+                if let Ok(chunks) = state
+                    .storage
+                    .get_chunks_by_path(pid, &file_path, active_generation)
+                    .await
+                {
                     for chunk in chunks {
                         let Some(id) = chunk
                             .id
@@ -983,7 +1017,7 @@ pub(crate) async fn recall_code_with_context(
         let stage_start = Instant::now();
         let seed_symbols_vec = state
             .storage
-            .vector_search_symbols(&query_embedding, project_id, 20)
+            .vector_search_symbols(&query_embedding, project_id, active_generation, 20)
             .await
             .unwrap_or_default();
         if let Some(timing) = timing.as_mut() {
@@ -1020,7 +1054,11 @@ pub(crate) async fn recall_code_with_context(
                 timing.count("ppr_seed_symbol_ids_count", symbol_ids.len());
             }
             let stage_start = Instant::now();
-            match state.storage.get_code_subgraph(&symbol_ids).await {
+            match state
+                .storage
+                .get_code_subgraph(&symbol_ids, active_generation)
+                .await
+            {
                 Ok((symbols, relations)) if !symbols.is_empty() => {
                     if let Some(timing) = timing.as_mut() {
                         timing.record("ppr_subgraph_fetch", stage_start.elapsed());

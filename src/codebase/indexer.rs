@@ -11,9 +11,12 @@ use crate::storage::StorageBackend;
 use crate::types::{derive_project_id, IndexState, IndexStatus};
 use crate::Result;
 
-use super::chunker::chunk_file;
+use super::chunker::chunk_file_for_generation;
 use super::parser::CodeParser;
-use super::relations::{create_symbol_relations, detect_containment_references, RelationStats};
+use super::relations::{
+    create_symbol_relations, create_symbol_relations_for_generation, detect_containment_references,
+    RelationStats,
+};
 use super::scanner::scan_directory;
 use super::symbol_index::SymbolIndex;
 
@@ -334,7 +337,11 @@ async fn rebuild_bm25_and_finalize_index_status(
 
     match state
         .code_search
-        .try_rebuild_from_storage(state.storage.as_ref(), project_id)
+        .try_rebuild_from_storage(
+            state.storage.as_ref(),
+            project_id,
+            Some(active_structural_generation),
+        )
         .await
     {
         Ok(_) => finalize_index_status_if_current(state, status, active_structural_generation).await,
@@ -922,12 +929,25 @@ async fn run_legacy_index_pipeline(
         // `content` is moved (not cloned) — the hash was already computed above.
         let file_path_for_blocking = file_path.clone();
         let project_id_for_blocking = project_id.to_string();
+        let generation_for_blocking = active_structural_generation;
         parse_set.spawn_blocking(move || {
             let parse_started = Instant::now();
             let fp_str = file_path_for_blocking.to_string_lossy().to_string();
-            let chunks = chunk_file(&file_path_for_blocking, &content, &project_id_for_blocking);
+            let chunks = chunk_file_for_generation(
+                &file_path_for_blocking,
+                &content,
+                &project_id_for_blocking,
+                Some(generation_for_blocking),
+            );
             let (symbols, references) =
                 CodeParser::parse_file(&file_path_for_blocking, &content, &project_id_for_blocking);
+            let symbols = symbols
+                .into_iter()
+                .map(|mut symbol| {
+                    symbol.generation = Some(generation_for_blocking);
+                    symbol
+                })
+                .collect();
             (
                 chunks,
                 symbols,
@@ -1094,6 +1114,7 @@ async fn run_legacy_index_pipeline(
         state.as_ref(),
         project_id,
         &status,
+        active_structural_generation,
         &symbol_index,
         &mut total_relation_stats,
         &mut relation_create_elapsed_ms,
@@ -1232,6 +1253,7 @@ async fn read_file_for_staged(
     seq: usize,
     path: std::path::PathBuf,
     project_id: String,
+    active_structural_generation: u64,
     read_worker_permits: Arc<tokio::sync::Semaphore>,
     parse_worker_permits: Arc<tokio::sync::Semaphore>,
     file_permits: Arc<tokio::sync::Semaphore>,
@@ -1320,7 +1342,7 @@ async fn read_file_for_staged(
                 };
             }
             let file_hash = blake3::hash(content.as_bytes()).to_hex().to_string();
-            parse_file_for_staged(seq, path, path_str, project_id, content, file_hash, read_hash_started.elapsed().as_millis(), byte_permits_for_file, parse_worker_permits).await
+            parse_file_for_staged(seq, path, path_str, project_id, active_structural_generation, content, file_hash, read_hash_started.elapsed().as_millis(), byte_permits_for_file, parse_worker_permits).await
         }
         Err(e) => ParsedFile {
             seq,
@@ -1343,6 +1365,7 @@ async fn parse_file_for_staged(
     path: std::path::PathBuf,
     path_str: String,
     project_id: String,
+    active_structural_generation: u64,
     content: String,
     file_hash: String,
     read_elapsed_ms: u128,
@@ -1371,8 +1394,20 @@ async fn parse_file_for_staged(
     let join = tokio::task::spawn_blocking(move || {
         let _byte_permits = byte_permits;
         let parse_started = Instant::now();
-        let chunks = chunk_file(&parse_path, &content, &project_id);
+        let chunks = chunk_file_for_generation(
+            &parse_path,
+            &content,
+            &project_id,
+            Some(active_structural_generation),
+        );
         let (symbols, references) = CodeParser::parse_file(&parse_path, &content, &project_id);
+        let symbols = symbols
+            .into_iter()
+            .map(|mut symbol| {
+                symbol.generation = Some(active_structural_generation);
+                symbol
+            })
+            .collect();
         (chunks, symbols, references, parse_started.elapsed().as_millis())
     });
 
@@ -1529,6 +1564,7 @@ async fn flush_relation_batches(
     state: &AppState,
     project_id: &str,
     status: &IndexStatus,
+    active_structural_generation: u64,
     symbol_index: &SymbolIndex,
     total_relation_stats: &mut RelationStats,
     relation_create_elapsed_ms: &mut u128,
@@ -1538,11 +1574,12 @@ async fn flush_relation_batches(
     let relation_batch_size = relation_batch_size.max(1);
     for relation_batch in batch.chunks(relation_batch_size) {
         let relation_started = Instant::now();
-        let stats = create_symbol_relations(
+        let stats = create_symbol_relations_for_generation(
             state.storage.as_ref(),
             project_id,
             relation_batch,
             symbol_index,
+            active_structural_generation,
         )
         .await;
         total_relation_stats.created += stats.created;
@@ -1566,6 +1603,7 @@ async fn flush_staged_relations(
     state: &Arc<AppState>,
     project_id: &str,
     status: &IndexStatus,
+    active_structural_generation: u64,
     symbol_index: &SymbolIndex,
     total_relation_stats: &mut RelationStats,
     metrics: &mut IndexMetrics,
@@ -1576,6 +1614,7 @@ async fn flush_staged_relations(
         state.as_ref(),
         project_id,
         status,
+        active_structural_generation,
         symbol_index,
         total_relation_stats,
         &mut metrics.relation_create_elapsed_ms,
@@ -1821,6 +1860,7 @@ async fn run_staged_index_pipeline(
             seq,
             file_path,
             project_id.to_string(),
+            active_structural_generation,
             read_worker_permits.clone(),
             parse_worker_permits.clone(),
             file_permits.clone(),
@@ -1906,6 +1946,7 @@ async fn run_staged_index_pipeline(
         &state,
         project_id,
         &status,
+        active_structural_generation,
         &symbol_index,
         &mut total_relation_stats,
         &mut metrics,
@@ -2089,6 +2130,7 @@ pub async fn incremental_index(
     changed_paths: Vec<std::path::PathBuf>,
 ) -> Result<IncrementalResult> {
     let mut result = IncrementalResult::default();
+    let active_structural_generation = state.storage.get_active_generation(project_id).await?;
     // Keep a local alias for the previous `updated` counter used inside the macro.
     macro_rules! inc_updated {
         () => {
@@ -2177,17 +2219,32 @@ pub async fn incremental_index(
 
             if !all_refs.is_empty() {
                 let mut symbol_index = SymbolIndex::new();
-                if let Ok(all_symbols) = state.storage.get_project_symbols(project_id).await {
+                if let Ok(all_symbols) = state
+                    .storage
+                    .get_project_symbols(project_id, active_structural_generation)
+                    .await
+                {
                     symbol_index.add_batch(&all_symbols);
                 }
                 symbol_index.add_batch(&symbols);
-                let _stats = create_symbol_relations(
-                    state.storage.as_ref(),
-                    project_id,
-                    &all_refs,
-                    &symbol_index,
-                )
-                .await;
+                let _stats = if let Some(generation) = active_structural_generation {
+                    create_symbol_relations_for_generation(
+                        state.storage.as_ref(),
+                        project_id,
+                        &all_refs,
+                        &symbol_index,
+                        generation,
+                    )
+                    .await
+                } else {
+                    create_symbol_relations(
+                        state.storage.as_ref(),
+                        project_id,
+                        &all_refs,
+                        &symbol_index,
+                    )
+                    .await
+                };
             }
 
             // Store updated file hash
@@ -2286,11 +2343,23 @@ pub async fn incremental_index(
         // `path_str` and `new_hash` are moved through the result for post-processing.
         let path_for_blocking = path.clone();
         let project_id_for_blocking = project_id.to_string();
+        let generation_for_blocking = active_structural_generation;
         parse_set.spawn_blocking(move || {
-            let chunks =
-                super::chunker::chunk_file(&path_for_blocking, &content, &project_id_for_blocking);
+            let chunks = super::chunker::chunk_file_for_generation(
+                &path_for_blocking,
+                &content,
+                &project_id_for_blocking,
+                generation_for_blocking,
+            );
             let (symbols, references) =
                 CodeParser::parse_file(&path_for_blocking, &content, &project_id_for_blocking);
+            let symbols = symbols
+                .into_iter()
+                .map(|mut symbol| {
+                    symbol.generation = generation_for_blocking;
+                    symbol
+                })
+                .collect();
             (chunks, symbols, references, path_str, new_hash)
         });
     }
@@ -2586,13 +2655,13 @@ mod tests {
         let before_chunks = ctx
             .state
             .storage
-            .count_chunks(&project_id)
+            .count_chunks(&project_id, None)
             .await
             .unwrap();
         let before_symbols = ctx
             .state
             .storage
-            .count_symbols(&project_id)
+            .count_symbols(&project_id, None)
             .await
             .unwrap();
 
@@ -2604,13 +2673,13 @@ mod tests {
         let after_chunks = ctx
             .state
             .storage
-            .count_chunks(&project_id)
+            .count_chunks(&project_id, None)
             .await
             .unwrap();
         let after_symbols = ctx
             .state
             .storage
-            .count_symbols(&project_id)
+            .count_symbols(&project_id, None)
             .await
             .unwrap();
         assert_eq!(before_chunks, after_chunks);
@@ -2800,7 +2869,7 @@ mod tests {
         let symbols = ctx
             .state
             .storage
-            .get_project_symbols(&status.project_id)
+            .get_project_symbols(&status.project_id, None)
             .await
             .unwrap();
         let symbol_names: HashSet<String> =
@@ -2964,13 +3033,13 @@ mod tests {
         let legacy_chunks = legacy_ctx
             .state
             .storage
-            .get_all_chunks_for_project(&legacy_status.project_id)
+            .get_all_chunks_for_project(&legacy_status.project_id, None)
             .await
             .unwrap();
         let staged_chunks = staged_ctx
             .state
             .storage
-            .get_all_chunks_for_project(&staged_status.project_id)
+            .get_all_chunks_for_project(&staged_status.project_id, None)
             .await
             .unwrap();
         assert_eq!(
@@ -2981,13 +3050,13 @@ mod tests {
         let legacy_symbols = legacy_ctx
             .state
             .storage
-            .get_project_symbols(&legacy_status.project_id)
+            .get_project_symbols(&legacy_status.project_id, None)
             .await
             .unwrap();
         let staged_symbols = staged_ctx
             .state
             .storage
-            .get_project_symbols(&staged_status.project_id)
+            .get_project_symbols(&staged_status.project_id, None)
             .await
             .unwrap();
         assert_eq!(
@@ -3196,7 +3265,7 @@ mod tests {
         let symbols = ctx
             .state
             .storage
-            .get_project_symbols(&status.project_id)
+            .get_project_symbols(&status.project_id, None)
             .await
             .unwrap();
         let symbol_names: HashSet<String> = symbols.into_iter().map(|symbol| symbol.name).collect();
@@ -3229,13 +3298,13 @@ mod tests {
         let chunks = ctx
             .state
             .storage
-            .get_all_chunks_for_project(&status.project_id)
+            .get_all_chunks_for_project(&status.project_id, None)
             .await
             .unwrap();
         let symbols = ctx
             .state
             .storage
-            .get_project_symbols(&status.project_id)
+            .get_project_symbols(&status.project_id, None)
             .await
             .unwrap();
         assert!(chunks.is_empty());
@@ -3258,13 +3327,13 @@ mod tests {
         let chunks1 = ctx
             .state
             .storage
-            .get_all_chunks_for_project(&status1.project_id)
+            .get_all_chunks_for_project(&status1.project_id, None)
             .await
             .unwrap();
         let symbols1 = ctx
             .state
             .storage
-            .get_project_symbols(&status1.project_id)
+            .get_project_symbols(&status1.project_id, None)
             .await
             .unwrap();
 
@@ -3318,13 +3387,13 @@ mod tests {
         let chunks2 = ctx
             .state
             .storage
-            .get_all_chunks_for_project(&status2.project_id)
+            .get_all_chunks_for_project(&status2.project_id, None)
             .await
             .unwrap();
         let symbols2 = ctx
             .state
             .storage
-            .get_project_symbols(&status2.project_id)
+            .get_project_symbols(&status2.project_id, None)
             .await
             .unwrap();
 
@@ -3478,13 +3547,13 @@ mod tests {
         let b_chunks = ctx
             .state
             .storage
-            .get_chunks_by_path(&status.project_id, &file_b.to_string_lossy())
+            .get_chunks_by_path(&status.project_id, &file_b.to_string_lossy(), None)
             .await
             .unwrap();
         let b_symbols: Vec<_> = ctx
             .state
             .storage
-            .get_project_symbols(&status.project_id)
+            .get_project_symbols(&status.project_id, None)
             .await
             .unwrap()
             .into_iter()

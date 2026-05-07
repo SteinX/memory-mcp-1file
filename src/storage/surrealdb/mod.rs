@@ -277,7 +277,7 @@ impl SymbolGraphTraversalStorage for SurrealStorage {
         direction: Direction,
     ) -> Result<(Vec<CodeSymbol>, Vec<SymbolRelation>)> {
         // Delegate to the existing single-hop implementation
-        symbol_ops::get_related_symbols(&self.db, symbol_id, 1, direction).await
+        symbol_ops::get_related_symbols(&self.db, symbol_id, 1, direction, None).await
     }
 
     async fn get_direct_symbol_relations_batch(
@@ -476,18 +476,22 @@ impl StorageBackend for SurrealStorage {
         &self,
         embedding: &[f32],
         project_id: Option<&str>,
+        active_generation: Option<u64>,
         limit: usize,
     ) -> Result<Vec<ScoredCodeChunk>> {
-        symbol_ops::vector_search_code(&self.db, embedding, project_id, limit).await
+        symbol_ops::vector_search_code(&self.db, embedding, project_id, active_generation, limit)
+            .await
     }
 
     async fn vector_search_symbols(
         &self,
         embedding: &[f32],
         project_id: Option<&str>,
+        active_generation: Option<u64>,
         limit: usize,
     ) -> Result<Vec<CodeSymbol>> {
-        symbol_ops::vector_search_symbols(&self.db, embedding, project_id, limit).await
+        symbol_ops::vector_search_symbols(&self.db, embedding, project_id, active_generation, limit)
+            .await
     }
 
     async fn bm25_search(
@@ -589,25 +593,35 @@ impl StorageBackend for SurrealStorage {
         &self,
         project_id: &str,
         file_path: &str,
+        active_generation: Option<u64>,
     ) -> Result<Vec<CodeChunk>> {
-        code_ops::get_chunks_by_path(&self.db, project_id, file_path).await
+        code_ops::get_chunks_by_path(&self.db, project_id, file_path, active_generation).await
     }
 
-    async fn get_all_chunks_for_project(&self, project_id: &str) -> Result<Vec<CodeChunk>> {
-        code_ops::get_all_chunks_for_project(&self.db, project_id).await
+    async fn get_all_chunks_for_project(
+        &self,
+        project_id: &str,
+        active_generation: Option<u64>,
+    ) -> Result<Vec<CodeChunk>> {
+        code_ops::get_all_chunks_for_project(&self.db, project_id, active_generation).await
     }
 
     async fn get_chunks_paginated(
         &self,
         project_id: &str,
+        active_generation: Option<u64>,
         limit: usize,
         offset: usize,
     ) -> Result<Vec<CodeChunk>> {
-        code_ops::get_chunks_paginated(&self.db, project_id, limit, offset).await
+        code_ops::get_chunks_paginated(&self.db, project_id, active_generation, limit, offset).await
     }
 
-    async fn get_chunks_by_ids(&self, ids: &[String]) -> Result<Vec<CodeChunk>> {
-        code_ops::get_chunks_by_ids(&self.db, ids).await
+    async fn get_chunks_by_ids(
+        &self,
+        ids: &[String],
+        active_generation: Option<u64>,
+    ) -> Result<Vec<CodeChunk>> {
+        code_ops::get_chunks_by_ids(&self.db, ids, active_generation).await
     }
 
     async fn clear_project_embeddings(&self, project_id: &str) -> Result<u64> {
@@ -751,16 +765,28 @@ impl StorageBackend for SurrealStorage {
         symbol_ops::delete_symbols_by_path(&self.db, project_id, file_path).await
     }
 
-    async fn get_project_symbols(&self, project_id: &str) -> Result<Vec<CodeSymbol>> {
-        symbol_ops::get_project_symbols(&self.db, project_id).await
+    async fn get_project_symbols(
+        &self,
+        project_id: &str,
+        active_generation: Option<u64>,
+    ) -> Result<Vec<CodeSymbol>> {
+        symbol_ops::get_project_symbols(&self.db, project_id, active_generation).await
     }
 
-    async fn get_symbol_callers(&self, symbol_id: &str) -> Result<Vec<CodeSymbol>> {
-        symbol_ops::get_symbol_callers(&self.db, symbol_id).await
+    async fn get_symbol_callers(
+        &self,
+        symbol_id: &str,
+        active_generation: Option<u64>,
+    ) -> Result<Vec<CodeSymbol>> {
+        symbol_ops::get_symbol_callers(&self.db, symbol_id, active_generation).await
     }
 
-    async fn get_symbol_callees(&self, symbol_id: &str) -> Result<Vec<CodeSymbol>> {
-        symbol_ops::get_symbol_callees(&self.db, symbol_id).await
+    async fn get_symbol_callees(
+        &self,
+        symbol_id: &str,
+        active_generation: Option<u64>,
+    ) -> Result<Vec<CodeSymbol>> {
+        symbol_ops::get_symbol_callees(&self.db, symbol_id, active_generation).await
     }
 
     async fn get_related_symbols(
@@ -768,15 +794,18 @@ impl StorageBackend for SurrealStorage {
         symbol_id: &str,
         depth: usize,
         direction: Direction,
+        active_generation: Option<u64>,
     ) -> Result<(Vec<CodeSymbol>, Vec<SymbolRelation>)> {
-        symbol_ops::get_related_symbols(&self.db, symbol_id, depth, direction).await
+        symbol_ops::get_related_symbols(&self.db, symbol_id, depth, direction, active_generation)
+            .await
     }
 
     async fn get_code_subgraph(
         &self,
         symbol_ids: &[String],
+        active_generation: Option<u64>,
     ) -> Result<(Vec<CodeSymbol>, Vec<SymbolRelation>)> {
-        symbol_ops::get_code_subgraph(&self.db, symbol_ids).await
+        symbol_ops::get_code_subgraph(&self.db, symbol_ids, active_generation).await
     }
 
     async fn search_symbols(
@@ -787,6 +816,7 @@ impl StorageBackend for SurrealStorage {
         offset: usize,
         symbol_type: Option<&str>,
         path_prefix: Option<&str>,
+        active_generation: Option<u64>,
     ) -> Result<(Vec<CodeSymbol>, u32)> {
         symbol_ops::search_symbols(
             &self.db,
@@ -796,6 +826,7 @@ impl StorageBackend for SurrealStorage {
             offset,
             symbol_type,
             path_prefix,
+            active_generation,
         )
         .await
     }
@@ -812,25 +843,41 @@ impl StorageBackend for SurrealStorage {
         &self,
         project_id: &str,
         symbol_ids: &[String],
+        active_generation: Option<u64>,
         limit: usize,
     ) -> Result<Vec<(String, f32)>> {
-        symbol_ops::get_mapped_chunks_for_symbols(&self.db, project_id, symbol_ids, limit).await
+        symbol_ops::get_mapped_chunks_for_symbols(
+            &self.db,
+            project_id,
+            symbol_ids,
+            active_generation,
+            limit,
+        )
+        .await
     }
 
-    async fn count_symbols(&self, project_id: &str) -> Result<u32> {
-        symbol_ops::count_symbols(&self.db, project_id).await
+    async fn count_symbols(&self, project_id: &str, active_generation: Option<u64>) -> Result<u32> {
+        symbol_ops::count_symbols(&self.db, project_id, active_generation).await
     }
 
-    async fn count_chunks(&self, project_id: &str) -> Result<u32> {
-        code_ops::count_chunks(&self.db, project_id).await
+    async fn count_chunks(&self, project_id: &str, active_generation: Option<u64>) -> Result<u32> {
+        code_ops::count_chunks(&self.db, project_id, active_generation).await
     }
 
-    async fn count_embedded_symbols(&self, project_id: &str) -> Result<u32> {
-        symbol_ops::count_embedded_symbols(&self.db, project_id).await
+    async fn count_embedded_symbols(
+        &self,
+        project_id: &str,
+        active_generation: Option<u64>,
+    ) -> Result<u32> {
+        symbol_ops::count_embedded_symbols(&self.db, project_id, active_generation).await
     }
 
-    async fn count_embedded_chunks(&self, project_id: &str) -> Result<u32> {
-        code_ops::count_embedded_chunks(&self.db, project_id).await
+    async fn count_embedded_chunks(
+        &self,
+        project_id: &str,
+        active_generation: Option<u64>,
+    ) -> Result<u32> {
+        code_ops::count_embedded_chunks(&self.db, project_id, active_generation).await
     }
 
     async fn get_unembedded_chunks(&self, project_id: &str) -> Result<Vec<(String, String)>> {
@@ -1039,6 +1086,50 @@ mod tests {
 
     async fn setup_in_memory_test_db() -> SurrealStorage {
         SurrealStorage::new_in_memory(768).await.unwrap()
+    }
+
+    fn code_chunk_for_generation(
+        project_id: &str,
+        name: &str,
+        content: &str,
+        generation: Option<u64>,
+    ) -> CodeChunk {
+        CodeChunk {
+            id: None,
+            file_path: format!("src/{name}.rs"),
+            content: content.to_string(),
+            language: Language::Rust,
+            start_line: 1,
+            end_line: 3,
+            chunk_type: ChunkType::Function,
+            name: Some(name.to_string()),
+            context_path: None,
+            embedding: Some(vec![0.1; 768]),
+            content_hash: format!("hash-{project_id}-{name}-{:?}", generation),
+            project_id: Some(project_id.to_string()),
+            generation,
+            indexed_at: Datetime::default(),
+        }
+    }
+
+    fn code_symbol_for_generation(
+        project_id: &str,
+        name: &str,
+        file_path: &str,
+        line: u32,
+        generation: Option<u64>,
+    ) -> CodeSymbol {
+        let mut symbol = CodeSymbol::new(
+            name.to_string(),
+            SymbolType::Function,
+            file_path.to_string(),
+            line,
+            line + 2,
+            project_id.to_string(),
+        );
+        symbol.generation = generation;
+        symbol.signature = Some(format!("fn {name}()"));
+        symbol
     }
 
     fn migration_memory_record(id: &str, content: &str) -> MigrationMemoryRecord {
@@ -1675,13 +1766,13 @@ mod tests {
 
         // 3. Test get_symbol_callees (Outgoing)
         // main -> ? (should be helper)
-        let callees = storage.get_symbol_callees(&caller_id).await.unwrap();
+        let callees = storage.get_symbol_callees(&caller_id, None).await.unwrap();
         assert_eq!(callees.len(), 1, "Should find 1 callee");
         assert_eq!(callees[0].name, "helper");
 
         // 4. Test get_symbol_callers (Incoming)
         // ? -> helper (should be main)
-        let callers = storage.get_symbol_callers(&callee_id).await.unwrap();
+        let callers = storage.get_symbol_callers(&callee_id, None).await.unwrap();
         assert_eq!(callers.len(), 1, "Should find 1 caller");
         assert_eq!(callers[0].name, "main");
     }
@@ -1735,7 +1826,7 @@ mod tests {
             .unwrap();
 
         let (_symbols, relations) = storage
-            .get_related_symbols(&caller_id, 1, Direction::Outgoing)
+            .get_related_symbols(&caller_id, 1, Direction::Outgoing, None)
             .await
             .unwrap();
 
@@ -2502,7 +2593,7 @@ mod tests {
 
         // Without filter: should return all 4
         let (all, total) = storage
-            .search_symbols("my", None, 10, 0, None, None)
+            .search_symbols("my", None, 10, 0, None, None, None)
             .await
             .unwrap();
         // Note: MyStruct also matches "my" (case-insensitive)
@@ -2511,7 +2602,7 @@ mod tests {
 
         // With symbol_type filter "function": should return 3
         let (funcs, total_funcs) = storage
-            .search_symbols("my", None, 10, 0, Some("function"), None)
+            .search_symbols("my", None, 10, 0, Some("function"), None, None)
             .await
             .unwrap();
         assert_eq!(
@@ -2528,7 +2619,7 @@ mod tests {
 
         // With symbol_type filter "struct": should return 1
         let (structs, total_structs) = storage
-            .search_symbols("my", None, 10, 0, Some("struct"), None)
+            .search_symbols("my", None, 10, 0, Some("struct"), None, None)
             .await
             .unwrap();
         assert_eq!(total_structs, 1, "Should find 1 struct symbol");
@@ -2555,7 +2646,7 @@ mod tests {
 
         // Page 1: limit=2, offset=0
         let (page1, total) = storage
-            .search_symbols("func", Some("proj2"), 2, 0, None, None)
+            .search_symbols("func", Some("proj2"), 2, 0, None, None, None)
             .await
             .unwrap();
         assert_eq!(total, 5, "Total should be 5");
@@ -2563,14 +2654,14 @@ mod tests {
 
         // Page 2: limit=2, offset=2
         let (page2, _) = storage
-            .search_symbols("func", Some("proj2"), 2, 2, None, None)
+            .search_symbols("func", Some("proj2"), 2, 2, None, None, None)
             .await
             .unwrap();
         assert_eq!(page2.len(), 2, "Page 2 should have 2 results");
 
         // Page 3: limit=2, offset=4
         let (page3, _) = storage
-            .search_symbols("func", Some("proj2"), 2, 4, None, None)
+            .search_symbols("func", Some("proj2"), 2, 4, None, None, None)
             .await
             .unwrap();
         assert_eq!(page3.len(), 1, "Page 3 should have 1 result");
@@ -2644,6 +2735,136 @@ mod tests {
             "bm25_search_code filtered by project_alpha should return 3 (got {})",
             alpha_results.len()
         );
+    }
+
+    #[tokio::test]
+    async fn code_search_reads_only_active_generation() {
+        let storage = setup_in_memory_test_db().await;
+        let project_id = "active_generation_search_project";
+        storage.set_active_generation(project_id, 1).await.unwrap();
+
+        let active = code_chunk_for_generation(
+            project_id,
+            "active_only",
+            "fn active_only() { let marker = \"isolation_token\"; }",
+            Some(1),
+        );
+        let staged = code_chunk_for_generation(
+            project_id,
+            "staged_only",
+            "fn staged_only() { let marker = \"isolation_token\"; }",
+            Some(2),
+        );
+        let legacy = code_chunk_for_generation(
+            project_id,
+            "legacy_only",
+            "fn legacy_only() { let marker = \"isolation_token\"; }",
+            None,
+        );
+        storage
+            .create_code_chunks_batch(vec![active, staged, legacy])
+            .await
+            .unwrap();
+
+        let active_generation = storage.get_active_generation(project_id).await.unwrap();
+        let chunks = storage
+            .get_all_chunks_for_project(project_id, active_generation)
+            .await
+            .unwrap();
+        let names: std::collections::HashSet<_> = chunks
+            .into_iter()
+            .filter_map(|chunk| chunk.name)
+            .collect();
+
+        assert!(names.contains("active_only"));
+        assert!(names.contains("legacy_only"));
+        assert!(!names.contains("staged_only"));
+    }
+
+    #[tokio::test]
+    async fn symbol_graph_filters_to_active_generation() {
+        let storage = setup_in_memory_test_db().await;
+        let project_id = "active_generation_graph_project";
+        storage.set_active_generation(project_id, 1).await.unwrap();
+
+        let active_caller = code_symbol_for_generation(project_id, "caller", "src/active.rs", 1, Some(1));
+        let active_callee = code_symbol_for_generation(project_id, "active_callee", "src/active.rs", 10, Some(1));
+        let staged_callee = code_symbol_for_generation(project_id, "staged_callee", "src/staged.rs", 10, Some(2));
+
+        let active_caller_thing = crate::types::safe_thing::symbol_thing(
+            project_id,
+            &active_caller.file_path,
+            &active_caller.name,
+            active_caller.start_line,
+        );
+        let active_callee_thing = crate::types::safe_thing::symbol_thing(
+            project_id,
+            &active_callee.file_path,
+            &active_callee.name,
+            active_callee.start_line,
+        );
+        let staged_callee_thing = crate::types::safe_thing::symbol_thing(
+            project_id,
+            &staged_callee.file_path,
+            &staged_callee.name,
+            staged_callee.start_line,
+        );
+
+        storage
+            .create_code_symbols_batch(vec![active_caller, active_callee, staged_callee])
+            .await
+            .unwrap();
+
+        storage
+            .create_symbol_relations_batch(vec![
+                SymbolRelation::new(
+                    active_caller_thing.clone(),
+                    active_callee_thing,
+                    CodeRelationType::Calls,
+                    RelationClass::Observed,
+                    RelationProvenance::ParserExtracted,
+                    ConfidenceClass::Extracted,
+                    1,
+                    StalenessState::Current,
+                    "src/active.rs".to_string(),
+                    2,
+                    project_id.to_string(),
+                ),
+                SymbolRelation::new(
+                    active_caller_thing.clone(),
+                    staged_callee_thing,
+                    CodeRelationType::Calls,
+                    RelationClass::Observed,
+                    RelationProvenance::ParserExtracted,
+                    ConfidenceClass::Extracted,
+                    2,
+                    StalenessState::Current,
+                    "src/staged.rs".to_string(),
+                    2,
+                    project_id.to_string(),
+                ),
+            ])
+            .await
+            .unwrap();
+
+        let active_generation = storage.get_active_generation(project_id).await.unwrap();
+        let (symbols, relations) = storage
+            .get_related_symbols(
+                &format!(
+                    "{}:{}",
+                    active_caller_thing.table.as_str(),
+                    crate::types::record_key_to_string(&active_caller_thing.key)
+                ),
+                1,
+                Direction::Outgoing,
+                active_generation,
+            )
+            .await
+            .unwrap();
+
+        let names: Vec<_> = symbols.into_iter().map(|symbol| symbol.name).collect();
+        assert_eq!(relations.len(), 1);
+        assert_eq!(names, vec!["active_callee".to_string()]);
     }
 
     #[tokio::test]

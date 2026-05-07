@@ -233,6 +233,7 @@ pub trait StorageBackend: Send + Sync {
         &self,
         embedding: &[f32],
         project_id: Option<&str>,
+        active_generation: Option<u64>,
         limit: usize,
     ) -> Result<Vec<ScoredCodeChunk>>;
 
@@ -241,6 +242,7 @@ pub trait StorageBackend: Send + Sync {
         &self,
         embedding: &[f32],
         project_id: Option<&str>,
+        active_generation: Option<u64>,
         limit: usize,
     ) -> Result<Vec<CodeSymbol>>;
 
@@ -342,11 +344,19 @@ pub trait StorageBackend: Send + Sync {
     async fn delete_chunks_by_path(&self, project_id: &str, file_path: &str) -> Result<usize>;
 
     /// Get all chunks for a specific file path within a project
-    async fn get_chunks_by_path(&self, project_id: &str, file_path: &str)
-        -> Result<Vec<CodeChunk>>;
+    async fn get_chunks_by_path(
+        &self,
+        project_id: &str,
+        file_path: &str,
+        active_generation: Option<u64>,
+    ) -> Result<Vec<CodeChunk>>;
 
     /// Get all code chunks for a project (used to build in-memory BM25 index)
-    async fn get_all_chunks_for_project(&self, project_id: &str) -> Result<Vec<CodeChunk>>;
+    async fn get_all_chunks_for_project(
+        &self,
+        project_id: &str,
+        active_generation: Option<u64>,
+    ) -> Result<Vec<CodeChunk>>;
 
     /// Paginated code-chunk fetch used by the streaming BM25 warm-up.
     /// Returns up to `limit` chunks starting from row `offset` (zero-based).
@@ -355,6 +365,7 @@ pub trait StorageBackend: Send + Sync {
     async fn get_chunks_paginated(
         &self,
         project_id: &str,
+        active_generation: Option<u64>,
         limit: usize,
         offset: usize,
     ) -> Result<Vec<CodeChunk>>;
@@ -362,7 +373,11 @@ pub trait StorageBackend: Send + Sync {
     /// Fetch specific code chunks by their string IDs (e.g. "abc123").
     /// Used by the BM25 search to hydrate content for top-N results without
     /// keeping all chunk content in RAM.
-    async fn get_chunks_by_ids(&self, ids: &[String]) -> Result<Vec<CodeChunk>>;
+    async fn get_chunks_by_ids(
+        &self,
+        ids: &[String],
+        active_generation: Option<u64>,
+    ) -> Result<Vec<CodeChunk>>;
 
     /// Clear all embeddings for a project, forcing re-embedding via resume pipeline.
     /// Sets embedding = NONE on all chunks and symbols for the given project.
@@ -489,13 +504,25 @@ pub trait StorageBackend: Send + Sync {
     async fn delete_symbols_by_path(&self, project_id: &str, file_path: &str) -> Result<usize>;
 
     /// Get all symbols for a project (for building cross-file SymbolIndex)
-    async fn get_project_symbols(&self, project_id: &str) -> Result<Vec<CodeSymbol>>;
+    async fn get_project_symbols(
+        &self,
+        project_id: &str,
+        active_generation: Option<u64>,
+    ) -> Result<Vec<CodeSymbol>>;
 
     /// Find all symbols that call a given symbol
-    async fn get_symbol_callers(&self, symbol_id: &str) -> Result<Vec<CodeSymbol>>;
+    async fn get_symbol_callers(
+        &self,
+        symbol_id: &str,
+        active_generation: Option<u64>,
+    ) -> Result<Vec<CodeSymbol>>;
 
     /// Find all symbols called by a given symbol
-    async fn get_symbol_callees(&self, symbol_id: &str) -> Result<Vec<CodeSymbol>>;
+    async fn get_symbol_callees(
+        &self,
+        symbol_id: &str,
+        active_generation: Option<u64>,
+    ) -> Result<Vec<CodeSymbol>>;
 
     /// Get related symbols via graph traversal
     async fn get_related_symbols(
@@ -503,12 +530,14 @@ pub trait StorageBackend: Send + Sync {
         symbol_id: &str,
         depth: usize,
         direction: Direction,
+        active_generation: Option<u64>,
     ) -> Result<(Vec<CodeSymbol>, Vec<SymbolRelation>)>;
 
     /// Get code subgraph for a set of symbol IDs (for recall_code PageRank)
     async fn get_code_subgraph(
         &self,
         symbol_ids: &[String],
+        active_generation: Option<u64>,
     ) -> Result<(Vec<CodeSymbol>, Vec<SymbolRelation>)>;
 
     /// Search symbols by name pattern
@@ -520,6 +549,7 @@ pub trait StorageBackend: Send + Sync {
         offset: usize,
         symbol_type: Option<&str>,
         path_prefix: Option<&str>,
+        active_generation: Option<u64>,
     ) -> Result<(Vec<CodeSymbol>, u32)>;
 
     /// Replace symbol->chunk overlap mappings for a project.
@@ -538,6 +568,7 @@ pub trait StorageBackend: Send + Sync {
         &self,
         project_id: &str,
         symbol_ids: &[String],
+        active_generation: Option<u64>,
         limit: usize,
     ) -> Result<Vec<(String, f32)>>;
 
@@ -546,16 +577,24 @@ pub trait StorageBackend: Send + Sync {
     // ─────────────────────────────────────────────────────────────────────────
 
     /// Count total symbols for a project
-    async fn count_symbols(&self, project_id: &str) -> Result<u32>;
+    async fn count_symbols(&self, project_id: &str, active_generation: Option<u64>) -> Result<u32>;
 
     /// Count total chunks for a project
-    async fn count_chunks(&self, project_id: &str) -> Result<u32>;
+    async fn count_chunks(&self, project_id: &str, active_generation: Option<u64>) -> Result<u32>;
 
     /// Count symbols that have embeddings (embedding IS NOT NULL)
-    async fn count_embedded_symbols(&self, project_id: &str) -> Result<u32>;
+    async fn count_embedded_symbols(
+        &self,
+        project_id: &str,
+        active_generation: Option<u64>,
+    ) -> Result<u32>;
 
     /// Count chunks that have embeddings (embedding IS NOT NULL)
-    async fn count_embedded_chunks(&self, project_id: &str) -> Result<u32>;
+    async fn count_embedded_chunks(
+        &self,
+        project_id: &str,
+        active_generation: Option<u64>,
+    ) -> Result<u32>;
 
     /// Get chunks that have no embedding yet (for resume after interruption)
     async fn get_unembedded_chunks(&self, project_id: &str) -> Result<Vec<(String, String)>>;

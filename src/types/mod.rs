@@ -74,6 +74,9 @@ impl_string_surreal_value!(
     ChunkType,
     Language,
     IndexState,
+    IndexJobState,
+    IndexJobPhase,
+    IndexJobReasonCode,
     StructuralState,
     SemanticState,
     ProjectionState,
@@ -96,8 +99,9 @@ pub fn record_key_to_string(key: &RecordIdKey) -> String {
 }
 
 pub use code::{
-    ChunkType, CodeChunk, IndexState, IndexStatus, Language, ManifestEntry, ProjectionState,
-    SemanticState, StructuralState,
+    ChunkType, CodeChunk, IndexFileCheckpoint, IndexJobPhase, IndexJobReasonCode,
+    IndexJobRecord, IndexJobState, IndexState, IndexStatus, Language, ManifestEntry,
+    ProjectionState, SemanticState, StructuralState,
 };
 pub use code_intelligence::{CodeIntelligenceDiagnostic, CodeIntelligenceDiagnosticCode};
 pub use embedding_state::{EmbedResult, EmbedTarget, EmbeddingState};

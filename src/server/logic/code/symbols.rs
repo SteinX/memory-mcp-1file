@@ -81,6 +81,10 @@ pub(crate) async fn search_symbols_with_context(
     let project_id = project_resolution.project_id().map(str::to_string);
     let limit = limit.unwrap_or(20).clamp(1, 100);
     let offset = offset.unwrap_or(0);
+    let active_generation = match project_id.as_deref() {
+        Some(project_id) => state.storage.get_active_generation(project_id).await.ok().flatten(),
+        None => None,
+    };
 
     if project_resolution.is_stale_binding() {
         let mut response = json!({
@@ -118,6 +122,7 @@ pub(crate) async fn search_symbols_with_context(
             offset,
             symbol_type.as_deref(),
             path_prefix.as_deref(),
+            active_generation,
         )
         .await
     {
@@ -167,7 +172,11 @@ pub async fn symbol_graph(
     params: SymbolGraphParams,
 ) -> anyhow::Result<CallToolResult> {
     match params.action.as_str() {
-        "callers" => match state.storage.get_symbol_callers(&params.symbol_id).await {
+        "callers" => match state
+            .storage
+            .get_symbol_callers(&params.symbol_id, None)
+            .await
+        {
             Ok(mut callers) => {
                 strip_symbol_embeddings(&mut callers);
                 let mut response = json!({
@@ -184,7 +193,11 @@ pub async fn symbol_graph(
             }
             Err(e) => Ok(error_response(e)),
         },
-        "callees" => match state.storage.get_symbol_callees(&params.symbol_id).await {
+        "callees" => match state
+            .storage
+            .get_symbol_callees(&params.symbol_id, None)
+            .await
+        {
             Ok(mut callees) => {
                 strip_symbol_embeddings(&mut callees);
                 let mut response = json!({

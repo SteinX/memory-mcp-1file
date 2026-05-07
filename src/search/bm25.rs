@@ -664,7 +664,11 @@ impl CodeSearchEngine {
 
         // ── Phase 2: fetch content for only the top-N results from the DB ──
         let ids: Vec<String> = scored_metas.iter().map(|(_, m)| m.id.clone()).collect();
-        let fetched = match storage.get_chunks_by_ids(&ids).await {
+        let active_generation = match project_id {
+            Some(project_id) => storage.get_active_generation(project_id).await.ok().flatten(),
+            None => None,
+        };
+        let fetched = match storage.get_chunks_by_ids(&ids, active_generation).await {
             Ok(chunks) => chunks,
             Err(e) => {
                 tracing::warn!("BM25 search: failed to fetch chunk content: {}", e);
@@ -750,7 +754,11 @@ impl CodeSearchEngine {
                 _ => continue,
             }
 
-            match self.rebuild_project_streaming(storage, project_id).await {
+            let active_generation = storage.get_active_generation(project_id).await.ok().flatten();
+            match self
+                .rebuild_project_streaming(storage, project_id, active_generation)
+                .await
+            {
                 Ok(count) => {
                     if count > 0 {
                         tracing::info!(
@@ -783,6 +791,7 @@ impl CodeSearchEngine {
         &self,
         storage: &impl crate::storage::StorageBackend,
         project_id: &str,
+        active_generation: Option<u64>,
     ) -> crate::Result<usize> {
         const PAGE_SIZE: usize = 1000;
         let mut all_pairs: Vec<(ChunkMeta, String)> = Vec::new();
@@ -790,7 +799,7 @@ impl CodeSearchEngine {
 
         loop {
             let chunks = storage
-                .get_chunks_paginated(project_id, PAGE_SIZE, offset)
+                .get_chunks_paginated(project_id, active_generation, PAGE_SIZE, offset)
                 .await?;
             if chunks.is_empty() {
                 break;
@@ -825,8 +834,12 @@ impl CodeSearchEngine {
         &self,
         storage: &impl crate::storage::StorageBackend,
         project_id: &str,
+        active_generation: Option<u64>,
     ) -> crate::Result<usize> {
-        match self.rebuild_project_streaming(storage, project_id).await {
+        match self
+            .rebuild_project_streaming(storage, project_id, active_generation)
+            .await
+        {
             Ok(count) => {
                 tracing::info!(
                     project_id = %project_id,
@@ -851,7 +864,10 @@ impl CodeSearchEngine {
         storage: &impl crate::storage::StorageBackend,
         project_id: &str,
     ) {
-        let _ = self.try_rebuild_from_storage(storage, project_id).await;
+        let active_generation = storage.get_active_generation(project_id).await.ok().flatten();
+        let _ = self
+            .try_rebuild_from_storage(storage, project_id, active_generation)
+            .await;
     }
 }
 
@@ -981,6 +997,7 @@ mod tests {
         async fn get_chunks_by_ids(
             &self,
             ids: &[String],
+            _: Option<u64>,
         ) -> crate::Result<Vec<crate::types::CodeChunk>> {
             Ok(ids
                 .iter()
@@ -1062,6 +1079,7 @@ mod tests {
             &self,
             _: &[f32],
             _: Option<&str>,
+            _: Option<u64>,
             _: usize,
         ) -> crate::Result<Vec<crate::types::ScoredCodeChunk>> {
             unreachable!()
@@ -1070,6 +1088,7 @@ mod tests {
             &self,
             _: &[f32],
             _: Option<&str>,
+            _: Option<u64>,
             _: usize,
         ) -> crate::Result<Vec<crate::types::CodeSymbol>> {
             unreachable!()
@@ -1176,18 +1195,21 @@ mod tests {
             &self,
             _: &str,
             _: &str,
+            _: Option<u64>,
         ) -> crate::Result<Vec<crate::types::CodeChunk>> {
             unreachable!()
         }
         async fn get_all_chunks_for_project(
             &self,
             _: &str,
+            _: Option<u64>,
         ) -> crate::Result<Vec<crate::types::CodeChunk>> {
             unreachable!()
         }
         async fn get_chunks_paginated(
             &self,
             _: &str,
+            _: Option<u64>,
             _: usize,
             _: usize,
         ) -> crate::Result<Vec<crate::types::CodeChunk>> {
@@ -1327,18 +1349,21 @@ mod tests {
         async fn get_project_symbols(
             &self,
             _: &str,
+            _: Option<u64>,
         ) -> crate::Result<Vec<crate::types::CodeSymbol>> {
             unreachable!()
         }
         async fn get_symbol_callers(
             &self,
             _: &str,
+            _: Option<u64>,
         ) -> crate::Result<Vec<crate::types::CodeSymbol>> {
             unreachable!()
         }
         async fn get_symbol_callees(
             &self,
             _: &str,
+            _: Option<u64>,
         ) -> crate::Result<Vec<crate::types::CodeSymbol>> {
             unreachable!()
         }
@@ -1347,6 +1372,7 @@ mod tests {
             _: &str,
             _: usize,
             _: crate::types::Direction,
+            _: Option<u64>,
         ) -> crate::Result<(
             Vec<crate::types::CodeSymbol>,
             Vec<crate::types::SymbolRelation>,
@@ -1356,6 +1382,7 @@ mod tests {
         async fn get_code_subgraph(
             &self,
             _: &[String],
+            _: Option<u64>,
         ) -> crate::Result<(
             Vec<crate::types::CodeSymbol>,
             Vec<crate::types::SymbolRelation>,
@@ -1370,6 +1397,7 @@ mod tests {
             _: usize,
             _: Option<&str>,
             _: Option<&str>,
+            _: Option<u64>,
         ) -> crate::Result<(Vec<crate::types::CodeSymbol>, u32)> {
             unreachable!()
         }
@@ -1384,20 +1412,21 @@ mod tests {
             &self,
             _: &str,
             _: &[String],
+            _: Option<u64>,
             _: usize,
         ) -> crate::Result<Vec<(String, f32)>> {
             unreachable!()
         }
-        async fn count_symbols(&self, _: &str) -> crate::Result<u32> {
+        async fn count_symbols(&self, _: &str, _: Option<u64>) -> crate::Result<u32> {
             unreachable!()
         }
-        async fn count_chunks(&self, _: &str) -> crate::Result<u32> {
+        async fn count_chunks(&self, _: &str, _: Option<u64>) -> crate::Result<u32> {
             unreachable!()
         }
-        async fn count_embedded_symbols(&self, _: &str) -> crate::Result<u32> {
+        async fn count_embedded_symbols(&self, _: &str, _: Option<u64>) -> crate::Result<u32> {
             unreachable!()
         }
-        async fn count_embedded_chunks(&self, _: &str) -> crate::Result<u32> {
+        async fn count_embedded_chunks(&self, _: &str, _: Option<u64>) -> crate::Result<u32> {
             unreachable!()
         }
         async fn get_unembedded_chunks(

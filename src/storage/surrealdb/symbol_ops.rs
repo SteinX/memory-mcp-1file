@@ -6,6 +6,11 @@ use crate::Result;
 
 use super::helpers::{parse_thing, value_to_symbol_relations};
 
+const ACTIVE_SYMBOL_GENERATION_FILTER: &str =
+    "($active_generation IS NONE OR generation = $active_generation OR generation IS NONE)";
+const ACTIVE_RELATION_GENERATION_FILTER: &str =
+    "($active_generation IS NONE OR freshness_generation = $active_generation OR freshness_generation IS NONE)";
+
 pub(super) async fn create_code_symbol(db: &Surreal<Db>, mut symbol: CodeSymbol) -> Result<String> {
     let key = symbol.unique_key();
     let id = ("code_symbols", key.as_str());
@@ -243,11 +248,15 @@ pub(super) async fn delete_symbols_by_path(
 pub(super) async fn get_project_symbols(
     db: &Surreal<Db>,
     project_id: &str,
+    active_generation: Option<u64>,
 ) -> Result<Vec<CodeSymbol>> {
-    let sql = "SELECT * FROM code_symbols WHERE project_id = $project_id";
+    let sql = format!(
+        "SELECT * FROM code_symbols WHERE project_id = $project_id AND {ACTIVE_SYMBOL_GENERATION_FILTER}"
+    );
     let mut response = db
-        .query(sql)
+        .query(&sql)
         .bind(("project_id", project_id.to_string()))
+        .bind(("active_generation", active_generation.map(|g| g as i64)))
         .await?;
     let symbols: Vec<CodeSymbol> = response.take(0)?;
     Ok(symbols)
@@ -256,6 +265,7 @@ pub(super) async fn get_project_symbols(
 pub(super) async fn get_symbol_callers(
     db: &Surreal<Db>,
     symbol_id: &str,
+    active_generation: Option<u64>,
 ) -> Result<Vec<CodeSymbol>> {
     use crate::types::ThingId;
     let thing = if !symbol_id.contains(':') {
@@ -263,15 +273,20 @@ pub(super) async fn get_symbol_callers(
     } else {
         parse_thing(symbol_id)?
     };
-    let sql = r#"
+    let sql = format!(r#"
         SELECT * FROM code_symbols
         WHERE id IN (
             SELECT VALUE in FROM symbol_relation
-            WHERE out = $thing AND relation_type = 'calls'
+            WHERE out = $thing AND relation_type = 'calls' AND {ACTIVE_RELATION_GENERATION_FILTER}
         )
-    "#;
+          AND {ACTIVE_SYMBOL_GENERATION_FILTER}
+    "#);
 
-    let mut response = db.query(sql).bind(("thing", thing)).await?;
+    let mut response = db
+        .query(&sql)
+        .bind(("thing", thing))
+        .bind(("active_generation", active_generation.map(|g| g as i64)))
+        .await?;
     let symbols: Vec<CodeSymbol> = response.take(0)?;
     Ok(symbols)
 }
@@ -279,6 +294,7 @@ pub(super) async fn get_symbol_callers(
 pub(super) async fn get_symbol_callees(
     db: &Surreal<Db>,
     symbol_id: &str,
+    active_generation: Option<u64>,
 ) -> Result<Vec<CodeSymbol>> {
     use crate::types::ThingId;
     let thing = if !symbol_id.contains(':') {
@@ -286,14 +302,19 @@ pub(super) async fn get_symbol_callees(
     } else {
         parse_thing(symbol_id)?
     };
-    let sql = r#"
+    let sql = format!(r#"
         SELECT * FROM code_symbols
         WHERE id IN (
             SELECT VALUE out FROM symbol_relation
-            WHERE in = $thing AND relation_type = 'calls'
+            WHERE in = $thing AND relation_type = 'calls' AND {ACTIVE_RELATION_GENERATION_FILTER}
         )
-    "#;
-    let mut response = db.query(sql).bind(("thing", thing)).await?;
+          AND {ACTIVE_SYMBOL_GENERATION_FILTER}
+    "#);
+    let mut response = db
+        .query(&sql)
+        .bind(("thing", thing))
+        .bind(("active_generation", active_generation.map(|g| g as i64)))
+        .await?;
     let result: Vec<CodeSymbol> = response.take(0)?;
     Ok(result)
 }
@@ -303,6 +324,7 @@ pub(super) async fn get_related_symbols(
     symbol_id: &str,
     depth: usize,
     direction: Direction,
+    active_generation: Option<u64>,
 ) -> Result<(Vec<CodeSymbol>, Vec<SymbolRelation>)> {
     use crate::types::ThingId;
 
@@ -321,12 +343,16 @@ pub(super) async fn get_related_symbols(
     };
 
     let sql = match direction {
-        Direction::Outgoing => "SELECT * FROM symbol_relation WHERE `in` = $id",
-        Direction::Incoming => "SELECT * FROM symbol_relation WHERE `out` = $id",
-        Direction::Both => "SELECT * FROM symbol_relation WHERE `in` = $id OR `out` = $id",
+        Direction::Outgoing => format!("SELECT * FROM symbol_relation WHERE `in` = $id AND {ACTIVE_RELATION_GENERATION_FILTER}"),
+        Direction::Incoming => format!("SELECT * FROM symbol_relation WHERE `out` = $id AND {ACTIVE_RELATION_GENERATION_FILTER}"),
+        Direction::Both => format!("SELECT * FROM symbol_relation WHERE (`in` = $id OR `out` = $id) AND {ACTIVE_RELATION_GENERATION_FILTER}"),
     };
 
-    let mut response = db.query(sql).bind(("id", symbol_thing.clone())).await?;
+    let mut response = db
+        .query(&sql)
+        .bind(("id", symbol_thing.clone()))
+        .bind(("active_generation", active_generation.map(|g| g as i64)))
+        .await?;
 
     // Use Value intermediary to bypass SurrealValue RecordId bug
     let raw: surrealdb_types::Value = response.take(0)?;
@@ -393,8 +419,14 @@ pub(super) async fn get_related_symbols(
                 }
             })
             .collect();
-        let sql = format!("SELECT * FROM {}", record_list.join(", "));
-        let mut response = db.query(sql).await?;
+        let sql = format!(
+            "SELECT * FROM {} WHERE {ACTIVE_SYMBOL_GENERATION_FILTER}",
+            record_list.join(", ")
+        );
+        let mut response = db
+            .query(&sql)
+            .bind(("active_generation", active_generation.map(|g| g as i64)))
+            .await?;
         response.take(0).unwrap_or_default()
     };
 
@@ -404,6 +436,7 @@ pub(super) async fn get_related_symbols(
 pub(super) async fn get_code_subgraph(
     db: &Surreal<Db>,
     symbol_ids: &[String],
+    active_generation: Option<u64>,
 ) -> Result<(Vec<CodeSymbol>, Vec<SymbolRelation>)> {
     if symbol_ids.is_empty() {
         return Ok((vec![], vec![]));
@@ -431,8 +464,14 @@ pub(super) async fn get_code_subgraph(
     // Fetch all relations where in OR out is in our symbol set.
     // LIMIT 500 prevents hub symbols (e.g. `log`, `Result`) from returning
     // thousands of relations and causing a memory spike.
-    let sql = "SELECT * FROM symbol_relation WHERE `in` IN $ids OR `out` IN $ids LIMIT 500";
-    let mut response = db.query(sql).bind(("ids", things)).await?;
+    let sql = format!(
+        "SELECT * FROM symbol_relation WHERE (`in` IN $ids OR `out` IN $ids) AND {ACTIVE_RELATION_GENERATION_FILTER} LIMIT 500"
+    );
+    let mut response = db
+        .query(&sql)
+        .bind(("ids", things))
+        .bind(("active_generation", active_generation.map(|g| g as i64)))
+        .await?;
     let raw: surrealdb_types::Value = response.take(0)?;
     let relations = value_to_symbol_relations(raw);
 
@@ -467,8 +506,14 @@ pub(super) async fn get_code_subgraph(
                 }
             })
             .collect();
-        let sql = format!("SELECT * FROM {}", record_list.join(", "));
-        let mut response = db.query(sql).await?;
+        let sql = format!(
+            "SELECT * FROM {} WHERE {ACTIVE_SYMBOL_GENERATION_FILTER}",
+            record_list.join(", ")
+        );
+        let mut response = db
+            .query(&sql)
+            .bind(("active_generation", active_generation.map(|g| g as i64)))
+            .await?;
         response.take(0).unwrap_or_default()
     };
 
@@ -483,6 +528,7 @@ pub(super) async fn search_symbols(
     offset: usize,
     symbol_type: Option<&str>,
     path_prefix: Option<&str>,
+    active_generation: Option<u64>,
 ) -> Result<(Vec<CodeSymbol>, u32)> {
     use surrealdb_types::SurrealValue;
 
@@ -499,6 +545,7 @@ pub(super) async fn search_symbols(
     if path_prefix.is_some() {
         conditions.push("string::starts_with(file_path, $path_prefix)".to_string());
     }
+    conditions.push(ACTIVE_SYMBOL_GENERATION_FILTER.to_string());
 
     let where_clause = conditions.join(" AND ");
     let sql = format!(
@@ -519,9 +566,13 @@ pub(super) async fn search_symbols(
     let mut query_builder = db
         .query(&sql)
         .bind(("query", query.to_string()))
+        .bind(("active_generation", active_generation.map(|g| g as i64)))
         .bind(("limit", limit))
         .bind(("offset", offset));
-    let mut count_builder = db.query(&count_sql).bind(("query", query.to_string()));
+    let mut count_builder = db
+        .query(&count_sql)
+        .bind(("query", query.to_string()))
+        .bind(("active_generation", active_generation.map(|g| g as i64)));
 
     if let Some(pid) = project_id {
         query_builder = query_builder.bind(("project_id", pid.to_string()));
@@ -553,13 +604,20 @@ pub(super) async fn search_symbols(
     Ok((symbols, total))
 }
 
-pub(super) async fn count_symbols(db: &Surreal<Db>, project_id: &str) -> Result<u32> {
+pub(super) async fn count_symbols(
+    db: &Surreal<Db>,
+    project_id: &str,
+    active_generation: Option<u64>,
+) -> Result<u32> {
     use surrealdb_types::SurrealValue;
 
-    let sql = "SELECT count() FROM code_symbols WHERE project_id = $project_id GROUP ALL";
+    let sql = format!(
+        "SELECT count() FROM code_symbols WHERE project_id = $project_id AND {ACTIVE_SYMBOL_GENERATION_FILTER} GROUP ALL"
+    );
     let mut response = db
-        .query(sql)
+        .query(&sql)
         .bind(("project_id", project_id.to_string()))
+        .bind(("active_generation", active_generation.map(|g| g as i64)))
         .await?;
 
     #[derive(serde::Deserialize, SurrealValue)]
@@ -571,13 +629,20 @@ pub(super) async fn count_symbols(db: &Surreal<Db>, project_id: &str) -> Result<
     Ok(result.map(|r| r.count).unwrap_or(0))
 }
 
-pub(super) async fn count_embedded_symbols(db: &Surreal<Db>, project_id: &str) -> Result<u32> {
+pub(super) async fn count_embedded_symbols(
+    db: &Surreal<Db>,
+    project_id: &str,
+    active_generation: Option<u64>,
+) -> Result<u32> {
     use surrealdb_types::SurrealValue;
 
-    let sql = "SELECT count() FROM code_symbols WHERE project_id = $project_id AND embedding IS NOT NONE GROUP ALL";
+    let sql = format!(
+        "SELECT count() FROM code_symbols WHERE project_id = $project_id AND embedding IS NOT NONE AND {ACTIVE_SYMBOL_GENERATION_FILTER} GROUP ALL"
+    );
     let mut response = db
-        .query(sql)
+        .query(&sql)
         .bind(("project_id", project_id.to_string()))
+        .bind(("active_generation", active_generation.map(|g| g as i64)))
         .await?;
 
     #[derive(serde::Deserialize, SurrealValue)]
@@ -763,6 +828,7 @@ pub(super) async fn get_mapped_chunks_for_symbols(
     db: &Surreal<Db>,
     project_id: &str,
     symbol_ids: &[String],
+    active_generation: Option<u64>,
     limit: usize,
 ) -> Result<Vec<(String, f32)>> {
     use std::collections::HashMap;
@@ -783,11 +849,13 @@ pub(super) async fn get_mapped_chunks_for_symbols(
         .query(
             "SELECT chunk_id, overlap_score FROM symbol_chunk_map
              WHERE project_id = $project_id AND symbol_id IN $symbol_ids
+               AND ($active_generation IS NONE OR generation = $active_generation OR generation IS NONE)
              ORDER BY overlap_score DESC
              LIMIT $limit",
         )
         .bind(("project_id", project_id.to_string()))
         .bind(("symbol_ids", symbol_ids.to_vec()))
+        .bind(("active_generation", active_generation.map(|g| g as i64)))
         .bind(("limit", fetch))
         .await?;
     let rows: Vec<MapRow> = response.take(0).unwrap_or_default();
@@ -814,6 +882,7 @@ pub(super) async fn vector_search_code(
     db: &Surreal<Db>,
     embedding: &[f32],
     project_id: Option<&str>,
+    active_generation: Option<u64>,
     limit: usize,
 ) -> Result<Vec<ScoredCodeChunk>> {
     // Use HNSW index via <|K,EF|> KNN operator for fast candidate selection,
@@ -843,6 +912,7 @@ pub(super) async fn vector_search_code(
         WHERE embedding <|{knn_k},{ef}|> $vec
           AND embedding IS NOT NONE
           AND ($project_id IS NONE OR project_id = $project_id)
+          AND ($active_generation IS NONE OR generation = $active_generation OR generation IS NONE)
         ORDER BY score DESC
         LIMIT $limit
     "#
@@ -851,6 +921,7 @@ pub(super) async fn vector_search_code(
         .query(&query)
         .bind(("vec", embedding.to_vec()))
         .bind(("project_id", project_id.map(String::from)))
+        .bind(("active_generation", active_generation.map(|g| g as i64)))
         .bind(("limit", limit))
         .await?;
     let results: Vec<ScoredCodeChunk> = response.take(0)?;
@@ -861,6 +932,7 @@ pub(super) async fn vector_search_symbols(
     db: &Surreal<Db>,
     embedding: &[f32],
     project_id: Option<&str>,
+    active_generation: Option<u64>,
     limit: usize,
 ) -> Result<Vec<CodeSymbol>> {
     // Use HNSW index via <|K,EF|> KNN operator for fast candidate selection,
@@ -881,6 +953,7 @@ pub(super) async fn vector_search_symbols(
         WHERE embedding <|{knn_k},{ef}|> $vec
           AND embedding IS NOT NONE
           AND ($project_id IS NONE OR project_id = $project_id)
+          AND ($active_generation IS NONE OR generation = $active_generation OR generation IS NONE)
         ORDER BY _score DESC
         LIMIT $limit
     "#
@@ -889,6 +962,7 @@ pub(super) async fn vector_search_symbols(
         .query(&sql)
         .bind(("vec", embedding.to_vec()))
         .bind(("project_id", project_id.map(String::from)))
+        .bind(("active_generation", active_generation.map(|g| g as i64)))
         .bind(("limit", limit))
         .await?;
     let results: Vec<CodeSymbol> = response.take(0)?;

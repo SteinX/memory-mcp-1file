@@ -205,8 +205,8 @@ pub(crate) async fn missing_project_binding_diagnostic(
         return None;
     }
 
-    let has_index_rows = state.storage.count_chunks(project_id).await.unwrap_or(0) > 0
-        || state.storage.count_symbols(project_id).await.unwrap_or(0) > 0
+    let has_index_rows = state.storage.count_chunks(project_id, None).await.unwrap_or(0) > 0
+        || state.storage.count_symbols(project_id, None).await.unwrap_or(0) > 0
         || state
             .storage
             .count_manifest_entries(project_id)
@@ -279,7 +279,12 @@ mod tests {
         .unwrap();
 
         let index_params = IndexProjectParams {
-            path: project_path.to_string_lossy().to_string(),
+            path: Some(project_path.to_string_lossy().to_string()),
+            project_id: None,
+            resume: None,
+            job_id: None,
+            resume_token: None,
+            allow_full_restart_fallback: None,
             force: None,
             confirm_failed_restart: None,
         };
@@ -361,7 +366,12 @@ mod tests {
         super::index_project(
             &ctx.state,
             IndexProjectParams {
-                path: project_path.to_string_lossy().to_string(),
+                path: Some(project_path.to_string_lossy().to_string()),
+                project_id: None,
+                resume: None,
+                job_id: None,
+                resume_token: None,
+                allow_full_restart_fallback: None,
                 force: None,
                 confirm_failed_restart: None,
             },
@@ -427,7 +437,12 @@ mod tests {
         super::index_project(
             &ctx.state,
             IndexProjectParams {
-                path: project_path.to_string_lossy().to_string(),
+                path: Some(project_path.to_string_lossy().to_string()),
+                project_id: None,
+                resume: None,
+                job_id: None,
+                resume_token: None,
+                allow_full_restart_fallback: None,
                 force: None,
                 confirm_failed_restart: None,
             },
@@ -537,7 +552,12 @@ mod tests {
         super::index_project(
             &ctx.state,
             IndexProjectParams {
-                path: project_path.to_string_lossy().to_string(),
+                path: Some(project_path.to_string_lossy().to_string()),
+                project_id: None,
+                resume: None,
+                job_id: None,
+                resume_token: None,
+                allow_full_restart_fallback: None,
                 force: None,
                 confirm_failed_restart: None,
             },
@@ -610,7 +630,12 @@ mod tests {
         super::index_project(
             &ctx.state,
             IndexProjectParams {
-                path: project_path.to_string_lossy().to_string(),
+                path: Some(project_path.to_string_lossy().to_string()),
+                project_id: None,
+                resume: None,
+                job_id: None,
+                resume_token: None,
+                allow_full_restart_fallback: None,
                 force: None,
                 confirm_failed_restart: None,
             },
@@ -648,7 +673,7 @@ mod tests {
             let symbols = ctx
                 .state
                 .storage
-                .search_symbols("caller", Some(&unique_id), 10, 0, None, None)
+                .search_symbols("caller", Some(&unique_id), 10, 0, None, None, None)
                 .await
                 .unwrap()
                 .0;
@@ -755,7 +780,12 @@ mod tests {
         super::index_project(
             &ctx.state,
             IndexProjectParams {
-                path: project_path.to_string_lossy().to_string(),
+                path: Some(project_path.to_string_lossy().to_string()),
+                project_id: None,
+                resume: None,
+                job_id: None,
+                resume_token: None,
+                allow_full_restart_fallback: None,
                 force: None,
                 confirm_failed_restart: None,
             },
@@ -899,7 +929,12 @@ mod tests {
         super::index_project(
             &ctx.state,
             IndexProjectParams {
-                path: project_a_path.to_string_lossy().to_string(),
+                path: Some(project_a_path.to_string_lossy().to_string()),
+                project_id: None,
+                resume: None,
+                job_id: None,
+                resume_token: None,
+                allow_full_restart_fallback: None,
                 force: None,
                 confirm_failed_restart: None,
             },
@@ -909,7 +944,12 @@ mod tests {
         super::index_project(
             &ctx.state,
             IndexProjectParams {
-                path: project_b_path.to_string_lossy().to_string(),
+                path: Some(project_b_path.to_string_lossy().to_string()),
+                project_id: None,
+                resume: None,
+                job_id: None,
+                resume_token: None,
+                allow_full_restart_fallback: None,
                 force: None,
                 confirm_failed_restart: None,
             },
@@ -1074,7 +1114,12 @@ mod tests {
         super::index_project(
             &ctx.state,
             IndexProjectParams {
-                path: stable_path.to_string_lossy().to_string(),
+                path: Some(stable_path.to_string_lossy().to_string()),
+                project_id: None,
+                resume: None,
+                job_id: None,
+                resume_token: None,
+                allow_full_restart_fallback: None,
                 force: None,
                 confirm_failed_restart: None,
             },
@@ -1166,7 +1211,12 @@ mod tests {
             super::index_project(
                 &ctx.state,
                 IndexProjectParams {
-                    path: project_path.to_string_lossy().to_string(),
+                    path: Some(project_path.to_string_lossy().to_string()),
+                project_id: None,
+                resume: None,
+                job_id: None,
+                resume_token: None,
+                allow_full_restart_fallback: None,
                     force: None,
                     confirm_failed_restart: None,
                 },
@@ -1307,7 +1357,12 @@ mod tests {
             super::index_project(
                 &ctx.state,
                 IndexProjectParams {
-                    path: project_path.to_string_lossy().to_string(),
+                    path: Some(project_path.to_string_lossy().to_string()),
+                project_id: None,
+                resume: None,
+                job_id: None,
+                resume_token: None,
+                allow_full_restart_fallback: None,
                     force: None,
                     confirm_failed_restart: None,
                 },
@@ -1455,7 +1510,12 @@ mod tests {
         super::index_project(
             &ctx.state,
             IndexProjectParams {
-                path: project_path.to_string_lossy().to_string(),
+                path: Some(project_path.to_string_lossy().to_string()),
+                project_id: None,
+                resume: None,
+                job_id: None,
+                resume_token: None,
+                allow_full_restart_fallback: None,
                 force: None,
                 confirm_failed_restart: None,
             },
@@ -1607,7 +1667,12 @@ mod tests {
         super::index_project(
             &ctx.state,
             IndexProjectParams {
-                path: project_path.to_string_lossy().to_string(),
+                path: Some(project_path.to_string_lossy().to_string()),
+                project_id: None,
+                resume: None,
+                job_id: None,
+                resume_token: None,
+                allow_full_restart_fallback: None,
                 force: None,
                 confirm_failed_restart: None,
             },
@@ -1709,7 +1774,12 @@ mod tests {
         super::index_project(
             &ctx.state,
             IndexProjectParams {
-                path: project_path.to_string_lossy().to_string(),
+                path: Some(project_path.to_string_lossy().to_string()),
+                project_id: None,
+                resume: None,
+                job_id: None,
+                resume_token: None,
+                allow_full_restart_fallback: None,
                 force: None,
                 confirm_failed_restart: None,
             },
@@ -1848,7 +1918,12 @@ mod tests {
         super::index_project(
             &ctx.state,
             IndexProjectParams {
-                path: project_path.to_string_lossy().to_string(),
+                path: Some(project_path.to_string_lossy().to_string()),
+                project_id: None,
+                resume: None,
+                job_id: None,
+                resume_token: None,
+                allow_full_restart_fallback: None,
                 force: None,
                 confirm_failed_restart: None,
             },

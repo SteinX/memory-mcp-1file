@@ -126,6 +126,24 @@ pub async fn create_symbol_relations(
     stats
 }
 
+pub async fn create_symbol_relations_for_generation(
+    storage: &impl StorageBackend,
+    project_id: &str,
+    references: &[CodeReference],
+    symbol_index: &SymbolIndex,
+    generation: u64,
+) -> RelationStats {
+    let references: Vec<CodeReference> = references
+        .iter()
+        .cloned()
+        .map(|mut reference| {
+            reference.freshness_generation = generation;
+            reference
+        })
+        .collect();
+    create_symbol_relations(storage, project_id, &references, symbol_index).await
+}
+
 /// Detect containment (parent→child) relationships between symbols in the same file.
 ///
 /// Two symbols have a containment relationship when one's line range fully

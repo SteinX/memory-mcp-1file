@@ -8,6 +8,8 @@ use crate::Result;
 
 use super::helpers::generate_id;
 
+const ACTIVE_GENERATION_FILTER: &str = "($active_generation IS NONE OR generation = $active_generation OR generation IS NONE)";
+
 pub(super) async fn create_code_chunk(db: &Surreal<Db>, mut chunk: CodeChunk) -> Result<String> {
     let id = generate_id();
     chunk.id = Some(crate::types::RecordId::new("code_chunks", id.as_str()));
@@ -56,7 +58,7 @@ pub(super) async fn create_code_chunks_batch(
 }
 
 pub(super) async fn delete_project_chunks(db: &Surreal<Db>, project_id: &str) -> Result<usize> {
-    let count = count_chunks(db, project_id).await? as usize;
+    let count = count_chunks(db, project_id, None).await? as usize;
     let sql = "DELETE FROM code_chunks WHERE project_id = $project_id";
     db.query(sql)
         .bind(("project_id", project_id.to_string()))
@@ -83,12 +85,16 @@ pub(super) async fn get_chunks_by_path(
     db: &Surreal<Db>,
     project_id: &str,
     file_path: &str,
+    active_generation: Option<u64>,
 ) -> Result<Vec<CodeChunk>> {
-    let sql = "SELECT * FROM code_chunks WHERE project_id = $project_id AND file_path = $file_path";
+    let sql = format!(
+        "SELECT * FROM code_chunks WHERE project_id = $project_id AND file_path = $file_path AND {ACTIVE_GENERATION_FILTER}"
+    );
     let mut response = db
-        .query(sql)
+        .query(&sql)
         .bind(("project_id", project_id.to_string()))
         .bind(("file_path", file_path.to_string()))
+        .bind(("active_generation", active_generation.map(|g| g as i64)))
         .await?;
     let chunks: Vec<CodeChunk> = response.take(0).unwrap_or_default();
     Ok(chunks)
@@ -100,14 +106,18 @@ pub(super) async fn get_chunks_by_path(
 pub(super) async fn get_all_chunks_for_project(
     db: &Surreal<Db>,
     project_id: &str,
+    active_generation: Option<u64>,
 ) -> Result<Vec<CodeChunk>> {
     // OMIT embedding: the 768-dim Vec<f32> (~3KB/chunk) is never used by callers
     // (BM25 warm-up discards it immediately). CodeChunk.embedding is Option<Vec<f32>>
     // so serde defaults it to None when the field is absent.
-    let sql = "SELECT * OMIT embedding FROM code_chunks WHERE project_id = $project_id";
+    let sql = format!(
+        "SELECT * OMIT embedding FROM code_chunks WHERE project_id = $project_id AND {ACTIVE_GENERATION_FILTER}"
+    );
     let mut response = db
-        .query(sql)
+        .query(&sql)
         .bind(("project_id", project_id.to_string()))
+        .bind(("active_generation", active_generation.map(|g| g as i64)))
         .await?;
     let chunks: Vec<CodeChunk> = response.take(0).unwrap_or_default();
     Ok(chunks)
@@ -122,15 +132,19 @@ pub(super) async fn get_all_chunks_for_project(
 pub(super) async fn get_chunks_paginated(
     db: &Surreal<Db>,
     project_id: &str,
+    active_generation: Option<u64>,
     limit: usize,
     offset: usize,
 ) -> Result<Vec<CodeChunk>> {
-    let sql = "SELECT * OMIT embedding FROM code_chunks \
-               WHERE project_id = $project_id \
-               LIMIT $limit START $offset";
+    let sql = format!(
+        "SELECT * OMIT embedding FROM code_chunks \
+               WHERE project_id = $project_id AND {ACTIVE_GENERATION_FILTER} \
+               LIMIT $limit START $offset"
+    );
     let mut response = db
-        .query(sql)
+        .query(&sql)
         .bind(("project_id", project_id.to_string()))
+        .bind(("active_generation", active_generation.map(|g| g as i64)))
         .bind(("limit", limit))
         .bind(("offset", offset))
         .await?;
@@ -138,15 +152,25 @@ pub(super) async fn get_chunks_paginated(
     Ok(chunks)
 }
 
-pub(super) async fn get_chunks_by_ids(db: &Surreal<Db>, ids: &[String]) -> Result<Vec<CodeChunk>> {
+pub(super) async fn get_chunks_by_ids(
+    db: &Surreal<Db>,
+    ids: &[String],
+    active_generation: Option<u64>,
+) -> Result<Vec<CodeChunk>> {
     if ids.is_empty() {
         return Ok(vec![]);
     }
     // Build a SELECT using record IDs: SELECT * FROM code_chunks:id1, code_chunks:id2, ...
     // SurrealDB supports fetching specific records by Thing notation.
     let record_list: Vec<String> = ids.iter().map(|id| format!("code_chunks:{}", id)).collect();
-    let sql = format!("SELECT * FROM {}", record_list.join(", "));
-    let mut response = db.query(sql).await?;
+    let sql = format!(
+        "SELECT * FROM {} WHERE {ACTIVE_GENERATION_FILTER}",
+        record_list.join(", ")
+    );
+    let mut response = db
+        .query(&sql)
+        .bind(("active_generation", active_generation.map(|g| g as i64)))
+        .await?;
     let chunks: Vec<CodeChunk> = response.take(0).unwrap_or_default();
     Ok(chunks)
 }
@@ -575,6 +599,10 @@ pub(super) async fn bm25_search_code(
     project_id: Option<&str>,
     limit: usize,
 ) -> Result<Vec<ScoredCodeChunk>> {
+    let active_generation = match project_id {
+        Some(pid) => get_active_generation(db, pid).await?,
+        None => None,
+    };
     // SurrealDB v3.0.0: search::score() is broken (bug #6852/#6946).
     // CONTAINS provides correct filtering; scoring is done in Rust.
     // The project_id IS NONE pattern works: SurrealDB Rust SDK maps
@@ -595,12 +623,14 @@ pub(super) async fn bm25_search_code(
         FROM code_chunks
         WHERE string::lowercase(content) CONTAINS string::lowercase($query)
           AND ($project_id IS NONE OR project_id = $project_id)
+          AND ($active_generation IS NONE OR generation = $active_generation OR generation IS NONE)
         LIMIT $limit
     "#;
     let mut response = db
         .query(sql)
         .bind(("query", query.to_string()))
         .bind(("project_id", project_id.map(String::from)))
+        .bind(("active_generation", active_generation.map(|g| g as i64)))
         .bind(("limit", fetch_limit))
         .await?;
     let mut results: Vec<ScoredCodeChunk> = response.take(0)?;
@@ -670,13 +700,20 @@ pub(super) async fn batch_update_chunk_embeddings(
     Ok(())
 }
 
-pub(super) async fn count_chunks(db: &Surreal<Db>, project_id: &str) -> Result<u32> {
+pub(super) async fn count_chunks(
+    db: &Surreal<Db>,
+    project_id: &str,
+    active_generation: Option<u64>,
+) -> Result<u32> {
     use surrealdb_types::SurrealValue;
 
-    let sql = "SELECT count() FROM code_chunks WHERE project_id = $project_id GROUP ALL";
+    let sql = format!(
+        "SELECT count() FROM code_chunks WHERE project_id = $project_id AND {ACTIVE_GENERATION_FILTER} GROUP ALL"
+    );
     let mut response = db
-        .query(sql)
+        .query(&sql)
         .bind(("project_id", project_id.to_string()))
+        .bind(("active_generation", active_generation.map(|g| g as i64)))
         .await?;
 
     #[derive(serde::Deserialize, SurrealValue)]
@@ -688,13 +725,20 @@ pub(super) async fn count_chunks(db: &Surreal<Db>, project_id: &str) -> Result<u
     Ok(result.map(|r| r.count).unwrap_or(0))
 }
 
-pub(super) async fn count_embedded_chunks(db: &Surreal<Db>, project_id: &str) -> Result<u32> {
+pub(super) async fn count_embedded_chunks(
+    db: &Surreal<Db>,
+    project_id: &str,
+    active_generation: Option<u64>,
+) -> Result<u32> {
     use surrealdb_types::SurrealValue;
 
-    let sql = "SELECT count() FROM code_chunks WHERE project_id = $project_id AND (embedding IS NOT NONE OR string::len(content) < 50) GROUP ALL";
+    let sql = format!(
+        "SELECT count() FROM code_chunks WHERE project_id = $project_id AND (embedding IS NOT NONE OR string::len(content) < 50) AND {ACTIVE_GENERATION_FILTER} GROUP ALL"
+    );
     let mut response = db
-        .query(sql)
+        .query(&sql)
         .bind(("project_id", project_id.to_string()))
+        .bind(("active_generation", active_generation.map(|g| g as i64)))
         .await?;
 
     #[derive(serde::Deserialize, SurrealValue)]

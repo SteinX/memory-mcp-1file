@@ -1081,17 +1081,31 @@ pub async fn get_index_status(
                     .unwrap_or(0)
             };
             let is_syncing = sync_queue_size > 0;
+            let active_generation = state
+                .storage
+                .get_active_generation(&project_id)
+                .await
+                .ok()
+                .flatten();
 
-            let total_symbols = state.storage.count_symbols(&project_id).await.unwrap_or(0);
-            let total_chunks = state.storage.count_chunks(&project_id).await.unwrap_or(0);
+            let total_symbols = state
+                .storage
+                .count_symbols(&project_id, active_generation)
+                .await
+                .unwrap_or(0);
+            let total_chunks = state
+                .storage
+                .count_chunks(&project_id, active_generation)
+                .await
+                .unwrap_or(0);
             let embedded_symbols = state
                 .storage
-                .count_embedded_symbols(&project_id)
+                .count_embedded_symbols(&project_id, active_generation)
                 .await
                 .unwrap_or(0);
             let embedded_chunks = state
                 .storage
-                .count_embedded_chunks(&project_id)
+                .count_embedded_chunks(&project_id, active_generation)
                 .await
                 .unwrap_or(0);
 
@@ -1271,8 +1285,8 @@ pub async fn get_index_status(
             })))
         }
         Ok(None) => {
-            let total_symbols = state.storage.count_symbols(&project_id).await.unwrap_or(0);
-            let total_chunks = state.storage.count_chunks(&project_id).await.unwrap_or(0);
+            let total_symbols = state.storage.count_symbols(&project_id, None).await.unwrap_or(0);
+            let total_chunks = state.storage.count_chunks(&project_id, None).await.unwrap_or(0);
             let indexed_files = state
                 .storage
                 .count_manifest_entries(&project_id)
@@ -1348,12 +1362,12 @@ pub async fn get_index_status(
 
             let embedded_symbols = state
                 .storage
-                .count_embedded_symbols(&project_id)
+                .count_embedded_symbols(&project_id, None)
                 .await
                 .unwrap_or(0);
             let embedded_chunks = state
                 .storage
-                .count_embedded_chunks(&project_id)
+                .count_embedded_chunks(&project_id, None)
                 .await
                 .unwrap_or(0);
             let sync_queue_size = {
@@ -1456,16 +1470,16 @@ pub async fn list_projects(
                 if let Some(status) = status.as_mut() {
                     status.refresh_lifecycle_states();
                 }
-                let chunks = state.storage.count_chunks(project_id).await.unwrap_or(0);
-                let symbols = state.storage.count_symbols(project_id).await.unwrap_or(0);
+                let chunks = state.storage.count_chunks(project_id, None).await.unwrap_or(0);
+                let symbols = state.storage.count_symbols(project_id, None).await.unwrap_or(0);
                 let embedded_chunks = state
                     .storage
-                    .count_embedded_chunks(project_id)
+                    .count_embedded_chunks(project_id, None)
                     .await
                     .unwrap_or(0);
                 let embedded_symbols = state
                     .storage
-                    .count_embedded_symbols(project_id)
+                    .count_embedded_symbols(project_id, None)
                     .await
                     .unwrap_or(0);
 
@@ -1598,16 +1612,16 @@ pub async fn get_project_stats(
         return Ok(error_response("project_id required for stats action"));
     }
 
-    let total_symbols = state.storage.count_symbols(&project_id).await.unwrap_or(0);
-    let total_chunks = state.storage.count_chunks(&project_id).await.unwrap_or(0);
+    let total_symbols = state.storage.count_symbols(&project_id, None).await.unwrap_or(0);
+    let total_chunks = state.storage.count_chunks(&project_id, None).await.unwrap_or(0);
     let embedded_symbols = state
         .storage
-        .count_embedded_symbols(&project_id)
+        .count_embedded_symbols(&project_id, None)
         .await
         .unwrap_or(0);
     let embedded_chunks = state
         .storage
-        .count_embedded_chunks(&project_id)
+        .count_embedded_chunks(&project_id, None)
         .await
         .unwrap_or(0);
 
@@ -1814,17 +1828,17 @@ pub async fn get_project_projection(
         .unwrap_or(0) as u32;
     let total_chunks = state
         .storage
-        .count_chunks(&params.project_id)
+        .count_chunks(&params.project_id, None)
         .await
         .unwrap_or(0);
     let total_symbols = state
         .storage
-        .count_symbols(&params.project_id)
+        .count_symbols(&params.project_id, None)
         .await
         .unwrap_or(0);
     let symbols = state
         .storage
-        .get_project_symbols(&params.project_id)
+        .get_project_symbols(&params.project_id, None)
         .await
         .unwrap_or_default();
 
@@ -1843,7 +1857,7 @@ pub async fn get_project_projection(
     } else {
         state
             .storage
-            .get_code_subgraph(&symbol_ids)
+            .get_code_subgraph(&symbol_ids, None)
             .await
             .map(|(_, relations)| relations)
             .unwrap_or_default()
@@ -1978,16 +1992,16 @@ pub async fn get_degradation_info(state: &Arc<AppState>) -> Option<serde_json::V
             continue;
         }
 
-        let total_chunks = state.storage.count_chunks(project_id).await.unwrap_or(0);
+        let total_chunks = state.storage.count_chunks(project_id, None).await.unwrap_or(0);
         let embedded_chunks = state
             .storage
-            .count_embedded_chunks(project_id)
+            .count_embedded_chunks(project_id, None)
             .await
             .unwrap_or(0);
-        let total_symbols = state.storage.count_symbols(project_id).await.unwrap_or(0);
+        let total_symbols = state.storage.count_symbols(project_id, None).await.unwrap_or(0);
         let embedded_symbols = state
             .storage
-            .count_embedded_symbols(project_id)
+            .count_embedded_symbols(project_id, None)
             .await
             .unwrap_or(0);
 

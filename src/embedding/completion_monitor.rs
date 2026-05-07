@@ -98,10 +98,10 @@ async fn check_and_complete_project(
         return Ok(());
     }
 
-    let total_chunks = state.storage.count_chunks(project_id).await?;
-    let total_symbols = state.storage.count_symbols(project_id).await?;
-    let embedded_chunks = state.storage.count_embedded_chunks(project_id).await?;
-    let embedded_symbols = state.storage.count_embedded_symbols(project_id).await?;
+    let total_chunks = state.storage.count_chunks(project_id, None).await?;
+    let total_symbols = state.storage.count_symbols(project_id, None).await?;
+    let embedded_chunks = state.storage.count_embedded_chunks(project_id, None).await?;
+    let embedded_symbols = state.storage.count_embedded_symbols(project_id, None).await?;
     let failed = state.embedding_queue.metrics().get_failed_total() as u32;
 
     let chunks_complete = (embedded_chunks + failed) >= total_chunks;

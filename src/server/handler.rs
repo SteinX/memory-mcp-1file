@@ -482,7 +482,12 @@ impl MemoryMcpServer {
                     data: None,
                 })?;
                 let index_params = IndexProjectParams {
-                    path,
+                    path: Some(path),
+                    project_id: params.0.project_id,
+                    resume: None,
+                    job_id: None,
+                    resume_token: None,
+                    allow_full_restart_fallback: None,
                     force: params.0.force,
                     confirm_failed_restart: params.0.confirm_failed_restart,
                 };
@@ -1200,7 +1205,12 @@ mod tests {
             crate::server::logic::code::index_project(
                 &ctx.state,
                 IndexProjectParams {
-                    path: project_path.to_string_lossy().to_string(),
+                    path: Some(project_path.to_string_lossy().to_string()),
+                    project_id: None,
+                    resume: None,
+                    job_id: None,
+                    resume_token: None,
+                    allow_full_restart_fallback: None,
                     force: None,
                     confirm_failed_restart: None,
                 },
@@ -1366,7 +1376,12 @@ mod tests {
 
         let _ = server
             .index_project(Parameters(IndexProjectParams {
-                path: project_path.to_string_lossy().to_string(),
+                path: Some(project_path.to_string_lossy().to_string()),
+                project_id: None,
+                resume: None,
+                job_id: None,
+                resume_token: None,
+                allow_full_restart_fallback: None,
                 force: None,
                 confirm_failed_restart: None,
             }))
