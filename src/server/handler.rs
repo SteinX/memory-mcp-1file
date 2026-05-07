@@ -636,9 +636,26 @@ impl MemoryMcpServer {
                     "lifecycle": lifecycle,
                 })))
             }
+            "cancel_index" => {
+                let project_id = require_project_id(params.0.project_id, "cancel_index")?;
+                let job_id = params.0.job_id.ok_or_else(|| ErrorData {
+                    code: ErrorCode(-32602),
+                    message: "job_id required for cancel_index action".into(),
+                    data: None,
+                })?;
+                logic::code::cancel_index(&self.state, project_id, job_id)
+                    .await
+                    .map_err(to_rpc_error)
+            }
+            "cleanup_abandoned_index_jobs" => {
+                let project_id = require_project_id(params.0.project_id, "cleanup_abandoned_index_jobs")?;
+                logic::code::cleanup_abandoned_index_jobs(&self.state, project_id)
+                    .await
+                    .map_err(to_rpc_error)
+            }
             other => Err(ErrorData {
                 code: ErrorCode(-32602),
-                message: format!("Invalid action '{}'. Use: list, index, status, stats, projection, projection_by_locator, bind, unbind, binding_status", other).into(),
+                message: format!("Invalid action '{}'. Use: list, index, status, stats, projection, projection_by_locator, bind, unbind, binding_status, cancel_index, cleanup_abandoned_index_jobs", other).into(),
                 data: None,
             }),
         }
@@ -1001,15 +1018,16 @@ mod tests {
         for action in ["bind", "unbind", "binding_status"] {
             let result = server
                 .project_info(Parameters(ProjectInfoParams {
-                    action: action.to_string(),
-                    project_id: None,
-                    path: None,
-                    force: None,
-                    confirm_failed_restart: None,
-                    locator: None,
-                    relation_scope: None,
-                    sort_mode: None,
-                }))
+                                    action: action.to_string(),
+                                    project_id: None,
+                                    path: None,
+                                    force: None,
+                                    confirm_failed_restart: None,
+                                    locator: None,
+                                    relation_scope: None,
+                                    sort_mode: None,
+                                    job_id: None,
+                                }))
                 .await;
 
             let body = result
@@ -1034,15 +1052,16 @@ mod tests {
 
         let result = server
             .project_info(Parameters(ProjectInfoParams {
-                action: "index".to_string(),
-                project_id: None,
-                path: Some(project_path.to_string_lossy().to_string()),
-                force: None,
-                confirm_failed_restart: None,
-                locator: None,
-                relation_scope: None,
-                sort_mode: None,
-            }))
+                                action: "index".to_string(),
+                                project_id: None,
+                                path: Some(project_path.to_string_lossy().to_string()),
+                                force: None,
+                                confirm_failed_restart: None,
+                                locator: None,
+                                relation_scope: None,
+                                sort_mode: None,
+                                job_id: None,
+                            }))
             .await
             .expect("project_info index should succeed")
             .into_typed::<Value>()
@@ -1083,15 +1102,16 @@ mod tests {
         let bind = server
             .project_info_with_session(
                 Parameters(ProjectInfoParams {
-                    action: "bind".to_string(),
-                    project_id: Some(project_id.to_string()),
-                    path: None,
-                    force: None,
-                    confirm_failed_restart: None,
-                    locator: None,
-                    relation_scope: None,
-                    sort_mode: None,
-                }),
+                                    action: "bind".to_string(),
+                                    project_id: Some(project_id.to_string()),
+                                    path: None,
+                                    force: None,
+                                    confirm_failed_restart: None,
+                                    locator: None,
+                                    relation_scope: None,
+                                    sort_mode: None,
+                                    job_id: None,
+                                }),
                 Some(session_context.clone()),
             )
             .await
@@ -1105,15 +1125,16 @@ mod tests {
         let status = server
             .project_info_with_session(
                 Parameters(ProjectInfoParams {
-                    action: "binding_status".to_string(),
-                    project_id: None,
-                    path: None,
-                    force: None,
-                    confirm_failed_restart: None,
-                    locator: None,
-                    relation_scope: None,
-                    sort_mode: None,
-                }),
+                                    action: "binding_status".to_string(),
+                                    project_id: None,
+                                    path: None,
+                                    force: None,
+                                    confirm_failed_restart: None,
+                                    locator: None,
+                                    relation_scope: None,
+                                    sort_mode: None,
+                                    job_id: None,
+                                }),
                 Some(session_context.clone()),
             )
             .await
@@ -1127,15 +1148,16 @@ mod tests {
         let unbind = server
             .project_info_with_session(
                 Parameters(ProjectInfoParams {
-                    action: "unbind".to_string(),
-                    project_id: None,
-                    path: None,
-                    force: None,
-                    confirm_failed_restart: None,
-                    locator: None,
-                    relation_scope: None,
-                    sort_mode: None,
-                }),
+                                    action: "unbind".to_string(),
+                                    project_id: None,
+                                    path: None,
+                                    force: None,
+                                    confirm_failed_restart: None,
+                                    locator: None,
+                                    relation_scope: None,
+                                    sort_mode: None,
+                                    job_id: None,
+                                }),
                 Some(session_context),
             )
             .await
@@ -1163,15 +1185,16 @@ mod tests {
         let bind = server
             .project_info_with_session(
                 Parameters(ProjectInfoParams {
-                    action: "bind".to_string(),
-                    project_id: Some("project-a".to_string()),
-                    path: None,
-                    force: None,
-                    confirm_failed_restart: None,
-                    locator: None,
-                    relation_scope: None,
-                    sort_mode: None,
-                }),
+                                    action: "bind".to_string(),
+                                    project_id: Some("project-a".to_string()),
+                                    path: None,
+                                    force: None,
+                                    confirm_failed_restart: None,
+                                    locator: None,
+                                    relation_scope: None,
+                                    sort_mode: None,
+                                    job_id: None,
+                                }),
                 None,
             )
             .await
@@ -1283,15 +1306,16 @@ mod tests {
         let bind = server
             .project_info_with_session(
                 Parameters(ProjectInfoParams {
-                    action: "bind".to_string(),
-                    project_id: Some("missing-project-id".to_string()),
-                    path: None,
-                    force: None,
-                    confirm_failed_restart: None,
-                    locator: None,
-                    relation_scope: None,
-                    sort_mode: None,
-                }),
+                                    action: "bind".to_string(),
+                                    project_id: Some("missing-project-id".to_string()),
+                                    path: None,
+                                    force: None,
+                                    confirm_failed_restart: None,
+                                    locator: None,
+                                    relation_scope: None,
+                                    sort_mode: None,
+                                    job_id: None,
+                                }),
                 Some(session_context),
             )
             .await
@@ -1339,15 +1363,16 @@ mod tests {
         let bind = server
             .project_info_with_session(
                 Parameters(ProjectInfoParams {
-                    action: "bind".to_string(),
-                    project_id: Some(project_id.to_string()),
-                    path: None,
-                    force: None,
-                    confirm_failed_restart: None,
-                    locator: None,
-                    relation_scope: None,
-                    sort_mode: None,
-                }),
+                                    action: "bind".to_string(),
+                                    project_id: Some(project_id.to_string()),
+                                    path: None,
+                                    force: None,
+                                    confirm_failed_restart: None,
+                                    locator: None,
+                                    relation_scope: None,
+                                    sort_mode: None,
+                                    job_id: None,
+                                }),
                 Some(session_context),
             )
             .await

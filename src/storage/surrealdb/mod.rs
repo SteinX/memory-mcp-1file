@@ -668,6 +668,10 @@ impl StorageBackend for SurrealStorage {
         code_ops::list_index_jobs_for_project(&self.db, project_id).await
     }
 
+    async fn delete_index_job(&self, project_id: &str, job_id: &str) -> Result<()> {
+        code_ops::delete_index_job(&self.db, project_id, job_id).await
+    }
+
     async fn upsert_file_checkpoint(&self, checkpoint: &IndexFileCheckpoint) -> Result<()> {
         code_ops::upsert_file_checkpoint(&self.db, checkpoint).await
     }

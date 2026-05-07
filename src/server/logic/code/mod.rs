@@ -18,8 +18,9 @@ use crate::types::{CodeIntelligenceDiagnostic, ContractReasonCode};
 
 // Re-export everything so external callers see the same flat API as before.
 pub use indexing::{
-    delete_project, get_degradation_info, get_index_status, get_project_projection,
-    get_project_projection_by_locator, get_project_stats, index_project, list_projects,
+    cancel_index, cleanup_abandoned_index_jobs, delete_project, get_degradation_info,
+    get_index_status, get_project_projection, get_project_projection_by_locator,
+    get_project_stats, index_project, list_projects,
 };
 pub use search::{recall_code, search_code};
 pub(crate) use search::{recall_code_with_context, search_code_with_context};

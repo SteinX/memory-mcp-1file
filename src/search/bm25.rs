@@ -1252,6 +1252,9 @@ mod tests {
         ) -> crate::Result<Vec<crate::types::IndexJobRecord>> {
             unreachable!()
         }
+        async fn delete_index_job(&self, _: &str, _: &str) -> crate::Result<()> {
+            unreachable!()
+        }
         async fn upsert_file_checkpoint(
             &self,
             _: &crate::types::IndexFileCheckpoint,

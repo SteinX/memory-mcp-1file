@@ -704,12 +704,10 @@ This section defines the plugin-facing contract for durable indexing jobs. It co
 
 ---
 
-#### Example 6 — Cancel an active job `[planned]`
-
-> **Note**: Cancel via `project_info` is not yet implemented. This example documents the intended future contract.
+#### Example 6 — Cancel an active job
 
 ```json
-// Request [planned]
+// Request
 {
   "tool": "project_info",
   "arguments": {
@@ -719,7 +717,7 @@ This section defines the plugin-facing contract for durable indexing jobs. It co
   }
 }
 
-// Response [planned]
+// Response
 {
   "state": "cancel_requested",
   "job_id": "idx_01HXYZ1234ABCD",
@@ -729,12 +727,10 @@ This section defines the plugin-facing contract for durable indexing jobs. It co
 
 ---
 
-#### Example 7 — Cleanup abandoned jobs `[planned]`
-
-> **Note**: Cleanup of abandoned index jobs is not yet implemented. This example documents the intended future contract.
+#### Example 7 — Cleanup abandoned jobs
 
 ```json
-// Request [planned]
+// Request
 {
   "tool": "project_info",
   "arguments": {
@@ -743,7 +739,7 @@ This section defines the plugin-facing contract for durable indexing jobs. It co
   }
 }
 
-// Response [planned]
+// Response
 {
   "cleaned_up_count": 2,
   "reason_code": "cleanup_requested"

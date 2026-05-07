@@ -352,6 +352,16 @@ pub(super) async fn list_index_jobs_for_project(
     Ok(jobs)
 }
 
+pub(super) async fn delete_index_job(
+    db: &Surreal<Db>,
+    project_id: &str,
+    job_id: &str,
+) -> Result<()> {
+    let record_id = index_job_record_id(project_id, job_id);
+    let _: Option<IndexJobRecord> = db.delete(("index_jobs", record_id.as_str())).await?;
+    Ok(())
+}
+
 pub(super) async fn upsert_file_checkpoint(
     db: &Surreal<Db>,
     checkpoint: &IndexFileCheckpoint,

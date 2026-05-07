@@ -421,6 +421,9 @@ pub trait StorageBackend: Send + Sync {
     /// List durable indexing jobs for a project, newest first.
     async fn list_index_jobs_for_project(&self, project_id: &str) -> Result<Vec<IndexJobRecord>>;
 
+    /// Delete a durable indexing job record by (project_id, job_id).
+    async fn delete_index_job(&self, project_id: &str, job_id: &str) -> Result<()>;
+
     /// Upsert a per-file checkpoint keyed by (project_id, generation, relative_file_path).
     async fn upsert_file_checkpoint(&self, checkpoint: &IndexFileCheckpoint) -> Result<()>;
 

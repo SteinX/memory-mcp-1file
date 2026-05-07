@@ -21,7 +21,7 @@ use super::scanner::scan_directory;
 use super::symbol_index::SymbolIndex;
 
 use crate::embedding::{EmbeddingRequest, EmbeddingTarget};
-use crate::types::code::CodeChunk;
+use crate::types::code::{CodeChunk, IndexJobState};
 use crate::types::symbol::{CodeReference, CodeSymbol};
 
 const PARSE_TIMEOUT_SECS: u64 = 30;
@@ -1822,6 +1822,16 @@ async fn run_staged_index_pipeline(
     let mut parse_set: tokio::task::JoinSet<ParsedFile> = tokio::task::JoinSet::new();
 
     for (seq, file_path) in files.iter().cloned().enumerate() {
+        // Check for cancellation request at per-file boundary (every 10 files to reduce DB load)
+        if seq % 10 == 0 {
+            if let Ok(jobs) = state.storage.list_index_jobs_for_project(project_id).await {
+                if jobs.iter().any(|j| j.state == IndexJobState::CancelRequested) {
+                    tracing::info!(project_id = %project_id, seq = seq, "Cancellation requested — stopping indexer");
+                    return Err(crate::AppError::Indexing("indexing cancelled by request".into()));
+                }
+            }
+        }
+
         if let Ok(mut cf) = monitor.current_file.write() {
             *cf = file_path.to_string_lossy().to_string();
         }

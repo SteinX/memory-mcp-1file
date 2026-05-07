@@ -2045,6 +2045,100 @@ pub async fn get_degradation_info(state: &Arc<AppState>) -> Option<serde_json::V
     None
 }
 
+pub async fn cancel_index(
+    state: &Arc<AppState>,
+    project_id: String,
+    job_id: String,
+) -> anyhow::Result<CallToolResult> {
+    let job = match state.storage.get_index_job(&project_id, &job_id).await? {
+        Some(j) => j,
+        None => {
+            return Ok(success_json(json!({
+                "state": "not_found",
+                "job_id": job_id,
+                "project_id": project_id,
+                "reason_code": "job_not_found",
+            })));
+        }
+    };
+
+    if matches!(
+        job.state,
+        IndexJobState::Completed | IndexJobState::Cancelled | IndexJobState::Abandoned | IndexJobState::Failed
+    ) {
+        return Ok(success_json(json!({
+            "state": job.state,
+            "job_id": job_id,
+            "project_id": project_id,
+            "reason_code": "job_already_terminal",
+        })));
+    }
+
+    let mut updated = job;
+    updated.state = IndexJobState::CancelRequested;
+    updated.reason_code = Some(IndexJobReasonCode::CancellationRequested);
+    updated.updated_at = crate::types::Datetime::default();
+    state.storage.create_or_update_index_job(&updated).await?;
+
+    Ok(success_json(json!({
+        "state": "cancel_requested",
+        "job_id": job_id,
+        "project_id": project_id,
+        "reason_code": "cancellation_requested",
+    })))
+}
+
+pub async fn cleanup_abandoned_index_jobs(
+    state: &Arc<AppState>,
+    project_id: String,
+) -> anyhow::Result<CallToolResult> {
+    let jobs = state
+        .storage
+        .list_index_jobs_for_project(&project_id)
+        .await?;
+
+    let cleanable: Vec<_> = jobs
+        .into_iter()
+        .filter(|j| {
+            matches!(
+                j.state,
+                IndexJobState::Abandoned | IndexJobState::Failed | IndexJobState::Cancelled
+            )
+        })
+        .collect();
+
+    let mut cleaned_up_count = 0usize;
+    let mut errors: Vec<String> = Vec::new();
+
+    for job in &cleanable {
+        if let Err(e) = state
+            .storage
+            .delete_project_generation(&project_id, job.target_generation)
+            .await
+        {
+            errors.push(format!(
+                "delete_generation {} for job {}: {}",
+                job.target_generation, job.job_id, e
+            ));
+        }
+        match state
+            .storage
+            .delete_index_job(&project_id, &job.job_id)
+            .await
+        {
+            Ok(()) => cleaned_up_count += 1,
+            Err(e) => errors.push(format!("delete_job {}: {}", job.job_id, e)),
+        }
+    }
+
+    Ok(success_json(json!({
+        "cleaned_up_count": cleaned_up_count,
+        "project_id": project_id,
+        "reason_code": "cleanup_requested",
+        "errors": errors,
+    })))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

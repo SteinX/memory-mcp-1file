@@ -668,6 +668,9 @@ pub struct ProjectInfoParams {
     /// For: projection (optional). canonical
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sort_mode: Option<String>,
+    /// For: cancel_index (required). Durable job ID to cancel.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub job_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
