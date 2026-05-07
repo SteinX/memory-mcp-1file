@@ -545,6 +545,238 @@ When `dry_run=true`, the tool parses and validates every record and returns the 
   - symbol graph/search surfaces → stable project-scoped symbol IDs
   - `recall_code` re-find contract → `project_id + file_path + start_line + end_line`
 
+### Durable Indexing Resume Contract (Plugin Integrators)
+
+This section defines the plugin-facing contract for durable indexing jobs. It covers terminology, request/response shapes, reason codes, and the distinction between `job_id` and `operation_id`.
+
+#### Terminology
+
+| Term | Meaning |
+|------|---------|
+| **Full restart recovery** | The server lost the in-flight task (e.g., process restart). The only recovery path is a fresh full index via `force=true` + `confirm_failed_restart=true`. No checkpoint is used. This is **not** checkpoint resume. |
+| **Checkpoint resume** | The server interrupted a durable job and wrote a valid checkpoint. The client can resume from that checkpoint using `resume=true` + `job_id` + `resume_token`. |
+| **`job_id`** | A durable identifier assigned to an indexing job. Survives server restart. Used for resume, cancel, and cleanup operations. |
+| **`operation_id`** | A same-process-only identifier for an in-flight background task. Lost on server restart. Used only for in-flight progress tracking within a single process lifetime. Do not persist or use for resume. |
+| **`active_generation`** | The generation currently serving read queries for a project. |
+| **`target_generation`** | The generation being built by the active indexing job. Promoted to `active_generation` on successful completion. |
+| **`can_resume`** | Boolean field in the status response. `true` means a valid checkpoint exists and the job can be resumed. `false` means full restart is required. |
+
+> **Rule**: Clients must key off structured fields (`can_resume`, `reason_code`, `job_id`, `resume_token`). Do not parse string `reason` fields for control flow.
+
+---
+
+#### Example 1 — Start a new index
+
+```json
+// Request
+{
+  "tool": "index_project",
+  "arguments": {
+    "path": "/project"
+  }
+}
+
+// Response (job queued)
+{
+  "state": "queued",
+  "job_id": "idx_01HXYZ1234ABCD",
+  "operation_id": "op_7f3a9c",
+  "active_generation": 3,
+  "target_generation": 4,
+  "can_resume": false,
+  "reason_code": null
+}
+```
+
+---
+
+#### Example 2 — Status response with a durable resumable job
+
+```json
+// Request
+{
+  "tool": "project_info",
+  "arguments": {
+    "action": "status",
+    "project_id": "my-project"
+  }
+}
+
+// Response (job interrupted, checkpoint available)
+{
+  "state": "resumable",
+  "job_id": "idx_01HXYZ1234ABCD",
+  "operation_id": null,
+  "active_generation": 3,
+  "target_generation": 4,
+  "can_resume": true,
+  "resume_token": "ckpt_v1_phase_embed_file_1420",
+  "reason_code": "resumable_interrupted_job",
+  "phase": "embed",
+  "progress": { "files_done": 1420, "files_total": 2100 }
+}
+```
+
+> `operation_id` is `null` after restart because it is same-process only. `job_id` persists and is the correct handle for resume.
+
+---
+
+#### Example 3 — Resume an interrupted job
+
+```json
+// Request
+{
+  "tool": "index_project",
+  "arguments": {
+    "path": "/project",
+    "resume": true,
+    "job_id": "idx_01HXYZ1234ABCD",
+    "resume_token": "ckpt_v1_phase_embed_file_1420",
+    "allow_full_restart_fallback": false
+  }
+}
+
+// Response (resume accepted)
+{
+  "state": "running",
+  "job_id": "idx_01HXYZ1234ABCD",
+  "operation_id": "op_9b2e1f",
+  "active_generation": 3,
+  "target_generation": 4,
+  "can_resume": false,
+  "reason_code": null,
+  "resumed_from_checkpoint": true
+}
+```
+
+> Setting `allow_full_restart_fallback: false` means the server will reject the request rather than silently fall back to a full restart if the checkpoint is invalid.
+
+---
+
+#### Example 4 — Non-resumable failure (checkpoint missing)
+
+```json
+// Status response after restart with no valid checkpoint
+{
+  "state": "failed",
+  "job_id": "idx_01HXYZ1234ABCD",
+  "operation_id": null,
+  "active_generation": 3,
+  "target_generation": 4,
+  "can_resume": false,
+  "resume_token": null,
+  "reason_code": "checkpoint_generation_missing",
+  "retryable": true,
+  "requires_force": true
+}
+```
+
+> `can_resume: false` + `requires_force: true` means the only recovery path is a full restart. This is **full restart recovery**, not checkpoint resume.
+
+---
+
+#### Example 5 — Force full restart fallback
+
+```json
+// Request (explicit full restart after non-resumable failure)
+{
+  "tool": "index_project",
+  "arguments": {
+    "path": "/project",
+    "force": true,
+    "confirm_failed_restart": true
+  }
+}
+
+// Response (full restart queued)
+{
+  "state": "queued",
+  "job_id": "idx_01HXYZ5678EFGH",
+  "operation_id": "op_3c7d2a",
+  "active_generation": 3,
+  "target_generation": 5,
+  "can_resume": false,
+  "reason_code": null
+}
+```
+
+> A new `job_id` is issued. The previous failed job's `job_id` is no longer active.
+
+---
+
+#### Example 6 — Cancel an active job `[planned]`
+
+> **Note**: Cancel via `project_info` is not yet implemented. This example documents the intended future contract.
+
+```json
+// Request [planned]
+{
+  "tool": "project_info",
+  "arguments": {
+    "action": "cancel_index",
+    "project_id": "my-project",
+    "job_id": "idx_01HXYZ1234ABCD"
+  }
+}
+
+// Response [planned]
+{
+  "state": "cancel_requested",
+  "job_id": "idx_01HXYZ1234ABCD",
+  "reason_code": "cancellation_requested"
+}
+```
+
+---
+
+#### Example 7 — Cleanup abandoned jobs `[planned]`
+
+> **Note**: Cleanup of abandoned index jobs is not yet implemented. This example documents the intended future contract.
+
+```json
+// Request [planned]
+{
+  "tool": "project_info",
+  "arguments": {
+    "action": "cleanup_abandoned_index_jobs",
+    "project_id": "my-project"
+  }
+}
+
+// Response [planned]
+{
+  "cleaned_up_count": 2,
+  "reason_code": "cleanup_requested"
+}
+```
+
+---
+
+#### Reason Code Table
+
+Clients must key off `reason_code` (structured field), not the string `reason` field.
+
+| `reason_code` | Meaning | Recovery |
+|---------------|---------|----------|
+| `active_index_running` | Another indexing job is already running for this project. | Wait for the active job to finish, then retry. |
+| `resumable_interrupted_job` | A durable job was interrupted and has a valid checkpoint. `can_resume` will be `true`. | Resume with `resume=true` + `job_id` + `resume_token`. |
+| `lost_one_shot_indexing_task_after_restart` | A same-process one-shot task was lost after server restart before file enumeration. This is a **full restart recovery** scenario, not checkpoint resume. | Retry with `force=true` + `confirm_failed_restart=true`. |
+| `checkpoint_generation_missing` | No valid checkpoint found for the requested resume. The checkpoint may have been purged or never written. | Retry with `force=true` + `confirm_failed_restart=true`. |
+| `workspace_changed_since_checkpoint` | Files changed incompatibly since the checkpoint was written. Resume would produce an inconsistent index. | Retry with `force=true` + `confirm_failed_restart=true`. |
+| `stale_generation` | The target generation is stale or has been superseded by a newer job. | Check current status; start a new index if needed. |
+| `index_storage_corrupt` | Storage integrity check failed. The index data cannot be trusted. | Retry with `force=true` + `confirm_failed_restart=true`. |
+
+---
+
+#### `job_id` vs `operation_id` — Identity Lifetime
+
+| Field | Scope | Survives restart? | Use for |
+|-------|-------|-------------------|---------|
+| `job_id` | Durable, persisted to storage | ✅ Yes | Resume, cancel `[planned]`, cleanup `[planned]`, cross-session tracking |
+| `operation_id` | Same-process only, in-memory | ❌ No | In-flight progress tracking within a single process lifetime only |
+
+**Rule**: Clients must persist `job_id` if they need to resume or track a job across server restarts. `operation_id` is `null` after restart and must never be used for resume decisions.
+
 ### ⚙️ System & Maintenance
 | Tool | Description |
 |------|-------------|
