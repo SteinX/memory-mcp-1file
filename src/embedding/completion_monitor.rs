@@ -98,10 +98,20 @@ async fn check_and_complete_project(
         return Ok(());
     }
 
-    let total_chunks = state.storage.count_chunks(project_id, None).await?;
-    let total_symbols = state.storage.count_symbols(project_id, None).await?;
-    let embedded_chunks = state.storage.count_embedded_chunks(project_id, None).await?;
-    let embedded_symbols = state.storage.count_embedded_symbols(project_id, None).await?;
+    // Get the active generation so counts are scoped to the generation currently
+    // serving reads, not staged (not-yet-promoted) rows from an in-progress index.
+    let active_gen = state.storage.get_active_generation(project_id).await?;
+
+    let total_chunks = state.storage.count_chunks(project_id, active_gen).await?;
+    let total_symbols = state.storage.count_symbols(project_id, active_gen).await?;
+    let embedded_chunks = state
+        .storage
+        .count_embedded_chunks(project_id, active_gen)
+        .await?;
+    let embedded_symbols = state
+        .storage
+        .count_embedded_symbols(project_id, active_gen)
+        .await?;
     let failed = state.embedding_queue.metrics().get_failed_total() as u32;
 
     let chunks_complete = (embedded_chunks + failed) >= total_chunks;
