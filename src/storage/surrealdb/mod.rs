@@ -3046,4 +3046,217 @@ mod tests {
         assert_eq!(results[0].user_id.as_deref(), Some("user-a"));
         assert_eq!(results[0].namespace.as_deref(), Some("project-a"));
     }
+
+    #[test]
+    fn legacy_index_project_params_path_only_deserializes() {
+        use crate::server::params::IndexProjectParams;
+
+        let params: IndexProjectParams =
+            serde_json::from_str(r#"{"path":"/workspace/my-project"}"#)
+                .expect("legacy { path } payload must deserialize");
+
+        assert_eq!(params.path.as_deref(), Some("/workspace/my-project"));
+        assert_eq!(params.project_id, None, "project_id must default to None");
+        assert_eq!(params.resume, None, "resume must default to None");
+        assert_eq!(params.job_id, None, "job_id must default to None");
+        assert_eq!(params.resume_token, None, "resume_token must default to None");
+        assert_eq!(
+            params.allow_full_restart_fallback, None,
+            "allow_full_restart_fallback must default to None"
+        );
+        assert_eq!(params.force, None, "force must default to None");
+        assert_eq!(
+            params.confirm_failed_restart, None,
+            "confirm_failed_restart must default to None"
+        );
+    }
+
+    #[test]
+    fn legacy_index_project_params_force_restart_deserializes() {
+        use crate::server::params::IndexProjectParams;
+
+        let params: IndexProjectParams = serde_json::from_value(serde_json::json!({
+            "path": "/workspace/my-project",
+            "force": true,
+            "confirm_failed_restart": true
+        }))
+        .expect("legacy force-restart payload must deserialize");
+
+        assert_eq!(params.path.as_deref(), Some("/workspace/my-project"));
+        assert_eq!(params.force, Some(true), "force must be Some(true)");
+        assert_eq!(
+            params.confirm_failed_restart,
+            Some(true),
+            "confirm_failed_restart must be Some(true)"
+        );
+        assert_eq!(params.project_id, None);
+        assert_eq!(params.resume, None);
+        assert_eq!(params.job_id, None);
+        assert_eq!(params.resume_token, None);
+        assert_eq!(params.allow_full_restart_fallback, None);
+    }
+
+    #[tokio::test]
+    async fn legacy_null_generation_chunks_visible_in_generation_aware_reads() {
+        let storage = setup_in_memory_test_db().await;
+        let project_id = "legacy_compat_null_gen_project";
+
+        storage.set_active_generation(project_id, 1).await.unwrap();
+
+        let legacy_chunk = code_chunk_for_generation(
+            project_id,
+            "legacy_fn",
+            "fn legacy_fn() { /* pre-generation code */ }",
+            None,
+        );
+        let active_chunk = code_chunk_for_generation(
+            project_id,
+            "active_fn",
+            "fn active_fn() { /* generation-1 code */ }",
+            Some(1),
+        );
+        let staged_chunk = code_chunk_for_generation(
+            project_id,
+            "staged_fn",
+            "fn staged_fn() { /* staged code */ }",
+            Some(2),
+        );
+
+        storage
+            .create_code_chunks_batch(vec![legacy_chunk, active_chunk, staged_chunk])
+            .await
+            .unwrap();
+
+        let active_gen = storage.get_active_generation(project_id).await.unwrap();
+        assert_eq!(active_gen, Some(1), "active generation pointer must be 1");
+
+        let chunks = storage
+            .get_all_chunks_for_project(project_id, active_gen)
+            .await
+            .unwrap();
+
+        let names: std::collections::HashSet<_> =
+            chunks.into_iter().filter_map(|c| c.name).collect();
+
+        assert!(
+            names.contains("legacy_fn"),
+            "legacy NULL-generation chunk must be visible in generation-aware reads"
+        );
+        assert!(
+            names.contains("active_fn"),
+            "active-generation chunk must be visible"
+        );
+        assert!(
+            !names.contains("staged_fn"),
+            "staged (future) generation chunk must NOT be visible"
+        );
+    }
+
+    #[tokio::test]
+    async fn legacy_null_generation_chunks_visible_without_active_generation_pointer() {
+        let storage = setup_in_memory_test_db().await;
+        let project_id = "legacy_compat_no_gen_pointer_project";
+
+        let legacy_chunk = code_chunk_for_generation(
+            project_id,
+            "pure_legacy_fn",
+            "fn pure_legacy_fn() { /* no generation */ }",
+            None,
+        );
+
+        storage
+            .create_code_chunks_batch(vec![legacy_chunk])
+            .await
+            .unwrap();
+
+        let active_gen = storage.get_active_generation(project_id).await.unwrap();
+        assert_eq!(active_gen, None, "no active generation pointer for pure legacy project");
+
+        let chunks = storage
+            .get_all_chunks_for_project(project_id, active_gen)
+            .await
+            .unwrap();
+
+        let names: std::collections::HashSet<_> =
+            chunks.into_iter().filter_map(|c| c.name).collect();
+
+        assert!(
+            names.contains("pure_legacy_fn"),
+            "legacy NULL-generation chunk must be visible when no active generation pointer exists"
+        );
+    }
+
+    #[tokio::test]
+    async fn index_status_round_trips_expected_fields() {
+        use crate::types::{IndexState, StructuralState, SemanticState};
+
+        let storage = setup_in_memory_test_db().await;
+        let project_id = "legacy_compat_status_project";
+
+        let mut status = IndexStatus::new(project_id.to_string());
+        status.root_path = Some("/workspace/my-project".to_string());
+        status.status = IndexState::Completed;
+        status.total_files = 42;
+        status.indexed_files = 42;
+        status.total_chunks = 100;
+        status.total_symbols = 50;
+        status.structural_generation = 3;
+        status.semantic_generation = 3;
+        status.structural_state = StructuralState::Ready;
+        status.semantic_state = SemanticState::Ready;
+
+        storage.update_index_status(status.clone()).await.unwrap();
+
+        let loaded = storage
+            .get_index_status(project_id)
+            .await
+            .unwrap()
+            .expect("index status must be retrievable after write");
+
+        assert_eq!(loaded.project_id, project_id);
+        assert_eq!(loaded.root_path.as_deref(), Some("/workspace/my-project"));
+        assert_eq!(loaded.status, IndexState::Completed);
+        assert_eq!(loaded.total_files, 42);
+        assert_eq!(loaded.indexed_files, 42);
+        assert_eq!(loaded.total_chunks, 100);
+        assert_eq!(loaded.total_symbols, 50);
+        assert_eq!(loaded.structural_generation, 3);
+        assert_eq!(loaded.semantic_generation, 3);
+        assert_eq!(loaded.structural_state, StructuralState::Ready);
+        assert_eq!(loaded.semantic_state, SemanticState::Ready);
+    }
+
+    #[tokio::test]
+    async fn legacy_index_status_zero_generation_round_trips() {
+        use crate::types::IndexState;
+
+        let storage = setup_in_memory_test_db().await;
+        let project_id = "legacy_compat_zero_gen_status_project";
+
+        let mut status = IndexStatus::new(project_id.to_string());
+        status.root_path = Some("/workspace/legacy".to_string());
+        status.status = IndexState::Completed;
+        status.total_files = 10;
+        status.indexed_files = 10;
+        assert_eq!(status.structural_generation, 0);
+        assert_eq!(status.semantic_generation, 0);
+
+        storage.update_index_status(status).await.unwrap();
+
+        let loaded = storage
+            .get_index_status(project_id)
+            .await
+            .unwrap()
+            .expect("legacy zero-generation status must be retrievable");
+
+        assert_eq!(loaded.project_id, project_id);
+        assert_eq!(loaded.status, IndexState::Completed);
+        assert_eq!(loaded.total_files, 10);
+        assert_eq!(loaded.structural_generation, 0);
+        assert_eq!(loaded.semantic_generation, 0);
+        assert_eq!(
+            storage.get_active_generation(project_id).await.unwrap(),
+            None
+        );
+    }
 }
