@@ -8,16 +8,35 @@ use serde_json::json;
 use crate::config::AppState;
 use crate::embedding::ContentHasher;
 use crate::server::params::{
-    ConsolidateMemoryParams, DeleteMemoryParams, GetMemoryParams, GetValidAtParams, GetValidParams,
-    InvalidateParams, ListMemoriesParams, PreviewConsolidateMemoryParams, StoreMemoryParams,
-    UpdateMemoryParams,
+    normalize_project_id, ConsolidateMemoryParams, DeleteMemoryParams, GetMemoryParams,
+    GetValidAtParams, GetValidParams, InvalidateParams, ListMemoriesParams,
+    PreviewConsolidateMemoryParams, StoreMemoryParams, UpdateMemoryParams,
 };
+use crate::storage::traits::MemoryExportOptions;
 use crate::storage::StorageBackend;
-use crate::types::EmbeddingState;
+use crate::types::{Datetime, EmbeddingState, MemoryQuery};
 use crate::types::{record_key_to_string, ExportIdentity, Memory, MemoryType, MemoryUpdate};
 
 use super::contracts::{export_contract_meta, summary_collection_response, with_surface_guidance};
 use super::{error_response, normalize_limit, strip_embedding, strip_embeddings, success_json};
+
+#[derive(Debug, Clone, Default)]
+pub struct ExportMemoryParams {
+    pub project_id: Option<String>,
+    pub valid_only: Option<bool>,
+    pub include_invalidated: Option<bool>,
+    pub limit: Option<usize>,
+    pub user_id: Option<String>,
+    pub agent_id: Option<String>,
+    pub run_id: Option<String>,
+    pub memory_type: Option<String>,
+    pub metadata_filter: Option<serde_json::Value>,
+    pub valid_at: Option<String>,
+    pub event_after: Option<String>,
+    pub event_before: Option<String>,
+    pub ingestion_after: Option<String>,
+    pub ingestion_before: Option<String>,
+}
 
 fn normalize_importance_score(value: Option<f32>) -> anyhow::Result<Option<f32>> {
     match value {
@@ -35,6 +54,52 @@ fn parse_memory_type(value: Option<&str>) -> anyhow::Result<MemoryType> {
             .parse()
             .map_err(|_| anyhow::anyhow!("Invalid memory_type: '{}'", value)),
         None => Ok(MemoryType::default()),
+    }
+}
+
+fn parse_optional_datetime(value: Option<&str>, field: &str) -> anyhow::Result<Option<Datetime>> {
+    match value.map(str::trim).filter(|s| !s.is_empty()) {
+        Some(value) => {
+            let ts: chrono::DateTime<chrono::Utc> = value
+                .parse()
+                .map_err(|_| anyhow::anyhow!("Invalid {} format. Use ISO 8601", field))?;
+            Ok(Some(Datetime::from(ts)))
+        }
+        None => Ok(None),
+    }
+}
+
+fn parse_optional_memory_type(value: Option<&str>) -> anyhow::Result<Option<MemoryType>> {
+    match value.map(str::trim).filter(|s| !s.is_empty()) {
+        Some(value) => value
+            .parse()
+            .map(Some)
+            .map_err(|_| anyhow::anyhow!("Invalid memory_type: '{}'", value)),
+        None => Ok(None),
+    }
+}
+
+impl ExportMemoryParams {
+    fn to_memory_query(&self) -> anyhow::Result<MemoryQuery> {
+        Ok(MemoryQuery {
+            user_id: self.user_id.clone(),
+            agent_id: self.agent_id.clone(),
+            run_id: self.run_id.clone(),
+            namespace: None,
+            memory_type: parse_optional_memory_type(self.memory_type.as_deref())?,
+            metadata_filter: self.metadata_filter.clone(),
+            valid_at: parse_optional_datetime(self.valid_at.as_deref(), "valid_at")?,
+            event_after: parse_optional_datetime(self.event_after.as_deref(), "event_after")?,
+            event_before: parse_optional_datetime(self.event_before.as_deref(), "event_before")?,
+            ingestion_after: parse_optional_datetime(
+                self.ingestion_after.as_deref(),
+                "ingestion_after",
+            )?,
+            ingestion_before: parse_optional_datetime(
+                self.ingestion_before.as_deref(),
+                "ingestion_before",
+            )?,
+        })
     }
 }
 
@@ -993,6 +1058,42 @@ pub async fn get_valid_at(
     }
 }
 
+pub async fn export_memory(
+    state: &Arc<AppState>,
+    params: ExportMemoryParams,
+) -> anyhow::Result<CallToolResult> {
+    let project_id = match normalize_project_id(params.project_id.clone()) {
+        Some(project_id) => project_id,
+        None => return Ok(error_response("project_id is required for memory export")),
+    };
+    let valid_only = params.valid_only.unwrap_or(true);
+    let include_invalidated = params.include_invalidated.unwrap_or(false);
+    if valid_only && include_invalidated {
+        return Ok(error_response(
+            "include_invalidated=true requires valid_only=false for archival memory export",
+        ));
+    }
+
+    let filters = match params.to_memory_query() {
+        Ok(filters) => filters,
+        Err(e) => return Ok(error_response(e)),
+    };
+    let options = MemoryExportOptions {
+        project_id: project_id.clone(),
+        filters,
+        valid_only,
+        include_invalidated,
+        limit: params.limit,
+    };
+
+    match state.storage.export_memories(&options).await {
+        Ok(response) => Ok(success_json(
+            serde_json::to_value(response).unwrap_or_default(),
+        )),
+        Err(e) => Ok(error_response(e)),
+    }
+}
+
 pub async fn invalidate(
     state: &Arc<AppState>,
     params: InvalidateParams,
@@ -1025,6 +1126,16 @@ mod tests {
                     .collect()
             })
             .unwrap_or_default()
+    }
+
+    fn tool_json(result: &CallToolResult) -> serde_json::Value {
+        let val = serde_json::to_value(result).unwrap();
+        let text = val["content"][0]["text"].as_str().unwrap();
+        serde_json::from_str(text).unwrap()
+    }
+
+    fn stored_id(result: &CallToolResult) -> String {
+        tool_json(result)["id"].as_str().unwrap().to_string()
     }
 
     #[tokio::test]
@@ -1173,6 +1284,201 @@ mod tests {
             list_json["contract"]["identity"]["node_id_semantics"],
             "stable_public_memory_id"
         );
+    }
+
+    #[tokio::test]
+    async fn export_memory_returns_jsonl_for_valid_memories() {
+        let ctx = TestContext::new().await;
+
+        let valid_id = stored_id(
+            &store_memory(
+                &ctx.state,
+                StoreMemoryParams {
+                    content: "export valid line\nwith unicode 雪".to_string(),
+                    memory_type: Some("semantic".to_string()),
+                    user_id: Some("export-user".to_string()),
+                    agent_id: Some("export-agent".to_string()),
+                    run_id: None,
+                    namespace: Some("export-project".to_string()),
+                    importance_score: Some(1.0),
+                    metadata: Some(json!({"kind": "valid"})),
+                },
+            )
+            .await
+            .unwrap(),
+        );
+        let invalid_id = stored_id(
+            &store_memory(
+                &ctx.state,
+                StoreMemoryParams {
+                    content: "export invalidated memory".to_string(),
+                    memory_type: Some("semantic".to_string()),
+                    user_id: Some("export-user".to_string()),
+                    agent_id: Some("export-agent".to_string()),
+                    run_id: None,
+                    namespace: Some("export-project".to_string()),
+                    importance_score: Some(1.0),
+                    metadata: None,
+                },
+            )
+            .await
+            .unwrap(),
+        );
+        store_memory(
+            &ctx.state,
+            StoreMemoryParams {
+                content: "other project memory".to_string(),
+                memory_type: Some("semantic".to_string()),
+                user_id: Some("export-user".to_string()),
+                agent_id: Some("export-agent".to_string()),
+                run_id: None,
+                namespace: Some("other-project".to_string()),
+                importance_score: Some(1.0),
+                metadata: None,
+            },
+        )
+        .await
+        .unwrap();
+        invalidate(
+            &ctx.state,
+            InvalidateParams {
+                id: invalid_id.clone(),
+                reason: Some("archived".to_string()),
+                superseded_by: Some(valid_id.clone()),
+            },
+        )
+        .await
+        .unwrap();
+
+        let result = export_memory(
+            &ctx.state,
+            ExportMemoryParams {
+                project_id: Some("  export-project  ".to_string()),
+                user_id: Some("export-user".to_string()),
+                agent_id: Some("export-agent".to_string()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        let export_json = tool_json(&result);
+
+        assert_eq!(export_json["schema_version"], 1);
+        assert_eq!(export_json["record_type"], "memory");
+        assert_eq!(export_json["exported_count"], 1);
+        assert_eq!(export_json["truncated"], false);
+        assert_eq!(export_json["summary"]["valid_records"], 1);
+        assert_eq!(export_json["summary"]["invalidated_records"], 0);
+        let jsonl = export_json["jsonl"].as_str().unwrap();
+        assert_eq!(jsonl.lines().count(), 1);
+        assert!(jsonl.contains("\\n"));
+        assert!(jsonl.contains("雪"));
+        assert!(!jsonl.contains("export invalidated memory"));
+        assert!(!jsonl.contains("other project memory"));
+        let record: crate::types::MigrationMemoryRecord = serde_json::from_str(jsonl).unwrap();
+        assert_eq!(record.id, valid_id);
+        assert_eq!(record.project_id.as_deref(), Some("export-project"));
+        assert_eq!(record.namespace.as_deref(), Some("export-project"));
+        assert_eq!(record.content, "export valid line\nwith unicode 雪");
+        assert!(!record.invalidated);
+    }
+
+    #[tokio::test]
+    async fn export_memory_rejects_valid_only_with_include_invalidated() {
+        let ctx = TestContext::new().await;
+
+        let result = export_memory(
+            &ctx.state,
+            ExportMemoryParams {
+                project_id: Some("export-project".to_string()),
+                valid_only: Some(true),
+                include_invalidated: Some(true),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        let response = tool_json(&result);
+
+        assert_eq!(
+            response["error"],
+            "include_invalidated=true requires valid_only=false for archival memory export"
+        );
+    }
+
+    #[tokio::test]
+    async fn export_memory_archival_includes_invalidated_when_valid_only_false() {
+        let ctx = TestContext::new().await;
+        let valid_id = stored_id(
+            &store_memory(
+                &ctx.state,
+                StoreMemoryParams {
+                    content: "archive valid memory".to_string(),
+                    memory_type: Some("semantic".to_string()),
+                    user_id: None,
+                    agent_id: None,
+                    run_id: None,
+                    namespace: Some("archive-project".to_string()),
+                    importance_score: Some(1.0),
+                    metadata: None,
+                },
+            )
+            .await
+            .unwrap(),
+        );
+        let invalid_id = stored_id(
+            &store_memory(
+                &ctx.state,
+                StoreMemoryParams {
+                    content: "archive invalidated memory".to_string(),
+                    memory_type: Some("semantic".to_string()),
+                    user_id: None,
+                    agent_id: None,
+                    run_id: None,
+                    namespace: Some("archive-project".to_string()),
+                    importance_score: Some(1.0),
+                    metadata: None,
+                },
+            )
+            .await
+            .unwrap(),
+        );
+        invalidate(
+            &ctx.state,
+            InvalidateParams {
+                id: invalid_id.clone(),
+                reason: Some("archived".to_string()),
+                superseded_by: Some(valid_id),
+            },
+        )
+        .await
+        .unwrap();
+
+        let result = export_memory(
+            &ctx.state,
+            ExportMemoryParams {
+                project_id: Some("archive-project".to_string()),
+                valid_only: Some(false),
+                include_invalidated: Some(true),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        let export_json = tool_json(&result);
+        let records: Vec<crate::types::MigrationMemoryRecord> = export_json["jsonl"]
+            .as_str()
+            .unwrap()
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+
+        assert_eq!(export_json["exported_count"], 2);
+        assert_eq!(export_json["summary"]["valid_records"], 1);
+        assert_eq!(export_json["summary"]["invalidated_records"], 1);
+        assert!(records
+            .iter()
+            .any(|record| record.id == invalid_id && record.invalidated));
     }
 
     #[tokio::test]
