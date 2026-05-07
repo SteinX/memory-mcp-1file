@@ -8,9 +8,9 @@ use serde_json::json;
 use crate::config::AppState;
 use crate::embedding::ContentHasher;
 use crate::server::params::{
-    normalize_project_id, ConsolidateMemoryParams, DeleteMemoryParams, GetMemoryParams,
-    GetValidAtParams, GetValidParams, InvalidateParams, ListMemoriesParams,
-    PreviewConsolidateMemoryParams, StoreMemoryParams, UpdateMemoryParams,
+    normalize_project_id, ConsolidateMemoryParams, DeleteMemoryParams, ExportMemoryParams,
+    GetMemoryParams, GetValidAtParams, GetValidParams, ImportMemoryParams, InvalidateParams,
+    ListMemoriesParams, PreviewConsolidateMemoryParams, StoreMemoryParams, UpdateMemoryParams,
 };
 use crate::storage::traits::{MemoryExportOptions, MemoryImportOptions};
 use crate::storage::StorageBackend;
@@ -23,34 +23,6 @@ use crate::types::{
 
 use super::contracts::{export_contract_meta, summary_collection_response, with_surface_guidance};
 use super::{error_response, normalize_limit, strip_embedding, strip_embeddings, success_json};
-
-#[derive(Debug, Clone, Default)]
-pub struct ExportMemoryParams {
-    pub project_id: Option<String>,
-    pub valid_only: Option<bool>,
-    pub include_invalidated: Option<bool>,
-    pub limit: Option<usize>,
-    pub user_id: Option<String>,
-    pub agent_id: Option<String>,
-    pub run_id: Option<String>,
-    pub memory_type: Option<String>,
-    pub metadata_filter: Option<serde_json::Value>,
-    pub valid_at: Option<String>,
-    pub event_after: Option<String>,
-    pub event_before: Option<String>,
-    pub ingestion_after: Option<String>,
-    pub ingestion_before: Option<String>,
-}
-
-#[derive(Debug, Clone, Default)]
-pub struct ImportMemoryParams {
-    pub project_id: Option<String>,
-    pub jsonl: String,
-    pub dry_run: Option<bool>,
-    pub conflict_strategy: Option<String>,
-    pub allow_invalidated: Option<bool>,
-    pub preserve_project_id: Option<bool>,
-}
 
 fn normalize_importance_score(value: Option<f32>) -> anyhow::Result<Option<f32>> {
     match value {
@@ -1288,7 +1260,8 @@ pub async fn export_memory(
     state: &Arc<AppState>,
     params: ExportMemoryParams,
 ) -> anyhow::Result<CallToolResult> {
-    let project_id = match normalize_project_id(params.project_id.clone()) {
+    let project_id_value = params.project_id.clone();
+    let project_id = match normalize_project_id(Some(project_id_value)) {
         Some(project_id) => project_id,
         None => return Ok(error_response("project_id is required for memory export")),
     };
@@ -1348,7 +1321,7 @@ pub async fn import_memory(
 
     let project_id = match resolve_import_project_id(
         &records,
-        params.project_id.clone(),
+        Some(params.project_id),
         preserve_project_id,
     ) {
         Ok(project_id) => project_id,
@@ -1678,7 +1651,7 @@ mod tests {
         let result = export_memory(
             &ctx.state,
             ExportMemoryParams {
-                project_id: Some("  export-project  ".to_string()),
+                project_id: "  export-project  ".to_string(),
                 user_id: Some("export-user".to_string()),
                 agent_id: Some("export-agent".to_string()),
                 ..Default::default()
@@ -1715,7 +1688,7 @@ mod tests {
         let result = export_memory(
             &ctx.state,
             ExportMemoryParams {
-                project_id: Some("export-project".to_string()),
+                project_id: "export-project".to_string(),
                 valid_only: Some(true),
                 include_invalidated: Some(true),
                 ..Default::default()
@@ -1782,7 +1755,7 @@ mod tests {
         let result = export_memory(
             &ctx.state,
             ExportMemoryParams {
-                project_id: Some("archive-project".to_string()),
+                project_id: "archive-project".to_string(),
                 valid_only: Some(false),
                 include_invalidated: Some(true),
                 ..Default::default()
@@ -1833,7 +1806,7 @@ mod tests {
         let result = import_memory(
             &ctx.state,
             ImportMemoryParams {
-                project_id: Some("target-project".to_string()),
+                project_id: "target-project".to_string(),
                 jsonl: import_jsonl(&records),
                 dry_run: Some(true),
                 ..Default::default()
@@ -1915,7 +1888,7 @@ mod tests {
         let result = import_memory(
             &ctx.state,
             ImportMemoryParams {
-                project_id: Some("target-project".to_string()),
+                project_id: "target-project".to_string(),
                 jsonl: format!("{valid_line}\n{{not-json"),
                 dry_run: Some(false),
                 ..Default::default()
@@ -1959,7 +1932,7 @@ mod tests {
         let result = import_memory(
             &ctx.state,
             ImportMemoryParams {
-                project_id: Some("target-project".to_string()),
+                project_id: "target-project".to_string(),
                 jsonl: import_jsonl(&records),
                 dry_run: None,
                 ..Default::default()
@@ -1997,7 +1970,7 @@ mod tests {
         let result = import_memory(
             &ctx.state,
             ImportMemoryParams {
-                project_id: Some("target-project".to_string()),
+                project_id: "target-project".to_string(),
                 jsonl: import_jsonl(&records),
                 dry_run: Some(false),
                 ..Default::default()
@@ -2044,7 +2017,7 @@ mod tests {
         let rejected = import_memory(
             &ctx.state,
             ImportMemoryParams {
-                project_id: Some("target-project".to_string()),
+                project_id: "target-project".to_string(),
                 jsonl: import_jsonl(&[invalidated.clone()]),
                 dry_run: Some(false),
                 allow_invalidated: Some(false),
@@ -2060,7 +2033,7 @@ mod tests {
         let allowed = import_memory(
             &ctx.state,
             ImportMemoryParams {
-                project_id: Some("target-project".to_string()),
+                project_id: "target-project".to_string(),
                 jsonl: import_jsonl(&[invalidated]),
                 dry_run: Some(false),
                 allow_invalidated: Some(true),
@@ -2095,7 +2068,7 @@ mod tests {
         let result = import_memory(
             &ctx.state,
             ImportMemoryParams {
-                project_id: Some("target-project".to_string()),
+                project_id: "target-project".to_string(),
                 jsonl: import_jsonl(&records),
                 dry_run: Some(false),
                 ..Default::default()

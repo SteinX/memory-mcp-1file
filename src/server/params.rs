@@ -624,6 +624,56 @@ pub struct DeleteProjectParams {
     pub project_id: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]
+#[serde(rename_all = "camelCase")]
+#[schemars(title = "")]
+pub struct ExportMemoryParams {
+    pub project_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub valid_only: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub include_invalidated: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub limit: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub user_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub agent_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub run_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub memory_type: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    #[schemars(schema_with = "any_value_schema")]
+    pub metadata_filter: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub valid_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub event_after: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub event_before: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ingestion_after: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ingestion_before: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]
+#[serde(rename_all = "camelCase")]
+#[schemars(title = "")]
+pub struct ImportMemoryParams {
+    pub project_id: String,
+    pub jsonl: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dry_run: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub conflict_strategy: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub allow_invalidated: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub preserve_project_id: Option<bool>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[schemars(title = "")]
 pub struct ResetAllMemoryParams {
@@ -731,7 +781,10 @@ pub struct HowToUseParams {
 
 #[cfg(test)]
 mod tests {
-    use super::{normalize_project_id, ProjectInfoParams, RecallCodeParams, SearchSymbolsParams};
+    use super::{
+        normalize_project_id, ExportMemoryParams, ImportMemoryParams, ProjectInfoParams,
+        RecallCodeParams, SearchSymbolsParams,
+    };
 
     #[test]
     fn normalize_project_id_converts_empty_and_whitespace_to_none() {
@@ -858,12 +911,35 @@ mod tests {
     }
 
     #[test]
-    fn search_symbols_params_accept_camel_case_project_id_alias() {
-        let params: SearchSymbolsParams =
-            serde_json::from_str(r#"{"query":"RCChatViewModel","projectId":"reddoc_true_dev"}"#)
-                .unwrap();
+    fn migration_params_do_not_accept_filesystem_paths() {
+        let export_schema: serde_json::Value =
+            serde_json::to_value(schemars::schema_for!(ExportMemoryParams)).unwrap();
+        let export_object = export_schema
+            .get("properties")
+            .and_then(serde_json::Value::as_object)
+            .expect("export schema object");
+        for forbidden in ["path", "url", "file", "overwrite", "reset", "replace"] {
+            assert!(
+                !export_object.contains_key(forbidden),
+                "export params unexpectedly expose {forbidden}"
+            );
+        }
 
-        assert_eq!(params.query, "RCChatViewModel");
-        assert_eq!(params.project_id, Some("reddoc_true_dev".to_string()));
+        let import_schema: serde_json::Value =
+            serde_json::to_value(schemars::schema_for!(ImportMemoryParams)).unwrap();
+        let import_object = import_schema
+            .get("properties")
+            .and_then(serde_json::Value::as_object)
+            .expect("import schema object");
+        for forbidden in ["path", "url", "file", "overwrite", "reset", "replace"] {
+            assert!(
+                !import_object.contains_key(forbidden),
+                "import params unexpectedly expose {forbidden}"
+            );
+        }
+
+        assert!(export_object.contains_key("projectId") || export_object.contains_key("project_id"));
+        assert!(import_object.contains_key("projectId") || import_object.contains_key("project_id"));
+        assert!(import_object.contains_key("jsonl"));
     }
 }

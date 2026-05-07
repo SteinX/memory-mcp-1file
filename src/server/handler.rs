@@ -203,6 +203,30 @@ impl MemoryMcpServer {
     }
 
     #[tool(
+        description = "Export memories as JSONL using the public migration contract."
+    )]
+    async fn export_memory(
+        &self,
+        params: Parameters<ExportMemoryParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        logic::memory::export_memory(&self.state, params.0)
+            .await
+            .map_err(to_rpc_error)
+    }
+
+    #[tool(
+        description = "Import memories from inline JSONL using the public migration contract."
+    )]
+    async fn import_memory(
+        &self,
+        params: Parameters<ImportMemoryParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        logic::memory::import_memory(&self.state, params.0)
+            .await
+            .map_err(to_rpc_error)
+    }
+
+    #[tool(
         description = "List memories (newest first) with optional scope/type/metadata/time filters. Scope remains optional for forward compatibility. Response includes additive contract and summary metadata."
     )]
     async fn list_memories(
@@ -676,7 +700,7 @@ impl MemoryMcpServer {
     ) -> Result<CallToolResult, ErrorData> {
         let text = [
             "=== TOOL GROUPS ===",
-            "Memory: store_memory, update_memory, delete_memory, list_memories, get_memory, invalidate, get_valid",
+            "Memory: store_memory, update_memory, delete_memory, list_memories, get_memory, invalidate, get_valid, export_memory, import_memory",
             "Search: recall, search_memory, recall_code, search_symbols, symbol_graph",
             "Project: index_project, delete_project, project_info",
             "System: get_status, reset_all_memory, how_to_use",
@@ -923,13 +947,15 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn tool_surface_stability_keeps_required_public_tools() {
+    async fn handler_lists_export_import_memory_tools() {
         let ctx = TestContext::new().await;
         let server = MemoryMcpServer::new(ctx.state.clone());
         let tools = server.tool_router.list_all();
         let names: BTreeSet<String> = tools.iter().map(|tool| tool.name.to_string()).collect();
 
-        assert_eq!(names.len(), 21, "public MCP tool count changed");
+        assert_eq!(names.len(), 23, "public MCP tool count changed");
+        assert!(names.contains("export_memory"));
+        assert!(names.contains("import_memory"));
         assert!(names.contains("recall_code"));
         assert!(names.contains("search_symbols"));
         assert!(names.contains("symbol_graph"));
@@ -937,6 +963,27 @@ mod tests {
         assert!(names.contains("recall"));
         assert!(names.contains("search_memory"));
         assert!(names.contains("how_to_use"));
+        assert!(!names.contains("search"));
+        assert!(!names.contains("search_code"));
+    }
+
+    #[tokio::test]
+    async fn tool_surface_stability_keeps_required_public_tools() {
+        let ctx = TestContext::new().await;
+        let server = MemoryMcpServer::new(ctx.state.clone());
+        let tools = server.tool_router.list_all();
+        let names: BTreeSet<String> = tools.iter().map(|tool| tool.name.to_string()).collect();
+
+        assert_eq!(names.len(), 23, "public MCP tool count changed");
+        assert!(names.contains("recall_code"));
+        assert!(names.contains("search_symbols"));
+        assert!(names.contains("symbol_graph"));
+        assert!(names.contains("project_info"));
+        assert!(names.contains("recall"));
+        assert!(names.contains("search_memory"));
+        assert!(names.contains("how_to_use"));
+        assert!(names.contains("export_memory"));
+        assert!(names.contains("import_memory"));
         assert!(!names.contains("search"));
         assert!(!names.contains("search_code"));
     }
@@ -1410,6 +1457,53 @@ mod tests {
         assert!(project_info_required
             .iter()
             .any(|value| value.as_str() == Some("action")));
+
+        let export_memory = get_tool("export_memory");
+        let export_memory_desc = export_memory
+            .get("description")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        assert!(export_memory_desc.contains("migration contract") || export_memory_desc.contains("Export memories"));
+        let export_memory_required = schema_value(export_memory)
+            .get("required")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        assert!(export_memory_required
+            .iter()
+            .any(|value| value.as_str() == Some("projectId"))
+            || export_memory_required.iter().any(|value| value.as_str() == Some("project_id")));
+        let export_memory_props = schema_value(export_memory)
+            .get("properties")
+            .and_then(Value::as_object)
+            .cloned()
+            .unwrap_or_default();
+        for forbidden in ["path", "url", "file", "overwrite", "reset", "replace"] {
+            assert!(!export_memory_props.contains_key(forbidden));
+        }
+
+        let import_memory = get_tool("import_memory");
+        let import_memory_desc = import_memory
+            .get("description")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        assert!(import_memory_desc.contains("migration contract") || import_memory_desc.contains("inline JSONL"));
+        let import_memory_required = schema_value(import_memory)
+            .get("required")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        assert!(import_memory_required
+            .iter()
+            .any(|value| value.as_str() == Some("jsonl")));
+        let import_memory_props = schema_value(import_memory)
+            .get("properties")
+            .and_then(Value::as_object)
+            .cloned()
+            .unwrap_or_default();
+        for forbidden in ["path", "url", "file", "overwrite", "reset", "replace"] {
+            assert!(!import_memory_props.contains_key(forbidden));
+        }
 
         let knowledge_graph = get_tool("knowledge_graph");
         let knowledge_graph_desc = knowledge_graph
