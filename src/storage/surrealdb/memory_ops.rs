@@ -850,11 +850,14 @@ pub(super) async fn import_memories(
     let committed_count = if options.dry_run || has_errors {
         0
     } else {
+        let imported_at = chrono::Utc::now();
         for (record, new_id) in &planned_records {
             let memory = migration_record_to_memory(
                 record,
                 new_id,
                 &options.project_id,
+                &options.conflict_strategy,
+                imported_at,
                 &id_map,
                 &payload_ids,
             );
@@ -987,6 +990,8 @@ fn migration_record_to_memory(
     record: &MigrationMemoryRecord,
     new_id: &str,
     project_id: &str,
+    conflict_strategy: &ImportConflictStrategy,
+    imported_at: chrono::DateTime<chrono::Utc>,
     id_map: &HashMap<String, String>,
     payload_ids: &HashSet<String>,
 ) -> Memory {
@@ -998,6 +1003,11 @@ fn migration_record_to_memory(
         }
     });
 
+    let source_project_id = record
+        .project_id
+        .clone()
+        .or_else(|| record.namespace.clone());
+
     Memory {
         id: Some(crate::types::RecordId::new("memories", new_id)),
         content: record.content.clone(),
@@ -1007,7 +1017,15 @@ fn migration_record_to_memory(
         agent_id: record.agent_id.clone(),
         run_id: record.run_id.clone(),
         namespace: Some(project_id.to_string()),
-        metadata: record.metadata.clone(),
+        metadata: Some(import_audit_metadata(
+            record.metadata.clone(),
+            record,
+            new_id,
+            project_id,
+            source_project_id.as_deref(),
+            conflict_strategy,
+            imported_at,
+        )),
         event_time: record.created_at,
         ingestion_time: record.created_at,
         valid_from: record.valid_from,
@@ -1020,4 +1038,51 @@ fn migration_record_to_memory(
         content_hash: None,
         embedding_state: Default::default(),
     }
+}
+
+fn import_audit_metadata(
+    metadata: Option<serde_json::Value>,
+    record: &MigrationMemoryRecord,
+    imported_id: &str,
+    target_project_id: &str,
+    source_project_id: Option<&str>,
+    conflict_strategy: &ImportConflictStrategy,
+    imported_at: chrono::DateTime<chrono::Utc>,
+) -> serde_json::Value {
+    let mut metadata = match metadata {
+        Some(serde_json::Value::Object(map)) => map,
+        Some(value) => {
+            let mut map = serde_json::Map::new();
+            map.insert("source_metadata".to_string(), value);
+            map
+        }
+        None => serde_json::Map::new(),
+    };
+
+    if let Some(source_migration) = metadata.remove("migration") {
+        let relocated = if let Some(existing_source_migration) = metadata.remove("source_migration") {
+            serde_json::json!({
+                "migration": source_migration,
+                "source_migration": existing_source_migration,
+            })
+        } else {
+            source_migration
+        };
+        metadata.insert("source_migration".to_string(), relocated);
+    }
+
+    metadata.insert(
+        "migration".to_string(),
+        serde_json::json!({
+            "schema_version": MEMORY_MIGRATION_SCHEMA_VERSION,
+            "source_id": record.id,
+            "imported_id": imported_id,
+            "target_project_id": target_project_id,
+            "source_project_id": source_project_id,
+            "imported_at": imported_at.to_rfc3339(),
+            "conflict_strategy": conflict_strategy,
+        }),
+    );
+
+    serde_json::Value::Object(metadata)
 }

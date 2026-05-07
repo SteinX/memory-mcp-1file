@@ -1688,6 +1688,15 @@ mod tests {
         assert_eq!(remapped.superseded_by.as_deref(), Some("payload-new"));
         assert_eq!(remapped.embedding, None);
         assert_eq!(remapped.content_hash, None);
+        let remapped_metadata = remapped.metadata.as_ref().unwrap();
+        assert_eq!(remapped_metadata["embedding"], serde_json::json!([1, 2, 3]));
+        assert_eq!(remapped_metadata["migration"]["schema_version"], 1);
+        assert_eq!(remapped_metadata["migration"]["source_id"], existing_id);
+        assert_eq!(remapped_metadata["migration"]["imported_id"], remapped_id);
+        assert_eq!(remapped_metadata["migration"]["target_project_id"], "project-a");
+        assert_eq!(remapped_metadata["migration"]["source_project_id"], "source-project");
+        assert_eq!(remapped_metadata["migration"]["conflict_strategy"], "remap");
+        assert!(remapped_metadata["migration"]["imported_at"].as_str().is_some());
         let imported = storage
             .list_memories(
                 &MemoryQuery {
@@ -1738,6 +1747,45 @@ mod tests {
         assert_eq!(crate::types::record_key_to_string(&stored_id.key), remapped_id);
         assert_eq!(remapped.content, "incoming remapped content");
         assert_eq!(remapped.namespace.as_deref(), Some("project-a"));
+    }
+
+    #[tokio::test]
+    async fn storage_import_memory_preserves_metadata_and_relocates_source_migration() {
+        let (storage, _tmp) = setup_test_db().await;
+        let mut record = migration_memory_record("plain-import", "plain import with metadata");
+        record.metadata = Some(serde_json::json!({
+            "source_key": "source-value",
+            "nested": {"kept": true},
+            "migration": {"legacy_audit": "preserve-me"},
+        }));
+
+        let response = storage
+            .import_memories(
+                vec![record],
+                &MemoryImportOptions {
+                    project_id: "project-a".to_string(),
+                    conflict_strategy: ImportConflictStrategy::Remap,
+                    dry_run: false,
+                    allow_invalidated: false,
+                },
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.imported_count, 1);
+        assert!(response.id_mappings.is_empty());
+        let imported = storage.get_memory("plain-import").await.unwrap().unwrap();
+        let metadata = imported.metadata.as_ref().unwrap();
+        assert_eq!(metadata["source_key"], "source-value");
+        assert_eq!(metadata["nested"]["kept"], true);
+        assert_eq!(metadata["source_migration"]["legacy_audit"], "preserve-me");
+        assert_eq!(metadata["migration"]["schema_version"], 1);
+        assert_eq!(metadata["migration"]["source_id"], "plain-import");
+        assert_eq!(metadata["migration"]["imported_id"], "plain-import");
+        assert_eq!(metadata["migration"]["target_project_id"], "project-a");
+        assert_eq!(metadata["migration"]["source_project_id"], "source-project");
+        assert_eq!(metadata["migration"]["conflict_strategy"], "remap");
+        assert!(metadata["migration"]["imported_at"].as_str().is_some());
     }
 
     #[tokio::test]

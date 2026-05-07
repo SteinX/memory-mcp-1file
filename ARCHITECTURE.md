@@ -239,7 +239,9 @@ Memory records have no separate `project_id` field. The storage layer maps `proj
 
 - `created_at`, `updated_at`, `valid_from`, and `valid_until` are preserved from the source record.
 - `superseded_by` links are rewritten to use the remapped target IDs when `conflict_strategy=remap`.
-- No import-specific metadata field is added to the stored record; the original content and scope fields are preserved as-is.
+- Source `metadata` is preserved and the import adds audit metadata under `metadata.migration` on the stored record.
+- The audit object includes `schema_version`, `source_id`, `imported_id`, `target_project_id`, `source_project_id`, `imported_at`, and `conflict_strategy`.
+- If the source metadata already contains `migration`, that value is preserved under `metadata.source_migration` before the new audit object is written. Non-object source metadata is preserved under `metadata.source_metadata`.
 
 ### Non-goals
 
