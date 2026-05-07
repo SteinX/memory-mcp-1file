@@ -1653,7 +1653,10 @@ mod tests {
         assert!(response.dry_run);
         assert_eq!(response.imported_count, 0);
         assert_eq!(response.failed_count, 0);
-        assert_eq!(response.skipped_count, 0);
+        assert_eq!(response.skipped_count, 2);
+        assert_eq!(response.imported_count + response.skipped_count + response.failed_count, 2);
+        assert_eq!(response.summary.total_records, 2);
+        assert_eq!(response.summary.skipped_records, response.skipped_count);
         assert_eq!(response.id_mappings.len(), 1);
         assert_eq!(response.id_mappings[0].old_id, existing_id);
         assert_ne!(
@@ -1678,7 +1681,11 @@ mod tests {
         assert_eq!(applied.imported_count, 2);
         let remapped_id = applied.id_mappings[0].new_id.clone();
         let remapped = storage.get_memory(&remapped_id).await.unwrap().unwrap();
+        let remapped_record_id = remapped.id.as_ref().expect("remapped memory should carry id");
+        assert_eq!(crate::types::record_key_to_string(&remapped_record_id.key), remapped_id);
+        assert_eq!(remapped.content, "incoming replacement");
         assert_eq!(remapped.namespace.as_deref(), Some("project-a"));
+        assert_eq!(remapped.superseded_by.as_deref(), Some("payload-new"));
         assert_eq!(remapped.embedding, None);
         assert_eq!(remapped.content_hash, None);
         let imported = storage
@@ -1695,6 +1702,42 @@ mod tests {
         assert!(imported
             .iter()
             .any(|memory| memory.content == "incoming target" && memory.embedding.is_none()));
+    }
+
+    #[tokio::test]
+    async fn storage_import_memory_remaps_conflicting_ids_and_is_retrievable() {
+        let (storage, _tmp) = setup_test_db().await;
+        let existing_id = storage
+            .create_memory(
+                Memory::new("existing remap source".to_string())
+                    .with_namespace("project-a".to_string()),
+            )
+            .await
+            .unwrap();
+        let records = vec![migration_memory_record(&existing_id, "incoming remapped content")];
+
+        let response = storage
+            .import_memories(
+                records,
+                &MemoryImportOptions {
+                    project_id: "project-a".to_string(),
+                    conflict_strategy: ImportConflictStrategy::Remap,
+                    dry_run: false,
+                    allow_invalidated: false,
+                },
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.imported_count, 1);
+        assert_eq!(response.id_mappings.len(), 1);
+        let remapped_id = response.id_mappings[0].new_id.clone();
+        assert_ne!(remapped_id, existing_id);
+        let remapped = storage.get_memory(&remapped_id).await.unwrap().unwrap();
+        let stored_id = remapped.id.as_ref().expect("imported memory should carry id");
+        assert_eq!(crate::types::record_key_to_string(&stored_id.key), remapped_id);
+        assert_eq!(remapped.content, "incoming remapped content");
+        assert_eq!(remapped.namespace.as_deref(), Some("project-a"));
     }
 
     #[tokio::test]
@@ -1733,8 +1776,12 @@ mod tests {
 
         assert_eq!(response.imported_count, 0);
         assert_eq!(response.summary.imported_records, 0);
-        assert_eq!(response.skipped_count, 1);
+        assert_eq!(response.skipped_count, 2);
         assert_eq!(response.failed_count, 0);
+        assert_eq!(response.imported_count + response.skipped_count + response.failed_count, 2);
+        assert_eq!(response.summary.total_records, 2);
+        assert_eq!(response.summary.skipped_records, response.skipped_count);
+        assert_eq!(response.summary.failed_records, response.failed_count);
         assert_eq!(response.errors.len(), 1);
         assert_eq!(storage.count_memories().await.unwrap(), before_count);
         let listed = storage
@@ -1779,8 +1826,119 @@ mod tests {
         assert_eq!(response.imported_count, 0);
         assert_eq!(response.summary.imported_records, 0);
         assert_eq!(response.failed_count, 1);
+        assert_eq!(response.skipped_count, 2);
+        assert_eq!(response.imported_count + response.skipped_count + response.failed_count, 3);
+        assert_eq!(response.summary.total_records, 3);
+        assert_eq!(response.summary.skipped_records, response.skipped_count);
+        assert_eq!(response.summary.failed_records, response.failed_count);
         assert_eq!(response.errors.len(), 1);
         assert_eq!(storage.count_memories().await.unwrap(), before_count);
+    }
+
+    #[tokio::test]
+    async fn storage_import_memory_conflict_fail_reconciles_counters_without_partial_write() {
+        let (storage, _tmp) = setup_test_db().await;
+        let existing_id = storage
+            .create_memory(
+                Memory::new("existing conflict".to_string())
+                    .with_namespace("project-a".to_string()),
+            )
+            .await
+            .unwrap();
+        let before_count = storage.count_memories().await.unwrap();
+        let records = vec![
+            migration_memory_record(&existing_id, "conflicting import"),
+            migration_memory_record("valid-source", "valid import should not be written"),
+        ];
+
+        let response = storage
+            .import_memories(
+                records,
+                &MemoryImportOptions {
+                    project_id: "project-a".to_string(),
+                    conflict_strategy: ImportConflictStrategy::Fail,
+                    dry_run: false,
+                    allow_invalidated: false,
+                },
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.imported_count, 0);
+        assert_eq!(response.failed_count, 1);
+        assert_eq!(response.skipped_count, 1);
+        assert_eq!(response.imported_count + response.skipped_count + response.failed_count, 2);
+        assert_eq!(response.summary.total_records, 2);
+        assert_eq!(response.summary.skipped_records, response.skipped_count);
+        assert_eq!(response.summary.failed_records, response.failed_count);
+        assert_eq!(response.errors.len(), 1);
+        assert_eq!(storage.count_memories().await.unwrap(), before_count);
+        let listed = storage
+            .list_memories(
+                &MemoryQuery {
+                    namespace: Some("project-a".to_string()),
+                    ..Default::default()
+                },
+                10,
+                0,
+            )
+            .await
+            .unwrap();
+        assert!(!listed
+            .iter()
+            .any(|memory| memory.content == "valid import should not be written"));
+    }
+
+    #[tokio::test]
+    async fn storage_import_memory_conflict_skip_reconciles_counters() {
+        let (storage, _tmp) = setup_test_db().await;
+        let existing_id = storage
+            .create_memory(
+                Memory::new("existing conflict".to_string())
+                    .with_namespace("project-a".to_string()),
+            )
+            .await
+            .unwrap();
+        let records = vec![
+            migration_memory_record(&existing_id, "conflicting import"),
+            migration_memory_record("valid-source", "valid import should be written"),
+        ];
+
+        let response = storage
+            .import_memories(
+                records,
+                &MemoryImportOptions {
+                    project_id: "project-a".to_string(),
+                    conflict_strategy: ImportConflictStrategy::Skip,
+                    dry_run: false,
+                    allow_invalidated: false,
+                },
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.imported_count, 1);
+        assert_eq!(response.failed_count, 0);
+        assert_eq!(response.skipped_count, 1);
+        assert_eq!(response.imported_count + response.skipped_count + response.failed_count, 2);
+        assert_eq!(response.summary.total_records, 2);
+        assert_eq!(response.summary.imported_records, response.imported_count);
+        assert_eq!(response.summary.skipped_records, response.skipped_count);
+        assert_eq!(response.summary.failed_records, response.failed_count);
+        let imported = storage
+            .list_memories(
+                &MemoryQuery {
+                    namespace: Some("project-a".to_string()),
+                    ..Default::default()
+                },
+                10,
+                0,
+            )
+            .await
+            .unwrap();
+        assert!(imported
+            .iter()
+            .any(|memory| memory.content == "valid import should be written"));
     }
 
     #[tokio::test]

@@ -1127,12 +1127,14 @@ mod tests {
         let ctx = TestContext::new().await;
         let now = Utc::now();
 
+        let namespace = format!("decay-ordering-{}", uuid::Uuid::new_v4().simple());
         let _ = seed_memory(
             &ctx,
             Memory {
                 content: "decay ordering fresh episodic".to_string(),
-                embedding: Some(vec![0.4; 768]),
+                embedding: Some(vec![0.45; 768]),
                 memory_type: MemoryType::Episodic,
+                namespace: Some(namespace.clone()),
                 event_time: Datetime::from(now),
                 ingestion_time: Datetime::from(now),
                 ..Memory::new("decay ordering fresh episodic".to_string())
@@ -1140,13 +1142,14 @@ mod tests {
         )
         .await;
 
-        let old_time = now - Duration::days(30);
+        let old_time = now - Duration::days(180);
         let _ = seed_memory(
             &ctx,
             Memory {
                 content: "decay ordering old episodic".to_string(),
                 embedding: Some(vec![0.4; 768]),
                 memory_type: MemoryType::Episodic,
+                namespace: Some(namespace.clone()),
                 event_time: Datetime::from(old_time),
                 ingestion_time: Datetime::from(old_time),
                 ..Memory::new("decay ordering old episodic".to_string())

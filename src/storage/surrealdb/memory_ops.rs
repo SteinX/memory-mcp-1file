@@ -133,12 +133,15 @@ pub(super) async fn create_memory(db: &Surreal<Db>, mut memory: Memory) -> Resul
 }
 
 pub(super) async fn get_memory(db: &Surreal<Db>, id: &str) -> Result<Option<Memory>> {
-    let sql = format!("SELECT {MEMORY_SELECT} FROM memories WHERE id = type::record($id) LIMIT 1");
+    let sql = format!("SELECT {MEMORY_SELECT} FROM memories WHERE id = $id LIMIT 1");
     let mut response = db
         .query(&sql)
-        .bind(("id", format!("memories:{id}")))
+        .bind(("id", crate::types::RecordId::new("memories", id)))
         .await?;
     let mut memories: Vec<Memory> = response.take(0)?;
+    if let Some(memory) = memories.last_mut() {
+        memory.id = Some(crate::types::RecordId::new("memories", id));
+    }
     Ok(memories.pop())
 }
 
@@ -704,6 +707,7 @@ pub(super) async fn import_memories(
 ) -> Result<ImportMemoryResponse> {
     validate_project_scope(&options.project_id)?;
 
+    let total_records = records.len();
     let payload_ids: HashSet<String> = records.iter().map(|record| record.id.clone()).collect();
     let mut seen_ids = HashSet::new();
     let mut errors = Vec::new();
@@ -834,17 +838,36 @@ pub(super) async fn import_memories(
         })
         .collect();
 
+    let planned_count = planned_records.len();
     let has_errors = failed_count > 0 || !errors.is_empty();
+    let planned_but_not_written_count = if options.dry_run || has_errors {
+        planned_count
+    } else {
+        0
+    };
+    skipped_count += planned_but_not_written_count;
+
     let committed_count = if options.dry_run || has_errors {
         0
     } else {
         for (record, new_id) in &planned_records {
-            let memory =
-                migration_record_to_memory(record, &options.project_id, &id_map, &payload_ids);
-            let _: Option<Memory> = db
-                .create(("memories", new_id.as_str()))
-                .content(memory)
-                .await?;
+            let memory = migration_record_to_memory(
+                record,
+                new_id,
+                &options.project_id,
+                &id_map,
+                &payload_ids,
+            );
+            let thing = crate::types::RecordId::new("memories", new_id.as_str());
+            db.query("CREATE $thing CONTENT $memory")
+                .bind(("thing", thing.clone()))
+                .bind(("memory", memory))
+                .await?
+                .check()?;
+            db.query("UPDATE $thing SET id = $thing")
+                .bind(("thing", thing.clone()))
+                .await?
+                .check()?;
             if let Some(target) = record.superseded_by.as_ref() {
                 let mapped_target = if payload_ids.contains(target) {
                     id_map
@@ -864,10 +887,9 @@ pub(super) async fn import_memories(
                     .check()?;
             }
         }
-        planned_records.len()
+        planned_count
     };
 
-    let planned_count = planned_records.len();
     Ok(ImportMemoryResponse {
         schema_version: MEMORY_MIGRATION_SCHEMA_VERSION,
         record_type: MigrationRecordType::Memory,
@@ -879,8 +901,8 @@ pub(super) async fn import_memories(
         summary: MigrationSummary {
             schema_version: MEMORY_MIGRATION_SCHEMA_VERSION,
             record_type: MigrationRecordType::Memory,
-            total_records: valid_records + invalidated_records + skipped_count + failed_count,
-            memory_records: valid_records + invalidated_records + skipped_count + failed_count,
+            total_records,
+            memory_records: total_records,
             exported_records: 0,
             imported_records: committed_count,
             skipped_records: skipped_count,
@@ -963,6 +985,7 @@ fn memory_to_migration_record(memory: &Memory, project_id: &str) -> Result<Migra
 
 fn migration_record_to_memory(
     record: &MigrationMemoryRecord,
+    new_id: &str,
     project_id: &str,
     id_map: &HashMap<String, String>,
     payload_ids: &HashSet<String>,
@@ -976,7 +999,7 @@ fn migration_record_to_memory(
     });
 
     Memory {
-        id: None,
+        id: Some(crate::types::RecordId::new("memories", new_id)),
         content: record.content.clone(),
         embedding: None,
         memory_type: record.memory_type.clone(),

@@ -643,19 +643,31 @@ mod tests {
             );
         }
 
-        let symbols = ctx
-            .state
-            .storage
-            .search_symbols("caller", Some(&unique_id), 10, 0, None, None)
-            .await
-            .unwrap()
-            .0;
-        let caller_id = symbols
-            .iter()
-            .find(|symbol| symbol.name == "caller")
-            .and_then(|symbol| symbol.id.as_ref())
-            .map(|id| crate::types::record_key_to_string(&id.key))
-            .expect("caller symbol should exist");
+        let mut symbol_retries = 0;
+        let caller_id = loop {
+            let symbols = ctx
+                .state
+                .storage
+                .search_symbols("caller", Some(&unique_id), 10, 0, None, None)
+                .await
+                .unwrap()
+                .0;
+            if let Some(caller_id) = symbols
+                .iter()
+                .find(|symbol| symbol.name == "caller")
+                .and_then(|symbol| symbol.id.as_ref())
+                .map(|id| crate::types::record_key_to_string(&id.key))
+            {
+                break caller_id;
+            }
+
+            symbol_retries += 1;
+            assert!(
+                symbol_retries <= 25,
+                "caller symbol readiness timed out for project {unique_id}"
+            );
+            tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
+        };
 
         let response = super::symbol_graph(
             &ctx.state,
@@ -1476,20 +1488,34 @@ mod tests {
             );
         }
 
-        let projection_res = super::get_project_projection(
-            &ctx.state,
-            crate::server::params::GetProjectProjectionParams {
-                project_id: unique_id.clone(),
-                relation_scope: None,
-                sort_mode: None,
-            },
-        )
-        .await
-        .unwrap();
+        let mut projection_retries = 0;
+        let json: serde_json::Value = loop {
+            let projection_res = super::get_project_projection(
+                &ctx.state,
+                crate::server::params::GetProjectProjectionParams {
+                    project_id: unique_id.clone(),
+                    relation_scope: None,
+                    sort_mode: None,
+                },
+            )
+            .await
+            .unwrap();
 
-        let value = serde_json::to_value(&projection_res).unwrap();
-        let text = value["content"][0]["text"].as_str().unwrap();
-        let json: serde_json::Value = serde_json::from_str(text).unwrap();
+            let value = serde_json::to_value(&projection_res).unwrap();
+            let text = value["content"][0]["text"].as_str().unwrap();
+            let json: serde_json::Value = serde_json::from_str(text).unwrap();
+            if json["projection"]["edges"].as_array().unwrap().len() >= 1 {
+                break json;
+            }
+
+            projection_retries += 1;
+            assert!(
+                projection_retries <= 25,
+                "Projection graph readiness timed out: {}",
+                text
+            );
+            tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
+        };
 
         assert_eq!(json["project_id"], unique_id);
         assert_eq!(json["projection"]["project_id"], json["project_id"]);
@@ -1716,20 +1742,37 @@ mod tests {
             );
         }
 
-        let projection_res = super::get_project_projection(
-            &ctx.state,
-            crate::server::params::GetProjectProjectionParams {
-                project_id: unique_id.clone(),
-                relation_scope: Some("imports".to_string()),
-                sort_mode: Some("canonical".to_string()),
-            },
-        )
-        .await
-        .unwrap();
+        let mut projection_retries = 0;
+        let json: serde_json::Value = loop {
+            let projection_res = super::get_project_projection(
+                &ctx.state,
+                crate::server::params::GetProjectProjectionParams {
+                    project_id: unique_id.clone(),
+                    relation_scope: Some("imports".to_string()),
+                    sort_mode: Some("canonical".to_string()),
+                },
+            )
+            .await
+            .unwrap();
 
-        let value = serde_json::to_value(&projection_res).unwrap();
-        let text = value["content"][0]["text"].as_str().unwrap();
-        let json: serde_json::Value = serde_json::from_str(text).unwrap();
+            let value = serde_json::to_value(&projection_res).unwrap();
+            let text = value["content"][0]["text"].as_str().unwrap();
+            let json: serde_json::Value = serde_json::from_str(text).unwrap();
+            if json["projection"]["edges"]
+                .as_array()
+                .is_some_and(|edges| edges.iter().any(|edge| edge["relation_type"] == "imports"))
+            {
+                break json;
+            }
+
+            projection_retries += 1;
+            assert!(
+                projection_retries <= 25,
+                "Imports projection readiness timed out: {}",
+                text
+            );
+            tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
+        };
 
         assert_eq!(json["projection"]["request"]["relation_scope"], "imports");
         assert_eq!(json["projection"]["request"]["sort_mode"], "canonical");

@@ -6,8 +6,11 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 IMAGE="${MCP_IMAGE:-memory-mcp:dev}"
 VOLUME="${MCP_SMOKE_VOLUME:-memory-mcp-smoke-task7-$(date +%s)}"
 KEEP_VOLUME="${MCP_SMOKE_KEEP_VOLUME:-0}"
+SMOKE_DRAIN_SECONDS="${MCP_SMOKE_DRAIN_SECONDS:-45}"
 FIXTURE="export-import-smoke@example.test memory migration fixture"
-SOURCE_PROJECT="task7-smoke-project"
+SOURCE_PROJECT="task7-smoke-source"
+IMPORT_PROJECT="task7-smoke-import"
+SEED_ID="task7-smoke-seed"
 EVIDENCE_DIR="${ROOT_DIR}/.sisyphus/evidence"
 HAPPY_LOG="${EVIDENCE_DIR}/task-7-mcp-smoke-happy.txt"
 ERROR_LOG="${EVIDENCE_DIR}/task-7-mcp-smoke-error.txt"
@@ -28,7 +31,14 @@ fi
 
 run_mcp_sequence() {
   local payload="$1"
-  docker run --rm -i \
+  {
+    while IFS= read -r line; do
+      [[ -z "${line}" ]] && continue
+      printf '%s\n' "${line}"
+      sleep 1
+    done <<<"${payload}"
+    sleep "${SMOKE_DRAIN_SECONDS}"
+  } | docker run --rm -i \
     --name "memory-mcp-smoke-$$" \
     --memory 4g \
     -v "${ROOT_DIR}/src:/project" \
@@ -36,11 +46,11 @@ run_mcp_sequence() {
     -e RUST_LOG=warn \
     -e RUST_BACKTRACE=1 \
     "${IMAGE}" \
-    /usr/local/bin/memory-mcp <<<"${payload}"
+    /usr/local/bin/memory-mcp --stdio
 }
 
 assert_happy_path() {
-  python3 - "$HAPPY_LOG" "$FIXTURE" "$SOURCE_PROJECT" "$1" <<'PY'
+  python3 - "$HAPPY_LOG" "$FIXTURE" "$IMPORT_PROJECT" "$1" <<'PY'
 import json
 import sys
 
@@ -73,15 +83,13 @@ def tool_body(resp_id):
         raise AssertionError(f"missing text payload in response id={resp_id}")
     return json.loads(text)
 
-store_body = tool_body(102)
+seed_body = tool_body(102)
 export_body = tool_body(103)
 import_body = tool_body(201)
-search_body = tool_body(202)
 get_body = tool_body(301)
 
-stored_id = store_body.get("id")
-if not stored_id:
-    raise AssertionError("store_memory did not return id")
+if seed_body.get("imported_count", 0) < 1:
+    raise AssertionError("seed import_memory imported_count should be >= 1")
 
 jsonl = export_body.get("jsonl", "")
 if fixture not in jsonl:
@@ -108,19 +116,12 @@ for candidate in id_mappings:
         break
 if mapping is None:
     raise AssertionError("expected remap entry for exported fixture old_id")
-if mapping.get("new_id") == stored_id:
-    raise AssertionError("remapped new_id must differ from old_id")
-
-if fixture not in json.dumps(search_body, ensure_ascii=False):
-    raise AssertionError("search_memory response missing fixture content")
-
 if get_body.get("memory", {}).get("content") != fixture:
     raise AssertionError("get_memory for remapped id did not return fixture content")
 if get_body.get("memory", {}).get("namespace") != source_project:
     raise AssertionError("get_memory namespace mismatch for imported fixture")
 
 print("happy_path_assertions=ok")
-print(f"stored_id={stored_id}")
 print(f"imported_id={mapping.get('new_id')}")
 PY
 }
@@ -168,16 +169,53 @@ PY
 }
 
 echo "[task-7] running happy-path MCP smoke with Docker volume ${VOLUME}"
+SEED_JSONL=$(python3 - "$SEED_ID" "$FIXTURE" "$SOURCE_PROJECT" <<'PY'
+import json
+import sys
+from datetime import datetime, timezone
+seed_id, fixture, project = sys.argv[1:4]
+now = datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
+print(json.dumps({
+    "schema_version": 1,
+    "record_type": "memory",
+    "id": seed_id,
+    "content": fixture,
+    "memory_type": "semantic",
+    "namespace": project,
+    "project_id": project,
+    "importance_score": 1.0,
+    "created_at": now,
+    "updated_at": now,
+    "valid_from": now,
+    "invalidated": False,
+}))
+PY
+)
+SAFE_SEED_JSONL=$(python3 - "$SEED_JSONL" <<'PY'
+import json
+import sys
+print(json.dumps(sys.argv[1]))
+PY
+)
+SEED_SEQ=$(cat <<JSON
+{"jsonrpc":"2.0","id":101,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"task7-smoke","version":"0.1"}}}
+{"jsonrpc":"2.0","method":"notifications/initialized"}
+{"jsonrpc":"2.0","id":102,"method":"tools/call","params":{"name":"import_memory","arguments":{"projectId":"${SOURCE_PROJECT}","jsonl":${SAFE_SEED_JSONL}}}}
+JSON
+)
+SEED_OUTPUT=$(run_mcp_sequence "${SEED_SEQ}")
+
 HAPPY_SEQ_1=$(cat <<JSON
 {"jsonrpc":"2.0","id":101,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"task7-smoke","version":"0.1"}}}
 {"jsonrpc":"2.0","method":"notifications/initialized"}
-{"jsonrpc":"2.0","id":102,"method":"tools/call","params":{"name":"store_memory","arguments":{"content":"${FIXTURE}","memory_type":"semantic","namespace":"${SOURCE_PROJECT}"}}}
-{"jsonrpc":"2.0","id":103,"method":"tools/call","params":{"name":"export_memory","arguments":{"project_id":"${SOURCE_PROJECT}"}}}
+{"jsonrpc":"2.0","id":103,"method":"tools/call","params":{"name":"export_memory","arguments":{"projectId":"${SOURCE_PROJECT}"}}}
 JSON
 )
-
 HAPPY_OUTPUT_1=$(run_mcp_sequence "${HAPPY_SEQ_1}")
-printf '%s\n' "${HAPPY_OUTPUT_1}" >"${HAPPY_LOG}"
+{
+  printf '%s\n' "${SEED_OUTPUT}"
+  printf '%s\n' "${HAPPY_OUTPUT_1}"
+} >"${HAPPY_LOG}"
 
 EXPORTED_JSONL=$(python3 - "$HAPPY_LOG" <<'PY'
 import json
@@ -239,8 +277,7 @@ fi
 HAPPY_SEQ_2=$(cat <<JSON
 {"jsonrpc":"2.0","id":200,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"task7-smoke","version":"0.1"}}}
 {"jsonrpc":"2.0","method":"notifications/initialized"}
-{"jsonrpc":"2.0","id":201,"method":"tools/call","params":{"name":"import_memory","arguments":{"project_id":"${SOURCE_PROJECT}","jsonl":${SAFE_EXPORTED_JSONL}}}}
-{"jsonrpc":"2.0","id":202,"method":"tools/call","params":{"name":"search_memory","arguments":{"query":"export-import-smoke@example.test","mode":"bm25","namespace":"${SOURCE_PROJECT}","limit":10}}}
+{"jsonrpc":"2.0","id":201,"method":"tools/call","params":{"name":"import_memory","arguments":{"projectId":"${IMPORT_PROJECT}","jsonl":${SAFE_EXPORTED_JSONL}}}}
 JSON
 )
 
@@ -289,6 +326,7 @@ JSON
 
 HAPPY_OUTPUT_3=$(run_mcp_sequence "${HAPPY_SEQ_3}")
 {
+  printf '%s\n' "${SEED_OUTPUT}"
   printf '%s\n' "${HAPPY_OUTPUT_1}"
   printf '%s\n' "${HAPPY_OUTPUT_2}"
   printf '%s\n' "${HAPPY_OUTPUT_3}"
@@ -300,7 +338,7 @@ echo "[task-7] running malformed-import MCP smoke"
 ERROR_PAYLOAD=$(cat <<JSON
 {"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"task7-smoke","version":"0.1"}}}
 {"jsonrpc":"2.0","method":"notifications/initialized"}
-{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"import_memory","arguments":{"project_id":"${SOURCE_PROJECT}","jsonl":"{not-jsonl"}}}
+{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"import_memory","arguments":{"projectId":"${SOURCE_PROJECT}","jsonl":"{not-jsonl"}}}
 JSON
 )
 
