@@ -173,14 +173,24 @@ fn new_index_job_id() -> String {
     format!("idx_{nanos}_{sequence}")
 }
 
-fn new_index_resume_token() -> String {
-    static COUNTER: AtomicU64 = AtomicU64::new(1);
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_nanos())
-        .unwrap_or(0);
-    let sequence = COUNTER.fetch_add(1, Ordering::Relaxed);
-    format!("resume_{nanos}_{sequence}")
+fn index_job_phase_str(phase: &IndexJobPhase) -> &'static str {
+    match phase {
+        IndexJobPhase::Discover => "discover",
+        IndexJobPhase::Parse => "parse",
+        IndexJobPhase::Chunk => "chunk",
+        IndexJobPhase::Symbols => "symbols",
+        IndexJobPhase::Relations => "relations",
+        IndexJobPhase::Embed => "embed",
+        IndexJobPhase::EmbedEnqueue => "embed_enqueue",
+        IndexJobPhase::Bm25 => "bm25",
+        IndexJobPhase::Finalize => "finalize",
+        IndexJobPhase::Promote => "promote",
+        IndexJobPhase::Cleanup => "cleanup",
+    }
+}
+
+fn checkpoint_resume_token(phase: &IndexJobPhase, files_done: u64) -> String {
+    format!("ckpt_v1_phase_{}_file_{}", index_job_phase_str(phase), files_done)
 }
 
 fn durable_index_job_record(
@@ -200,7 +210,7 @@ fn durable_index_job_record(
         state: IndexJobState::Running,
         stored_phase: Some(IndexJobPhase::Discover),
         phase: IndexJobPhase::Discover,
-        resume_token: new_index_resume_token(),
+        resume_token: checkpoint_resume_token(&IndexJobPhase::Discover, 0),
         created_at: now.clone(),
         started_at: Some(now.clone()),
         updated_at: now,
@@ -261,50 +271,85 @@ fn index_job_reason_code_str(reason: &IndexJobReasonCode) -> &'static str {
     }
 }
 
-fn index_job_phase_str(phase: &IndexJobPhase) -> &'static str {
-    match phase {
-        IndexJobPhase::Discover => "discover",
-        IndexJobPhase::Parse => "parse",
-        IndexJobPhase::Chunk => "chunk",
-        IndexJobPhase::Symbols => "symbols",
-        IndexJobPhase::Relations => "relations",
-        IndexJobPhase::Embed => "embed",
-        IndexJobPhase::EmbedEnqueue => "embed_enqueue",
-        IndexJobPhase::Bm25 => "bm25",
-        IndexJobPhase::Finalize => "finalize",
-        IndexJobPhase::Promote => "promote",
-        IndexJobPhase::Cleanup => "cleanup",
+async fn resumable_job_fields(
+    state: &Arc<AppState>,
+    job: &IndexJobRecord,
+) -> (bool, Option<String>, Option<u64>, Option<u64>, Option<IndexJobPhase>) {
+    match state
+        .storage
+        .list_file_checkpoints_for_job(&job.project_id, job.target_generation)
+        .await
+    {
+        Ok(checkpoints) => {
+            let files_done = checkpoints.iter().filter(|checkpoint| checkpoint.completed).count() as u64;
+            if files_done == 0 {
+                return (false, None, Some(0), job.total_files_count, None);
+            }
+            let phase = checkpoints
+                .iter()
+                .rev()
+                .find(|checkpoint| checkpoint.completed)
+                .map(|checkpoint| checkpoint.phase.clone())
+                .unwrap_or(IndexJobPhase::Parse);
+            (
+                true,
+                Some(checkpoint_resume_token(&phase, files_done)),
+                Some(files_done),
+                job.total_files_count,
+                Some(phase),
+            )
+        }
+        Err(_) => (false, None, None, job.total_files_count, None),
     }
 }
 
-fn index_job_json(job: &IndexJobRecord) -> serde_json::Value {
+async fn index_job_json(state: &Arc<AppState>, job: &IndexJobRecord) -> serde_json::Value {
     let reason_code = job
         .reason_code
         .as_ref()
         .or_else(|| job.error.as_ref().map(|error| &error.code));
+    let (checkpoint_can_resume, checkpoint_token, files_done, files_total, checkpoint_phase) =
+        resumable_job_fields(state, job).await;
+    let can_resume = matches!(job.state, IndexJobState::Resumable | IndexJobState::Interrupted | IndexJobState::Failed)
+        && checkpoint_can_resume;
+    let resume_token = if can_resume { checkpoint_token } else { None };
+    let effective_reason_code = if can_resume {
+        Some(IndexJobReasonCode::ResumableInterruptedJob)
+    } else {
+        reason_code.cloned()
+    };
+    let mut progress = serde_json::to_value(&job.progress).unwrap_or_else(|_| json!({}));
+    if let Some(object) = progress.as_object_mut() {
+        if let Some(files_done) = files_done {
+            object.insert("files_done".to_string(), json!(files_done));
+        }
+        if let Some(files_total) = files_total {
+            object.insert("files_total".to_string(), json!(files_total));
+        }
+    }
 
     json!({
         "job_id": job.job_id,
-        "state": index_job_state_str(&job.state),
+        "state": if can_resume { "resumable" } else { index_job_state_str(&job.state) },
         "operation_id": null,
-        "can_resume": false,
-        "reason_code": reason_code.map(index_job_reason_code_str),
-        "requires_force": matches!(job.state, IndexJobState::Failed),
-        "requires_confirmation": matches!(job.state, IndexJobState::Failed),
-        "restart_fallback": if matches!(job.state, IndexJobState::Failed) {
+        "can_resume": can_resume,
+        "reason_code": effective_reason_code.as_ref().map(index_job_reason_code_str),
+        "requires_force": matches!(job.state, IndexJobState::Failed) && !can_resume,
+        "requires_confirmation": matches!(job.state, IndexJobState::Failed) && !can_resume,
+        "restart_fallback": if matches!(job.state, IndexJobState::Failed) && !can_resume {
             Some(json!({ "force": true, "confirm_failed_restart": true }))
         } else {
             None
         },
-        "resume_token": null,
+        "resume_token": resume_token,
         "target_generation": job.target_generation,
         "structural_generation": job.structural_generation,
-        "phase": index_job_phase_str(&job.phase),
+        "phase": index_job_phase_str(checkpoint_phase.as_ref().unwrap_or(&job.phase)),
         "created_at": job.created_at,
         "started_at": job.started_at,
         "updated_at": job.updated_at,
         "completed_at": job.completed_at,
-        "progress": job.progress,
+        "progress": progress,
         "identity_semantics": {
             "job_id": "durable indexing job id persisted in storage; use for cross-restart tracking and future resume/cancel/cleanup flows",
             "operation_id": "same-process one-shot task id; null after restart and never valid for resume"
@@ -312,11 +357,12 @@ fn index_job_json(job: &IndexJobRecord) -> serde_json::Value {
     })
 }
 
-fn index_job_json_with_operation(
+async fn index_job_json_with_operation(
+    state: &Arc<AppState>,
     job: &IndexJobRecord,
     operation_id: Option<String>,
 ) -> serde_json::Value {
-    let mut value = index_job_json(job);
+    let mut value = index_job_json(state, job).await;
     if let Some(object) = value.as_object_mut() {
         object.insert("operation_id".to_string(), json!(operation_id));
     }
@@ -345,13 +391,13 @@ async fn latest_index_job_json(
     state: &Arc<AppState>,
     project_id: &str,
 ) -> Option<serde_json::Value> {
-    state
+    let job = state
         .storage
         .list_index_jobs_for_project(project_id)
         .await
         .ok()
-        .and_then(|jobs| jobs.into_iter().next())
-        .map(|job| index_job_json(&job))
+        .and_then(|jobs| jobs.into_iter().next())?;
+    Some(index_job_json(state, &job).await)
 }
 
 fn index_status_summary(
@@ -680,6 +726,10 @@ pub async fn index_project(
         .map(|path| path.to_string_lossy().into_owned())
         .unwrap_or_else(|_| path.to_string_lossy().into_owned());
 
+    let resume_requested = params.resume.unwrap_or(false);
+    let requested_job_id = params.job_id.clone();
+    let requested_resume_token = params.resume_token.clone();
+
     let registry_lifecycle = match state
         .project_registry
         .ensure_project(project_id.clone(), path)
@@ -875,11 +925,46 @@ pub async fn index_project(
         .store(0, std::sync::atomic::Ordering::Relaxed);
     set_monitor_string(&monitor.current_file, "");
     let previous_status = state.storage.get_index_status(&project_id).await.ok().flatten();
-    let structural_generation = previous_status
+    let resume_job = if resume_requested {
+        let job_id = requested_job_id.as_deref().ok_or_else(|| anyhow::anyhow!("job_id is required when resume=true"))?;
+        match state.storage.get_index_job(&project_id, job_id).await? {
+            Some(job) => Some(job),
+            None => {
+                if params.allow_full_restart_fallback.unwrap_or(false) {
+                    None
+                } else {
+                    if let Ok(mut guard) = state.indexing_projects.lock() {
+                        guard.remove(&project_id);
+                    }
+                    return Ok(success_json(json!({
+                        "project_id": project_id,
+                        "job_id": job_id,
+                        "state": "failed",
+                        "can_resume": false,
+                        "reason_code": "checkpoint_generation_missing",
+                        "requires_force": true,
+                        "requires_confirmation": true,
+                    })));
+                }
+            }
+        }
+    } else {
+        None
+    };
+
+    let structural_generation = resume_job
+        .as_ref()
+        .map(|job| job.target_generation)
+        .unwrap_or_else(|| previous_status
         .as_ref()
         .map(|status| status.structural_generation.saturating_add(1))
-        .unwrap_or(1);
-    let durable_job = durable_index_job_record(&project_id, &canonical_root_path, structural_generation);
+        .unwrap_or(1));
+    let mut durable_job = resume_job.unwrap_or_else(|| durable_index_job_record(&project_id, &canonical_root_path, structural_generation));
+    durable_job.state = IndexJobState::Running;
+    durable_job.started_at = durable_job.started_at.or_else(|| Some(crate::types::Datetime::default()));
+    durable_job.updated_at = crate::types::Datetime::default();
+    durable_job.reason_code = None;
+    durable_job.error = None;
     // `operation_id` is same-process-only progress metadata. `job_id` is durable
     // storage identity and intentionally exists before file enumeration starts.
     if let Err(error) = state.storage.create_or_update_index_job(&durable_job).await {
@@ -894,9 +979,10 @@ pub async fn index_project(
     }
     let background_task = monitor_one_shot_index_task_json(&monitor);
     let index_job = index_job_json_with_operation(
+        state,
         &durable_job,
         read_monitor_optional_string(&monitor.operation_id),
-    );
+    ).await;
 
     // Spawn indexing in background
     let state_clone = state.clone();
@@ -916,7 +1002,15 @@ pub async fn index_project(
             );
         }
         let path = std::path::Path::new(&path_clone);
-        match crate::codebase::indexer::index_project_after_admission(state_clone.clone(), path)
+        match crate::codebase::indexer::index_project_after_admission_with_resume(
+            state_clone.clone(),
+            path,
+            crate::codebase::indexer::IndexResumeOptions {
+                resume: resume_requested,
+                job_id: requested_job_id.clone(),
+                resume_token: requested_resume_token.clone(),
+            },
+        )
             .await
         {
             Ok(status) => {
@@ -974,12 +1068,31 @@ pub async fn index_project(
                     set_monitor_optional_string(&monitor.last_error, Some(e.to_string()));
                 }
                 let mut failed_job = durable_job_for_task.clone();
-                failed_job.state = IndexJobState::Failed;
+                let checkpoints = state_clone
+                    .storage
+                    .list_file_checkpoints_for_job(&project_id_for_cleanup, failed_job.target_generation)
+                    .await
+                    .unwrap_or_default();
+                let completed_files = checkpoints.iter().filter(|checkpoint| checkpoint.completed).count() as u64;
+                if completed_files > 0 {
+                    failed_job.state = IndexJobState::Resumable;
+                    failed_job.reason_code = Some(IndexJobReasonCode::ResumableInterruptedJob);
+                    failed_job.resume_token = checkpoint_resume_token(&IndexJobPhase::Parse, completed_files);
+                    failed_job.resume = Some(IndexJobResumeState {
+                        supported: true,
+                        token: Some(failed_job.resume_token.clone()),
+                        checkpoint_generation: Some(failed_job.target_generation),
+                        reason_if_not_supported: None,
+                    });
+                } else {
+                    failed_job.state = IndexJobState::Failed;
+                    failed_job.reason_code = Some(IndexJobReasonCode::Unknown);
+                }
                 failed_job.updated_at = crate::types::Datetime::default();
                 failed_job.completed_at = Some(crate::types::Datetime::default());
-                failed_job.reason_code = Some(IndexJobReasonCode::Unknown);
+                failed_job.completed_files_count = completed_files;
                 failed_job.error = Some(IndexJobError {
-                    code: IndexJobReasonCode::Unknown,
+                    code: failed_job.reason_code.clone().unwrap_or(IndexJobReasonCode::Unknown),
                     message: e.to_string(),
                     retryable: true,
                 });

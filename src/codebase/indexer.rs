@@ -1,5 +1,5 @@
 use num_cpus;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -21,10 +21,24 @@ use super::scanner::scan_directory;
 use super::symbol_index::SymbolIndex;
 
 use crate::embedding::{EmbeddingRequest, EmbeddingTarget};
-use crate::types::code::{CodeChunk, IndexJobState};
+use crate::types::code::{CodeChunk, IndexFileCheckpoint, IndexJobPhase, IndexJobState};
 use crate::types::symbol::{CodeReference, CodeSymbol};
 
 const PARSE_TIMEOUT_SECS: u64 = 30;
+
+#[derive(Clone, Debug, Default)]
+pub(crate) struct IndexResumeOptions {
+    pub resume: bool,
+    pub job_id: Option<String>,
+    pub resume_token: Option<String>,
+}
+
+#[derive(Clone, Debug, Default)]
+struct FileCheckpointContext {
+    job_id: String,
+    generation: u64,
+    completed_relative_paths: HashSet<String>,
+}
 
 #[derive(Default)]
 struct IndexMetrics {
@@ -95,6 +109,14 @@ pub(crate) async fn index_project_after_admission(
     state: Arc<AppState>,
     project_path: &Path,
 ) -> Result<IndexStatus> {
+    index_project_after_admission_with_resume(state, project_path, IndexResumeOptions::default()).await
+}
+
+pub(crate) async fn index_project_after_admission_with_resume(
+    state: Arc<AppState>,
+    project_path: &Path,
+    resume_options: IndexResumeOptions,
+) -> Result<IndexStatus> {
     let project_id = derive_project_id(project_path)
         .map_err(|error| crate::AppError::InvalidPath(error.to_string()))?;
 
@@ -104,7 +126,7 @@ pub(crate) async fn index_project_after_admission(
 
     // Spawn as a task so we can catch panics natively
     let handle = tokio::spawn(async move {
-        do_index_project(state_clone, &project_path_clone, &project_id_clone).await
+        do_index_project(state_clone, &project_path_clone, &project_id_clone, resume_options).await
     });
 
     tracing::info!(
@@ -415,10 +437,130 @@ async fn promote_index_generation_and_cleanup(
     Ok(())
 }
 
+fn checkpoint_resume_token(phase: &IndexJobPhase, files_done: u64) -> String {
+    let phase = match phase {
+        IndexJobPhase::Discover => "discover",
+        IndexJobPhase::Parse => "parse",
+        IndexJobPhase::Chunk => "chunk",
+        IndexJobPhase::Symbols => "symbols",
+        IndexJobPhase::Relations => "relations",
+        IndexJobPhase::Embed => "embed",
+        IndexJobPhase::EmbedEnqueue => "embed_enqueue",
+        IndexJobPhase::Bm25 => "bm25",
+        IndexJobPhase::Finalize => "finalize",
+        IndexJobPhase::Promote => "promote",
+        IndexJobPhase::Cleanup => "cleanup",
+    };
+    format!("ckpt_v1_phase_{phase}_file_{files_done}")
+}
+
+async fn prepare_file_checkpoint_context(
+    state: &Arc<AppState>,
+    project_id: &str,
+    generation: u64,
+    resume_options: &IndexResumeOptions,
+) -> Result<Option<FileCheckpointContext>> {
+    let job_id = if resume_options.resume {
+        resume_options.job_id.clone().ok_or_else(|| {
+            crate::AppError::Indexing("resume_token_required: job_id is required for checkpoint resume".into())
+        })?
+    } else {
+        state
+            .storage
+            .list_index_jobs_for_project(project_id)
+            .await?
+            .into_iter()
+            .find(|job| job.target_generation == generation)
+            .map(|job| job.job_id)
+            .unwrap_or_default()
+    };
+
+    if job_id.is_empty() {
+        return Ok(None);
+    }
+
+    let checkpoints = state
+        .storage
+        .list_file_checkpoints_for_job(project_id, generation)
+        .await?;
+    let completed_relative_paths = if resume_options.resume {
+        let token = resume_options.resume_token.as_deref().ok_or_else(|| {
+            crate::AppError::Indexing(
+                "resume_token_required: resume_token is required for checkpoint resume".into(),
+            )
+        })?;
+        if checkpoints.is_empty() {
+            return Err(crate::AppError::Indexing(
+                "checkpoint_generation_missing: no file checkpoints exist for requested resume".into(),
+            ));
+        }
+        let files_done = checkpoints.iter().filter(|checkpoint| checkpoint.completed).count() as u64;
+        let expected_parse = checkpoint_resume_token(&IndexJobPhase::Parse, files_done);
+        let expected_embed = checkpoint_resume_token(&IndexJobPhase::Embed, files_done);
+        if token != expected_parse && token != expected_embed {
+            return Err(crate::AppError::Indexing(format!(
+                "checkpoint_generation_missing: resume_token {token} does not match checkpoint state {expected_parse}"
+            )));
+        }
+        checkpoints
+            .into_iter()
+            .filter(|checkpoint| checkpoint.completed)
+            .map(|checkpoint| checkpoint.relative_file_path)
+            .collect()
+    } else {
+        HashSet::new()
+    };
+
+    Ok(Some(FileCheckpointContext {
+        job_id,
+        generation,
+        completed_relative_paths,
+    }))
+}
+
+fn checkpoint_relative_path(file_path: &Path) -> String {
+    file_path.to_string_lossy().replace('\\', "/")
+}
+
+async fn upsert_file_checkpoint_after_file(
+    state: &Arc<AppState>,
+    checkpoint_context: Option<&FileCheckpointContext>,
+    project_id: &str,
+    file_path: &Path,
+    content_hash: Option<String>,
+    phase: IndexJobPhase,
+    chunks_written: u64,
+    symbols_written: u64,
+) -> Result<()> {
+    let Some(context) = checkpoint_context else {
+        return Ok(());
+    };
+    let relative_file_path = checkpoint_relative_path(file_path);
+    let now = crate::types::Datetime::default();
+    let checkpoint = IndexFileCheckpoint {
+        id: None,
+        job_id: context.job_id.clone(),
+        project_id: project_id.to_string(),
+        generation: context.generation,
+        relative_file_path: relative_file_path.clone(),
+        file_path: relative_file_path,
+        content_hash: content_hash.unwrap_or_default(),
+        checkpoint_generation: context.generation,
+        phase,
+        completed: true,
+        completed_at: now.clone(),
+        chunks_written,
+        symbols_written,
+        updated_at: now,
+    };
+    state.storage.upsert_file_checkpoint(&checkpoint).await
+}
+
 async fn do_index_project(
     state: Arc<AppState>,
     project_path: &Path,
     project_id: &str,
+    resume_options: IndexResumeOptions,
 ) -> Result<IndexStatus> {
     let total_started = Instant::now();
     let file_read_hash_elapsed_ms = 0u128;
@@ -445,7 +587,21 @@ async fn do_index_project(
     );
     let previous_status = state.storage.get_index_status(project_id).await?;
     let mut status = prepare_started_index_status(project_id, project_path, previous_status);
+    if resume_options.resume {
+        if let Some(job_id) = resume_options.job_id.as_deref() {
+            if let Some(job) = state.storage.get_index_job(project_id, job_id).await? {
+                status.structural_generation = job.target_generation;
+            }
+        }
+    }
     let active_structural_generation = status.structural_generation;
+    let checkpoint_context = prepare_file_checkpoint_context(
+        &state,
+        project_id,
+        active_structural_generation,
+        &resume_options,
+    )
+    .await?;
     let monitor = state.progress.get_or_create(project_id).await;
     monitor
         .total_files
@@ -552,6 +708,7 @@ async fn do_index_project(
                 embeddings_enqueued,
                 files_read,
                 files,
+                checkpoint_context,
             )
             .await
         }
@@ -564,6 +721,7 @@ async fn do_index_project(
                 active_structural_generation,
                 total_started,
                 files,
+                checkpoint_context,
             )
             .await
         }
@@ -590,6 +748,7 @@ async fn run_legacy_index_pipeline(
     mut embeddings_enqueued: u64,
     mut files_read: u64,
     files: Vec<std::path::PathBuf>,
+    checkpoint_context: Option<FileCheckpointContext>,
 ) -> Result<IndexStatus> {
     let monitor = state.progress.get_or_create(project_id).await;
     let batch_size = 100;
@@ -626,6 +785,8 @@ async fn run_legacy_index_pipeline(
                 .map_err(|e| crate::AppError::Internal(
                     format!("parse/chunk panicked: {e}").into(),
                 ))?;
+            let file_chunk_count = chunks.len() as u64;
+            let file_symbol_count = symbols.len() as u64;
             parse_chunk_elapsed_ms += parse_elapsed_ms;
             emit_index_timing(
                 project_id,
@@ -767,6 +928,17 @@ async fn run_legacy_index_pipeline(
             monitor
                 .indexed_files
                 .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            upsert_file_checkpoint_after_file(
+                &state,
+                checkpoint_context.as_ref(),
+                project_id,
+                Path::new(&fp_str),
+                None,
+                IndexJobPhase::Parse,
+                file_chunk_count,
+                file_symbol_count,
+            )
+            .await?;
 
             if status.indexed_files % 10 == 0 {
                 let percent =
@@ -800,6 +972,17 @@ async fn run_legacy_index_pipeline(
     }
 
     for file_path in &files {
+        if checkpoint_context
+            .as_ref()
+            .is_some_and(|context| context.completed_relative_paths.contains(&checkpoint_relative_path(file_path)))
+        {
+            status.indexed_files += 1;
+            monitor
+                .indexed_files
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            continue;
+        }
+
         // Update current file in monitor for status reporting
         if let Ok(mut cf) = monitor.current_file.write() {
             *cf = file_path.to_string_lossy().to_string();
@@ -811,6 +994,20 @@ async fn run_legacy_index_pipeline(
         if crate::codebase::scanner::is_ignored_file(file_path) {
             tracing::debug!(path = ?file_path, "Skipping generated file");
             status.indexed_files += 1;
+            monitor
+                .indexed_files
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            upsert_file_checkpoint_after_file(
+                &state,
+                checkpoint_context.as_ref(),
+                project_id,
+                file_path,
+                None,
+                IndexJobPhase::Parse,
+                0,
+                0,
+            )
+            .await?;
             continue;
         }
 
@@ -836,6 +1033,21 @@ async fn run_legacy_index_pipeline(
                 status
                     .failed_files
                     .push(file_path.to_string_lossy().to_string());
+                status.indexed_files += 1;
+                monitor
+                    .indexed_files
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                upsert_file_checkpoint_after_file(
+                    &state,
+                    checkpoint_context.as_ref(),
+                    project_id,
+                    file_path,
+                    None,
+                    IndexJobPhase::Parse,
+                    0,
+                    0,
+                )
+                .await?;
                 emit_index_timing(
                     project_id,
                     "file_read_hash",
@@ -859,6 +1071,21 @@ async fn run_legacy_index_pipeline(
             status
                 .failed_files
                 .push(file_path.to_string_lossy().to_string());
+            status.indexed_files += 1;
+            monitor
+                .indexed_files
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            upsert_file_checkpoint_after_file(
+                &state,
+                checkpoint_context.as_ref(),
+                project_id,
+                file_path,
+                None,
+                IndexJobPhase::Parse,
+                0,
+                0,
+            )
+            .await?;
             emit_index_timing(
                 project_id,
                 "file_read_hash",
@@ -925,6 +1152,17 @@ async fn run_legacy_index_pipeline(
                     monitor
                         .indexed_files
                         .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    upsert_file_checkpoint_after_file(
+                        &state,
+                        checkpoint_context.as_ref(),
+                        project_id,
+                        file_path,
+                        None,
+                        IndexJobPhase::Parse,
+                        0,
+                        0,
+                    )
+                    .await?;
                     skip_spawn = true;
                 }
             }
@@ -1788,6 +2026,7 @@ async fn run_staged_index_pipeline(
     active_structural_generation: u64,
     total_started: Instant,
     files: Vec<std::path::PathBuf>,
+    checkpoint_context: Option<FileCheckpointContext>,
 ) -> Result<IndexStatus> {
     let config = state.config.code_index.clone();
     let monitor = state.progress.get_or_create(project_id).await;
@@ -1822,6 +2061,48 @@ async fn run_staged_index_pipeline(
     let mut parse_set: tokio::task::JoinSet<ParsedFile> = tokio::task::JoinSet::new();
 
     for (seq, file_path) in files.iter().cloned().enumerate() {
+        if checkpoint_context
+            .as_ref()
+            .is_some_and(|context| context.completed_relative_paths.contains(&checkpoint_relative_path(&file_path)))
+        {
+            pending.insert(
+                seq,
+                ParsedFile {
+                    seq,
+                    path: file_path.clone(),
+                    path_str: file_path.to_string_lossy().to_string(),
+                    file_hash: None,
+                    chunks: vec![],
+                    symbols: vec![],
+                    references: vec![],
+                    read_elapsed_ms: 0,
+                    parse_elapsed_ms: 0,
+                    error: None,
+                    skipped: true,
+                },
+            );
+            drain_ready_staged_results(
+                &state,
+                project_id,
+                &monitor,
+                &mut status,
+                &mut metrics,
+                &mut symbol_index,
+                &mut total_relation_stats,
+                &mut pending,
+                &mut next_commit_seq,
+                &mut chunk_buffer,
+                &mut symbol_buffer,
+                &mut hash_buffer,
+                &mut relation_buffer,
+                &config,
+                &mut last_status_flush,
+                checkpoint_context.as_ref(),
+            )
+            .await?;
+            continue;
+        }
+
         // Check for cancellation request at per-file boundary (every 10 files to reduce DB load)
         if seq % 10 == 0 {
             if let Ok(jobs) = state.storage.list_index_jobs_for_project(project_id).await {
@@ -1872,6 +2153,7 @@ async fn run_staged_index_pipeline(
                 &mut relation_buffer,
                 &config,
                 &mut last_status_flush,
+                checkpoint_context.as_ref(),
             )
             .await?;
             continue;
@@ -1911,6 +2193,7 @@ async fn run_staged_index_pipeline(
                     &mut relation_buffer,
                     &config,
                     &mut last_status_flush,
+                    checkpoint_context.as_ref(),
                 )
                 .await?;
             }
@@ -1938,6 +2221,7 @@ async fn run_staged_index_pipeline(
             &mut relation_buffer,
             &config,
             &mut last_status_flush,
+            checkpoint_context.as_ref(),
         )
         .await?;
     }
@@ -2005,6 +2289,7 @@ async fn drain_ready_staged_results(
     relation_buffer: &mut Vec<CodeReference>,
     config: &crate::config::CodeIndexConfig,
     last_status_flush: &mut Instant,
+    checkpoint_context: Option<&FileCheckpointContext>,
 ) -> Result<()> {
     while let Some(parsed) = pending.remove(next_commit_seq) {
         metrics.file_read_hash_elapsed_ms += parsed.read_elapsed_ms;
@@ -2026,6 +2311,17 @@ async fn drain_ready_staged_results(
             monitor
                 .indexed_files
                 .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            upsert_file_checkpoint_after_file(
+                state,
+                checkpoint_context,
+                project_id,
+                &parsed.path,
+                None,
+                IndexJobPhase::Parse,
+                0,
+                0,
+            )
+            .await?;
             *next_commit_seq += 1;
             continue;
         }
@@ -2036,6 +2332,17 @@ async fn drain_ready_staged_results(
             monitor
                 .indexed_files
                 .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            upsert_file_checkpoint_after_file(
+                state,
+                checkpoint_context,
+                project_id,
+                &parsed.path,
+                parsed.file_hash.clone(),
+                IndexJobPhase::Parse,
+                0,
+                0,
+            )
+            .await?;
             *next_commit_seq += 1;
             continue;
         }
@@ -2052,6 +2359,10 @@ async fn drain_ready_staged_results(
             parsed.references.len() as u64,
             status.failed_files.len() as u64,
         );
+
+        let checkpoint_content_hash = parsed.file_hash.clone();
+        let file_chunk_count = parsed.chunks.len() as u64;
+        let file_symbol_count = parsed.symbols.len() as u64;
 
         if let Some(file_hash) = parsed.file_hash {
             hash_buffer.push((parsed.path_str.clone(), file_hash));
@@ -2105,6 +2416,17 @@ async fn drain_ready_staged_results(
         monitor
             .indexed_files
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        upsert_file_checkpoint_after_file(
+            state,
+            checkpoint_context,
+            project_id,
+            &parsed.path,
+            checkpoint_content_hash,
+            IndexJobPhase::Parse,
+            file_chunk_count,
+            file_symbol_count,
+        )
+        .await?;
 
         if last_status_flush.elapsed() >= Duration::from_millis(config.status_flush_ms) {
             let status_started = Instant::now();
@@ -3156,6 +3478,7 @@ mod tests {
                 project_dir.join("b.rs"),
                 project_dir.join("c.rs"),
             ],
+            None,
         )
         .await
         .unwrap();
@@ -3292,6 +3615,7 @@ mod tests {
                 project_dir.join("generated/ignored.rs"),
                 project_dir.join("z.rs"),
             ],
+            None,
         )
             .await
             .unwrap();
@@ -3661,6 +3985,7 @@ mod tests {
             &mut relation_buffer,
             &config,
             &mut last_status_flush,
+            None,
         )
         .await
         .unwrap();
@@ -3703,6 +4028,7 @@ mod tests {
             &mut relation_buffer,
             &config,
             &mut last_status_flush,
+            None,
         )
         .await
         .unwrap();
