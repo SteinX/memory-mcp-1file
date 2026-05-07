@@ -7,7 +7,8 @@ use crate::codebase::resolver::{
 };
 use crate::codebase::{CodebaseManager, IndexWorker};
 use crate::config::AppState;
-use crate::types::CodeIntelligenceDiagnostic;
+use crate::storage::StorageBackend;
+use crate::types::{CodeIntelligenceDiagnostic, IndexJobReasonCode, IndexJobState};
 
 #[derive(Debug, Clone)]
 pub enum CodeIntelligenceStartupStatus {
@@ -36,6 +37,103 @@ pub enum CodeIntelligenceStartupStatus {
 #[derive(Debug, Clone)]
 pub struct CodeIntelligenceStartupOutcome {
     pub status: CodeIntelligenceStartupStatus,
+}
+
+/// On server startup, scan all projects for jobs that were `Running` when the
+/// server last shut down. Transition them to:
+/// - `Resumable` if at least one completed checkpoint exists for the job's target generation
+/// - `Failed` (with `reason_code=checkpoint_generation_missing`) if no checkpoints exist
+///
+/// This must be called once, early in startup, before any new indexing requests are accepted.
+pub async fn perform_startup_job_recovery(state: &Arc<AppState>) {
+    let project_ids = match state.storage.list_projects().await {
+        Ok(ids) => ids,
+        Err(error) => {
+            tracing::warn!(error = %error, "startup job recovery: failed to list projects; skipping");
+            return;
+        }
+    };
+
+    let mut recovered = 0u32;
+    let mut failed = 0u32;
+
+    for project_id in &project_ids {
+        let jobs = match state.storage.list_index_jobs_for_project(project_id).await {
+            Ok(jobs) => jobs,
+            Err(error) => {
+                tracing::warn!(
+                    project_id = %project_id,
+                    error = %error,
+                    "startup job recovery: failed to list jobs for project; skipping"
+                );
+                continue;
+            }
+        };
+
+        for mut job in jobs {
+            if job.state != IndexJobState::Running {
+                continue;
+            }
+
+            let has_checkpoints = match state
+                .storage
+                .list_file_checkpoints_for_job(project_id, job.target_generation)
+                .await
+            {
+                Ok(checkpoints) => checkpoints.iter().any(|c| c.completed),
+                Err(error) => {
+                    tracing::warn!(
+                        project_id = %project_id,
+                        job_id = %job.job_id,
+                        error = %error,
+                        "startup job recovery: failed to list checkpoints; treating as no checkpoints"
+                    );
+                    false
+                }
+            };
+
+            if has_checkpoints {
+                job.state = IndexJobState::Resumable;
+                job.reason_code = Some(IndexJobReasonCode::ResumableInterruptedJob);
+                tracing::info!(
+                    project_id = %project_id,
+                    job_id = %job.job_id,
+                    target_generation = job.target_generation,
+                    "startup job recovery: running job has checkpoints → marked resumable"
+                );
+                recovered += 1;
+            } else {
+                job.state = IndexJobState::Failed;
+                job.reason_code = Some(IndexJobReasonCode::CheckpointGenerationMissing);
+                tracing::info!(
+                    project_id = %project_id,
+                    job_id = %job.job_id,
+                    target_generation = job.target_generation,
+                    "startup job recovery: running job has no checkpoints → marked failed"
+                );
+                failed += 1;
+            }
+
+            job.updated_at = crate::types::Datetime::default();
+
+            if let Err(error) = state.storage.create_or_update_index_job(&job).await {
+                tracing::error!(
+                    project_id = %project_id,
+                    job_id = %job.job_id,
+                    error = %error,
+                    "startup job recovery: failed to persist recovered job state"
+                );
+            }
+        }
+    }
+
+    if recovered + failed > 0 {
+        tracing::info!(
+            recovered,
+            failed,
+            "startup job recovery: completed"
+        );
+    }
 }
 
 pub async fn start_code_intelligence_lifecycle(

@@ -763,6 +763,24 @@ pub async fn index_project(
         "index_project request received"
     );
 
+    if !(force && confirm_failed_restart) && !resume_requested {
+        if let Ok(jobs) = state.storage.list_index_jobs_for_project(&project_id).await {
+            if let Some(running_job) = jobs.iter().find(|j| j.state == IndexJobState::Running) {
+                let index_job = index_job_json(state, running_job).await;
+                return Ok(success_json(json!({
+                    "project_id": project_id,
+                    "root_path": canonical_root_path,
+                    "status": "indexing",
+                    "reason_code": "active_index_running",
+                    "job_id": running_job.job_id,
+                    "lifecycle": registry_lifecycle,
+                    "index_job": index_job,
+                    "message": "An indexing job is already running for this project. Wait for it to finish or use force=true and confirm_failed_restart=true to override."
+                })));
+            }
+        }
+    }
+
     // Check current status from DB (for informational purposes / force flag)
     if let Ok(Some(status)) = state.storage.get_index_status(&project_id).await {
         match status.status {
@@ -894,6 +912,7 @@ pub async fn index_project(
             "project_id": project_id,
             "root_path": canonical_root_path,
             "status": "indexing",
+            "reason_code": "active_index_running",
             "total_files": total_files,
             "indexed_files": indexed_files,
             "total_chunks": total_chunks,

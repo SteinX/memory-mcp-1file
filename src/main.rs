@@ -11,7 +11,8 @@ use tracing_subscriber::util::SubscriberInitExt;
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 use memory_mcp::codebase::startup::{
-    start_code_intelligence_lifecycle, CodeIntelligenceStartupStatus,
+    perform_startup_job_recovery, start_code_intelligence_lifecycle,
+    CodeIntelligenceStartupStatus,
 };
 use memory_mcp::codebase::ProjectRegistryPolicy;
 use memory_mcp::config::{AppConfig, AppState};
@@ -730,6 +731,8 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
     // bug: the server ALWAYS responds to `initialize` instantly; only the
     // heavier tool calls experience startup latency, and only once.
     // ──────────────────────────────────────────────────────────────────────
+
+    perform_startup_job_recovery(&state).await;
 
     let startup_outcome = start_code_intelligence_lifecycle(
         state.clone(),
