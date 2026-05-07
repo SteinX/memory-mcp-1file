@@ -10,10 +10,51 @@ use std::pin::Pin;
 use chrono::{DateTime, Utc};
 
 use crate::types::{
-    CodeChunk, CodeSymbol, Direction, Entity, IndexStatus, ManifestEntry, Memory, MemoryQuery,
-    MemoryType, MemoryUpdate, Relation, ScoredCodeChunk, SearchResult, SymbolRelation,
+    CodeChunk, CodeSymbol, Direction, Entity, ExportMemoryResponse, ImportConflictStrategy,
+    ImportMemoryResponse, IndexStatus, ManifestEntry, Memory, MemoryQuery, MemoryType,
+    MemoryUpdate, MigrationMemoryRecord, Relation, ScoredCodeChunk, SearchResult, SymbolRelation,
 };
 use crate::Result;
+
+#[derive(Debug, Clone)]
+pub struct MemoryExportOptions {
+    pub project_id: String,
+    pub filters: MemoryQuery,
+    pub valid_only: bool,
+    pub include_invalidated: bool,
+    pub limit: Option<usize>,
+}
+
+impl MemoryExportOptions {
+    pub fn new(project_id: impl Into<String>) -> Self {
+        Self {
+            project_id: project_id.into(),
+            filters: MemoryQuery::default(),
+            valid_only: true,
+            include_invalidated: false,
+            limit: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct MemoryImportOptions {
+    pub project_id: String,
+    pub conflict_strategy: ImportConflictStrategy,
+    pub dry_run: bool,
+    pub allow_invalidated: bool,
+}
+
+impl MemoryImportOptions {
+    pub fn new(project_id: impl Into<String>) -> Self {
+        Self {
+            project_id: project_id.into(),
+            conflict_strategy: ImportConflictStrategy::Remap,
+            dry_run: true,
+            allow_invalidated: false,
+        }
+    }
+}
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct CapacityMemoryCandidate {
@@ -152,6 +193,27 @@ pub trait StorageBackend: Send + Sync {
         filters: &MemoryQuery,
         content_hash: &str,
     ) -> Result<Vec<Memory>>;
+
+    /// Export project-scoped memory records through the stable migration DTO.
+    async fn export_memories(
+        &self,
+        _options: &MemoryExportOptions,
+    ) -> Result<ExportMemoryResponse> {
+        Err(crate::types::AppError::Internal(
+            anyhow::anyhow!("memory export is not implemented for this storage backend").into(),
+        ))
+    }
+
+    /// Plan or insert memory records from the stable migration DTO.
+    async fn import_memories(
+        &self,
+        _records: Vec<MigrationMemoryRecord>,
+        _options: &MemoryImportOptions,
+    ) -> Result<ImportMemoryResponse> {
+        Err(crate::types::AppError::Internal(
+            anyhow::anyhow!("memory import is not implemented for this storage backend").into(),
+        ))
+    }
 
     // ─────────────────────────────────────────────────────────────────────────
     // Vector search

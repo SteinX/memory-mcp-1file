@@ -6,9 +6,11 @@ use surrealdb::Surreal;
 
 use super::StorageBackend;
 use crate::graph::{GraphTraversalStorage, SymbolGraphTraversalStorage};
+use crate::storage::traits::{MemoryExportOptions, MemoryImportOptions};
 use crate::types::{
-    CodeChunk, CodeSymbol, Direction, Entity, IndexStatus, ManifestEntry, Memory, MemoryQuery,
-    MemoryUpdate, Relation, ScoredCodeChunk, SearchResult, SymbolRelation,
+    CodeChunk, CodeSymbol, Direction, Entity, ExportMemoryResponse, ImportMemoryResponse,
+    IndexStatus, ManifestEntry, Memory, MemoryQuery, MemoryUpdate, MigrationMemoryRecord, Relation,
+    ScoredCodeChunk, SearchResult, SymbolRelation,
 };
 use crate::Result;
 
@@ -433,6 +435,18 @@ impl StorageBackend for SurrealStorage {
         memory_ops::find_memories_by_content_hash(&self.db, filters, content_hash).await
     }
 
+    async fn export_memories(&self, options: &MemoryExportOptions) -> Result<ExportMemoryResponse> {
+        memory_ops::export_memories(&self.db, options).await
+    }
+
+    async fn import_memories(
+        &self,
+        records: Vec<MigrationMemoryRecord>,
+        options: &MemoryImportOptions,
+    ) -> Result<ImportMemoryResponse> {
+        memory_ops::import_memories(&self.db, records, options).await
+    }
+
     async fn vector_search(
         &self,
         embedding: &[f32],
@@ -854,10 +868,13 @@ impl StorageBackend for SurrealStorage {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::storage::traits::{MemoryExportOptions, MemoryImportOptions};
     use crate::types::{
-        ChunkType, CodeRelationType, CodeSymbol, ConfidenceClass, Datetime, Entity, Language,
-        Memory, MemoryQuery, MemoryType, MemoryUpdate, RecordId, Relation, RelationClass,
+        ChunkType, CodeRelationType, CodeSymbol, ConfidenceClass, Datetime, Entity,
+        ImportConflictStrategy, Language, Memory, MemoryQuery, MemoryType, MemoryUpdate,
+        MigrationMemoryRecord, MigrationRecordType, RecordId, Relation, RelationClass,
         RelationProvenance, StalenessState, SymbolRelation, SymbolType,
+        MEMORY_MIGRATION_SCHEMA_VERSION,
     };
     use tempfile::tempdir;
 
@@ -944,6 +961,31 @@ mod tests {
         let tmp = tempdir().unwrap();
         let storage = SurrealStorage::new(tmp.path(), 768).await.unwrap();
         (storage, tmp)
+    }
+
+    fn migration_memory_record(id: &str, content: &str) -> MigrationMemoryRecord {
+        let now = Datetime::default();
+        MigrationMemoryRecord {
+            schema_version: MEMORY_MIGRATION_SCHEMA_VERSION,
+            record_type: MigrationRecordType::Memory,
+            id: id.to_string(),
+            content: content.to_string(),
+            memory_type: MemoryType::Semantic,
+            user_id: None,
+            agent_id: None,
+            run_id: None,
+            namespace: Some("source-project".to_string()),
+            project_id: Some("source-project".to_string()),
+            metadata: None,
+            importance_score: 1.0,
+            created_at: now,
+            updated_at: now,
+            valid_from: now,
+            valid_until: None,
+            superseded_by: None,
+            invalidated: false,
+            invalidation_reason: None,
+        }
     }
 
     #[tokio::test]
@@ -1477,6 +1519,268 @@ mod tests {
         assert_eq!(relation.confidence_class, ConfidenceClass::Ambiguous);
         assert_eq!(relation.freshness_generation, 11);
         assert_eq!(relation.staleness_state, StalenessState::Stale);
+    }
+
+    #[tokio::test]
+    async fn storage_export_memory_defaults_to_valid_only() {
+        let (storage, _tmp) = setup_test_db().await;
+        let valid_id = storage
+            .create_memory(
+                Memory::new("export valid memory".to_string())
+                    .with_namespace("project-a".to_string()),
+            )
+            .await
+            .unwrap();
+        let invalid_id = storage
+            .create_memory(
+                Memory::new("export invalidated memory".to_string())
+                    .with_namespace("project-a".to_string()),
+            )
+            .await
+            .unwrap();
+        storage
+            .create_memory(
+                Memory::new("export other project".to_string())
+                    .with_namespace("project-b".to_string()),
+            )
+            .await
+            .unwrap();
+        storage
+            .invalidate(&invalid_id, Some("archived"), Some(&valid_id))
+            .await
+            .unwrap();
+
+        let response = storage
+            .export_memories(&MemoryExportOptions::new("project-a"))
+            .await
+            .unwrap();
+
+        assert_eq!(response.exported_count, 1);
+        assert!(!response.truncated);
+        assert!(response.jsonl.contains("export valid memory"));
+        assert!(!response.jsonl.contains("export invalidated memory"));
+        assert!(!response.jsonl.contains("export other project"));
+        let record: MigrationMemoryRecord = serde_json::from_str(&response.jsonl).unwrap();
+        assert_eq!(record.id, valid_id);
+        assert_eq!(record.project_id.as_deref(), Some("project-a"));
+        assert_eq!(record.namespace.as_deref(), Some("project-a"));
+        assert!(!record.invalidated);
+        assert_eq!(response.summary.valid_records, 1);
+        assert_eq!(response.summary.invalidated_records, 0);
+
+        let archival = storage
+            .export_memories(&MemoryExportOptions {
+                include_invalidated: true,
+                valid_only: false,
+                limit: Some(1),
+                ..MemoryExportOptions::new("project-a")
+            })
+            .await
+            .unwrap();
+        assert_eq!(archival.exported_count, 1);
+        assert!(archival.truncated);
+    }
+
+    #[tokio::test]
+    async fn storage_import_memory_plans_id_remap_without_writes() {
+        let (storage, _tmp) = setup_test_db().await;
+        let existing_id = storage
+            .create_memory(
+                Memory::new("existing imported id".to_string())
+                    .with_namespace("project-a".to_string()),
+            )
+            .await
+            .unwrap();
+        let now = Datetime::default();
+        let records = vec![
+            MigrationMemoryRecord {
+                schema_version: MEMORY_MIGRATION_SCHEMA_VERSION,
+                record_type: MigrationRecordType::Memory,
+                id: existing_id.clone(),
+                content: "incoming replacement".to_string(),
+                memory_type: MemoryType::Semantic,
+                user_id: Some("user-a".to_string()),
+                agent_id: None,
+                run_id: None,
+                namespace: Some("source-project".to_string()),
+                project_id: Some("source-project".to_string()),
+                metadata: Some(serde_json::json!({"embedding": [1, 2, 3]})),
+                importance_score: 1.5,
+                created_at: now,
+                updated_at: now,
+                valid_from: now,
+                valid_until: None,
+                superseded_by: Some("payload-new".to_string()),
+                invalidated: false,
+                invalidation_reason: None,
+            },
+            MigrationMemoryRecord {
+                schema_version: MEMORY_MIGRATION_SCHEMA_VERSION,
+                record_type: MigrationRecordType::Memory,
+                id: "payload-new".to_string(),
+                content: "incoming target".to_string(),
+                memory_type: MemoryType::Procedural,
+                user_id: None,
+                agent_id: Some("agent-a".to_string()),
+                run_id: None,
+                namespace: Some("source-project".to_string()),
+                project_id: Some("source-project".to_string()),
+                metadata: None,
+                importance_score: 2.0,
+                created_at: now,
+                updated_at: now,
+                valid_from: now,
+                valid_until: None,
+                superseded_by: None,
+                invalidated: false,
+                invalidation_reason: None,
+            },
+        ];
+
+        let response = storage
+            .import_memories(
+                records.clone(),
+                &MemoryImportOptions {
+                    project_id: "project-a".to_string(),
+                    conflict_strategy: ImportConflictStrategy::Remap,
+                    dry_run: true,
+                    allow_invalidated: false,
+                },
+            )
+            .await
+            .unwrap();
+
+        assert!(response.dry_run);
+        assert_eq!(response.imported_count, 0);
+        assert_eq!(response.failed_count, 0);
+        assert_eq!(response.skipped_count, 0);
+        assert_eq!(response.id_mappings.len(), 1);
+        assert_eq!(response.id_mappings[0].old_id, existing_id);
+        assert_ne!(
+            response.id_mappings[0].new_id,
+            response.id_mappings[0].old_id
+        );
+        assert!(storage.get_memory("payload-new").await.unwrap().is_none());
+        assert_eq!(storage.count_memories().await.unwrap(), 1);
+
+        let applied = storage
+            .import_memories(
+                records,
+                &MemoryImportOptions {
+                    project_id: "project-a".to_string(),
+                    conflict_strategy: ImportConflictStrategy::Remap,
+                    dry_run: false,
+                    allow_invalidated: false,
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(applied.imported_count, 2);
+        let remapped_id = applied.id_mappings[0].new_id.clone();
+        let remapped = storage.get_memory(&remapped_id).await.unwrap().unwrap();
+        assert_eq!(remapped.namespace.as_deref(), Some("project-a"));
+        assert_eq!(remapped.embedding, None);
+        assert_eq!(remapped.content_hash, None);
+        let imported = storage
+            .list_memories(
+                &MemoryQuery {
+                    namespace: Some("project-a".to_string()),
+                    ..Default::default()
+                },
+                10,
+                0,
+            )
+            .await
+            .unwrap();
+        assert!(imported
+            .iter()
+            .any(|memory| memory.content == "incoming target" && memory.embedding.is_none()));
+    }
+
+    #[tokio::test]
+    async fn storage_import_memory_rejects_invalid_payload_without_partial_write() {
+        let (storage, _tmp) = setup_test_db().await;
+        storage
+            .create_memory(
+                Memory::new("existing baseline".to_string())
+                    .with_namespace("project-a".to_string()),
+            )
+            .await
+            .unwrap();
+        let before_count = storage.count_memories().await.unwrap();
+        let mut invalidated_record =
+            migration_memory_record("invalidated-source", "invalidated import");
+        invalidated_record.invalidated = true;
+        invalidated_record.valid_until = Some(Datetime::default());
+        invalidated_record.invalidation_reason = Some("archived".to_string());
+        let records = vec![
+            migration_memory_record("valid-source", "valid import should not be written"),
+            invalidated_record,
+        ];
+
+        let response = storage
+            .import_memories(
+                records,
+                &MemoryImportOptions {
+                    project_id: "project-a".to_string(),
+                    conflict_strategy: ImportConflictStrategy::Remap,
+                    dry_run: false,
+                    allow_invalidated: false,
+                },
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.imported_count, 0);
+        assert_eq!(response.summary.imported_records, 0);
+        assert_eq!(response.skipped_count, 1);
+        assert_eq!(response.failed_count, 0);
+        assert_eq!(response.errors.len(), 1);
+        assert_eq!(storage.count_memories().await.unwrap(), before_count);
+        let listed = storage
+            .list_memories(
+                &MemoryQuery {
+                    namespace: Some("project-a".to_string()),
+                    ..Default::default()
+                },
+                10,
+                0,
+            )
+            .await
+            .unwrap();
+        assert!(!listed
+            .iter()
+            .any(|memory| memory.content == "valid import should not be written"));
+    }
+
+    #[tokio::test]
+    async fn storage_import_memory_rejects_duplicate_source_ids_without_partial_write() {
+        let (storage, _tmp) = setup_test_db().await;
+        let before_count = storage.count_memories().await.unwrap();
+        let records = vec![
+            migration_memory_record("duplicate-source", "first duplicate"),
+            migration_memory_record("duplicate-source", "second duplicate"),
+            migration_memory_record("valid-source", "valid import should not be written"),
+        ];
+
+        let response = storage
+            .import_memories(
+                records,
+                &MemoryImportOptions {
+                    project_id: "project-a".to_string(),
+                    conflict_strategy: ImportConflictStrategy::Remap,
+                    dry_run: false,
+                    allow_invalidated: false,
+                },
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.imported_count, 0);
+        assert_eq!(response.summary.imported_records, 0);
+        assert_eq!(response.failed_count, 1);
+        assert_eq!(response.errors.len(), 1);
+        assert_eq!(storage.count_memories().await.unwrap(), before_count);
     }
 
     #[tokio::test]

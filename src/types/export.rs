@@ -251,7 +251,9 @@ mod migration_tests {
         assert_eq!(error.line_number, Some(7));
         assert_eq!(error.source_id.as_deref(), Some("memory-1"));
         assert_eq!(error.field.as_deref(), Some("schema_version"));
-        assert!(error.message.contains("Unsupported memory migration schema_version 2"));
+        assert!(error
+            .message
+            .contains("Unsupported memory migration schema_version 2"));
         assert!(error.message.contains("Supported schema_version is 1"));
 
         let response = ImportMemoryResponse {
@@ -318,7 +320,10 @@ mod migration_tests {
         assert_eq!(value["record_type"], MEMORY_MIGRATION_RECORD_TYPE);
         assert_eq!(value["exported_count"], 1);
         assert_eq!(value["truncated"], false);
-        assert!(value["jsonl"].as_str().unwrap().contains("portable memory content"));
+        assert!(value["jsonl"]
+            .as_str()
+            .unwrap()
+            .contains("portable memory content"));
         assert_eq!(value["summary"]["exported_records"], 1);
     }
 }

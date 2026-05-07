@@ -1,9 +1,16 @@
 use surrealdb::engine::local::Db;
 use surrealdb::Surreal;
 
-use crate::storage::traits::CapacityMemoryCandidate;
+use std::collections::{HashMap, HashSet};
+
+use crate::storage::traits::{CapacityMemoryCandidate, MemoryExportOptions, MemoryImportOptions};
 use crate::types::SurrealValue;
-use crate::types::{Memory, MemoryQuery, MemoryUpdate, SearchResult};
+use crate::types::{
+    record_key_to_string, AppError, ExportMemoryResponse, ImportConflictStrategy, ImportError,
+    ImportErrorCode, ImportIdMapping, ImportMemoryResponse, Memory, MemoryQuery, MemoryUpdate,
+    MigrationMemoryRecord, MigrationRecordType, MigrationSummary, SearchResult,
+    MEMORY_MIGRATION_SCHEMA_VERSION,
+};
 use crate::Result;
 
 use super::helpers::{generate_id, parse_thing};
@@ -605,4 +612,389 @@ pub(super) async fn raw_update_embedding(
         .bind(("state", embedding_state.to_string()))
         .await?;
     Ok(())
+}
+
+pub(super) async fn export_memories(
+    db: &Surreal<Db>,
+    options: &MemoryExportOptions,
+) -> Result<ExportMemoryResponse> {
+    validate_project_scope(&options.project_id)?;
+
+    let mut filters = options.filters.clone();
+    filters.namespace = Some(options.project_id.clone());
+    let fetch_limit = options
+        .limit
+        .map(|limit| limit.saturating_add(1))
+        .unwrap_or(1_000_000usize);
+    let validity_clause = if options.include_invalidated {
+        "TRUE"
+    } else if options.valid_only {
+        "valid_until IS NONE OR valid_until > time::now()"
+    } else {
+        "TRUE"
+    };
+    let sql = format!(
+        r#"
+        SELECT {MEMORY_SELECT}
+        FROM memories
+        WHERE namespace = $project_id
+          AND {validity_clause}
+          AND ($user_id IS NONE OR user_id = $user_id)
+          AND ($agent_id IS NONE OR agent_id = $agent_id)
+          AND ($run_id IS NONE OR run_id = $run_id)
+          AND ($memory_type IS NONE OR memory_type = $memory_type)
+          AND ($event_after IS NONE OR event_time >= $event_after)
+          AND ($event_before IS NONE OR event_time <= $event_before)
+          AND ($ingestion_after IS NONE OR ingestion_time >= $ingestion_after)
+          AND ($ingestion_before IS NONE OR ingestion_time <= $ingestion_before)
+        ORDER BY ingestion_time DESC
+        LIMIT $limit
+    "#
+    );
+    let mut response = bind_memory_query(db.query(&sql), &filters)
+        .bind(("project_id", options.project_id.clone()))
+        .bind(("limit", fetch_limit))
+        .await?;
+    let mut memories: Vec<Memory> = response.take(0)?;
+    memories.retain(|m| metadata_matches(m.metadata.as_ref(), filters.metadata_filter.as_ref()));
+
+    let truncated = options.limit.is_some_and(|limit| memories.len() > limit);
+    if let Some(limit) = options.limit {
+        memories.truncate(limit);
+    }
+
+    let records: Vec<MigrationMemoryRecord> = memories
+        .iter()
+        .map(|memory| memory_to_migration_record(memory, &options.project_id))
+        .collect::<Result<Vec<_>>>()?;
+    let jsonl = records
+        .iter()
+        .map(serde_json::to_string)
+        .collect::<std::result::Result<Vec<_>, _>>()
+        .map_err(|error| AppError::Internal(anyhow::anyhow!(error).into()))?
+        .join("\n");
+    let invalidated_records = records.iter().filter(|record| record.invalidated).count();
+
+    Ok(ExportMemoryResponse {
+        schema_version: MEMORY_MIGRATION_SCHEMA_VERSION,
+        record_type: MigrationRecordType::Memory,
+        jsonl,
+        exported_count: records.len(),
+        truncated,
+        summary: MigrationSummary {
+            schema_version: MEMORY_MIGRATION_SCHEMA_VERSION,
+            record_type: MigrationRecordType::Memory,
+            total_records: records.len(),
+            memory_records: records.len(),
+            exported_records: records.len(),
+            imported_records: 0,
+            skipped_records: 0,
+            failed_records: 0,
+            valid_records: records.len().saturating_sub(invalidated_records),
+            invalidated_records,
+            dry_run: false,
+        },
+    })
+}
+
+pub(super) async fn import_memories(
+    db: &Surreal<Db>,
+    records: Vec<MigrationMemoryRecord>,
+    options: &MemoryImportOptions,
+) -> Result<ImportMemoryResponse> {
+    validate_project_scope(&options.project_id)?;
+
+    let payload_ids: HashSet<String> = records.iter().map(|record| record.id.clone()).collect();
+    let mut seen_ids = HashSet::new();
+    let mut errors = Vec::new();
+    let mut skipped_count = 0usize;
+    let mut failed_count = 0usize;
+    let mut valid_records = 0usize;
+    let mut invalidated_records = 0usize;
+    let mut importable = Vec::new();
+
+    for (index, record) in records.into_iter().enumerate() {
+        let line_number = Some(index + 1);
+        if let Some(error) = record.unsupported_schema_version_error(line_number) {
+            failed_count += 1;
+            errors.push(error);
+            continue;
+        }
+        if record.record_type != MigrationRecordType::Memory {
+            failed_count += 1;
+            errors.push(ImportError {
+                code: ImportErrorCode::InvalidRecordType,
+                message: "Only memory migration records can be imported by memory storage"
+                    .to_string(),
+                line_number,
+                source_id: Some(record.id.clone()),
+                field: Some("record_type".to_string()),
+            });
+            continue;
+        }
+        if record.id.trim().is_empty() {
+            failed_count += 1;
+            errors.push(ImportError {
+                code: ImportErrorCode::MissingRequiredField,
+                message: "Memory migration record id is required".to_string(),
+                line_number,
+                source_id: None,
+                field: Some("id".to_string()),
+            });
+            continue;
+        }
+        if record.content.is_empty() {
+            failed_count += 1;
+            errors.push(ImportError {
+                code: ImportErrorCode::MissingRequiredField,
+                message: "Memory migration record content is required".to_string(),
+                line_number,
+                source_id: Some(record.id.clone()),
+                field: Some("content".to_string()),
+            });
+            continue;
+        }
+        if !seen_ids.insert(record.id.clone()) {
+            failed_count += 1;
+            errors.push(ImportError {
+                code: ImportErrorCode::StorageError,
+                message: format!("Duplicate memory id {} in import payload", record.id),
+                line_number,
+                source_id: Some(record.id.clone()),
+                field: Some("id".to_string()),
+            });
+            continue;
+        }
+        if record.invalidated || record.valid_until.is_some() {
+            invalidated_records += 1;
+            if !options.allow_invalidated {
+                skipped_count += 1;
+                errors.push(ImportError {
+                    code: ImportErrorCode::StorageError,
+                    message: "Invalidated memory records require allow_invalidated import option"
+                        .to_string(),
+                    line_number,
+                    source_id: Some(record.id.clone()),
+                    field: Some("invalidated".to_string()),
+                });
+                continue;
+            }
+        } else {
+            valid_records += 1;
+        }
+        importable.push(record);
+    }
+
+    let importable_ids: Vec<String> = importable.iter().map(|record| record.id.clone()).collect();
+    let conflicts = existing_memory_ids(db, &importable_ids).await?;
+    let mut id_map = HashMap::new();
+    let mut id_mappings = Vec::new();
+    for record in &importable {
+        let old_id = record.id.clone();
+        let new_id = if conflicts.contains(&old_id) {
+            match options.conflict_strategy {
+                ImportConflictStrategy::Remap => {
+                    deterministic_remap_id(&old_id, &options.project_id)
+                }
+                ImportConflictStrategy::Skip => {
+                    skipped_count += 1;
+                    continue;
+                }
+                ImportConflictStrategy::Fail => {
+                    failed_count += 1;
+                    errors.push(ImportError {
+                        code: ImportErrorCode::StorageError,
+                        message: format!("Memory id {old_id} already exists"),
+                        line_number: None,
+                        source_id: Some(old_id),
+                        field: Some("id".to_string()),
+                    });
+                    continue;
+                }
+            }
+        } else {
+            old_id.clone()
+        };
+        if new_id != old_id {
+            id_mappings.push(ImportIdMapping {
+                old_id: old_id.clone(),
+                new_id: new_id.clone(),
+            });
+        }
+        id_map.insert(old_id, new_id);
+    }
+
+    let planned_records: Vec<(MigrationMemoryRecord, String)> = importable
+        .into_iter()
+        .filter_map(|record| {
+            id_map
+                .get(&record.id)
+                .cloned()
+                .map(|new_id| (record, new_id))
+        })
+        .collect();
+
+    let has_errors = failed_count > 0 || !errors.is_empty();
+    let committed_count = if options.dry_run || has_errors {
+        0
+    } else {
+        for (record, new_id) in &planned_records {
+            let memory =
+                migration_record_to_memory(record, &options.project_id, &id_map, &payload_ids);
+            let _: Option<Memory> = db
+                .create(("memories", new_id.as_str()))
+                .content(memory)
+                .await?;
+            if let Some(target) = record.superseded_by.as_ref() {
+                let mapped_target = if payload_ids.contains(target) {
+                    id_map
+                        .get(target)
+                        .cloned()
+                        .unwrap_or_else(|| target.clone())
+                } else {
+                    target.clone()
+                };
+                db.query("UPDATE $thing SET superseded_by = $superseded_by")
+                    .bind((
+                        "thing",
+                        crate::types::RecordId::new("memories", new_id.as_str()),
+                    ))
+                    .bind(("superseded_by", mapped_target))
+                    .await?
+                    .check()?;
+            }
+        }
+        planned_records.len()
+    };
+
+    let planned_count = planned_records.len();
+    Ok(ImportMemoryResponse {
+        schema_version: MEMORY_MIGRATION_SCHEMA_VERSION,
+        record_type: MigrationRecordType::Memory,
+        conflict_strategy: options.conflict_strategy.clone(),
+        dry_run: options.dry_run,
+        imported_count: committed_count,
+        skipped_count,
+        failed_count,
+        summary: MigrationSummary {
+            schema_version: MEMORY_MIGRATION_SCHEMA_VERSION,
+            record_type: MigrationRecordType::Memory,
+            total_records: valid_records + invalidated_records + skipped_count + failed_count,
+            memory_records: valid_records + invalidated_records + skipped_count + failed_count,
+            exported_records: 0,
+            imported_records: committed_count,
+            skipped_records: skipped_count,
+            failed_records: failed_count,
+            valid_records,
+            invalidated_records,
+            dry_run: options.dry_run,
+        },
+        id_mappings,
+        errors,
+    })
+}
+
+fn validate_project_scope(project_id: &str) -> Result<()> {
+    if project_id.trim().is_empty() {
+        return Err(AppError::InvalidPath(
+            "project_id is required for memory migration storage operations".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+async fn existing_memory_ids(db: &Surreal<Db>, ids: &[String]) -> Result<HashSet<String>> {
+    if ids.is_empty() {
+        return Ok(HashSet::new());
+    }
+    let record_ids: Vec<crate::types::RecordId> = ids
+        .iter()
+        .map(|id| crate::types::RecordId::new("memories", id.as_str()))
+        .collect();
+    let mut response = db
+        .query("SELECT meta::id(id) AS id FROM memories WHERE id IN $ids")
+        .bind(("ids", record_ids))
+        .await?;
+    #[derive(Debug, serde::Deserialize, SurrealValue)]
+    struct IdRow {
+        id: String,
+    }
+    let rows: Vec<IdRow> = response.take(0)?;
+    Ok(rows.into_iter().map(|row| row.id).collect())
+}
+
+fn deterministic_remap_id(old_id: &str, project_id: &str) -> String {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    project_id.hash(&mut hasher);
+    old_id.hash(&mut hasher);
+    format!("{old_id}-import-{:016x}", hasher.finish())
+}
+
+fn memory_to_migration_record(memory: &Memory, project_id: &str) -> Result<MigrationMemoryRecord> {
+    let id = memory
+        .id
+        .as_ref()
+        .map(|id| record_key_to_string(&id.key))
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("memory record missing id").into()))?;
+    let invalidated = memory.valid_until.is_some();
+    Ok(MigrationMemoryRecord {
+        schema_version: MEMORY_MIGRATION_SCHEMA_VERSION,
+        record_type: MigrationRecordType::Memory,
+        id,
+        content: memory.content.clone(),
+        memory_type: memory.memory_type.clone(),
+        user_id: memory.user_id.clone(),
+        agent_id: memory.agent_id.clone(),
+        run_id: memory.run_id.clone(),
+        namespace: memory.namespace.clone(),
+        project_id: Some(project_id.to_string()),
+        metadata: memory.metadata.clone(),
+        importance_score: memory.importance_score,
+        created_at: memory.ingestion_time,
+        updated_at: memory.ingestion_time,
+        valid_from: memory.valid_from,
+        valid_until: memory.valid_until,
+        superseded_by: memory.superseded_by.clone(),
+        invalidated,
+        invalidation_reason: memory.invalidation_reason.clone(),
+    })
+}
+
+fn migration_record_to_memory(
+    record: &MigrationMemoryRecord,
+    project_id: &str,
+    id_map: &HashMap<String, String>,
+    payload_ids: &HashSet<String>,
+) -> Memory {
+    let superseded_by = record.superseded_by.as_ref().map(|id| {
+        if payload_ids.contains(id) {
+            id_map.get(id).cloned().unwrap_or_else(|| id.clone())
+        } else {
+            id.clone()
+        }
+    });
+
+    Memory {
+        id: None,
+        content: record.content.clone(),
+        embedding: None,
+        memory_type: record.memory_type.clone(),
+        user_id: record.user_id.clone(),
+        agent_id: record.agent_id.clone(),
+        run_id: record.run_id.clone(),
+        namespace: Some(project_id.to_string()),
+        metadata: record.metadata.clone(),
+        event_time: record.created_at,
+        ingestion_time: record.created_at,
+        valid_from: record.valid_from,
+        valid_until: record.valid_until,
+        importance_score: record.importance_score,
+        access_count: 0,
+        last_accessed_at: None,
+        invalidation_reason: record.invalidation_reason.clone(),
+        superseded_by,
+        content_hash: None,
+        embedding_state: Default::default(),
+    }
 }
