@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use rmcp::model::CallToolResult;
@@ -13,9 +14,11 @@ use crate::server::params::{
 use crate::storage::StorageBackend;
 use crate::types::{
     derive_project_id, CodeIntelligenceDiagnostic, ContractReasonCode, ExportIdentity, IndexState,
-    IndexStatus, ProjectionLocatorLifecycle, ProjectionLocatorLookup, ProjectionLocatorLookupState,
+    IndexJobPhase, IndexJobReasonCode, IndexJobRecord, IndexJobState, IndexStatus,
+    ProjectionLocatorLifecycle, ProjectionLocatorLookup, ProjectionLocatorLookupState,
     ProjectionLocatorRecord,
 };
+use crate::types::code::{IndexJobError, IndexJobProgress, IndexJobResumeState};
 
 use super::super::contracts::{
     assemble_project_projection, collect_project_projection_inputs, export_contract_meta,
@@ -158,6 +161,197 @@ fn new_index_operation_id(project_id: &str) -> String {
         .unwrap_or(0);
     let sequence = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     format!("idx-{project_id}-{millis}-{sequence}")
+}
+
+fn new_index_job_id() -> String {
+    static COUNTER: AtomicU64 = AtomicU64::new(1);
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or(0);
+    let sequence = COUNTER.fetch_add(1, Ordering::Relaxed);
+    format!("idx_{nanos}_{sequence}")
+}
+
+fn new_index_resume_token() -> String {
+    static COUNTER: AtomicU64 = AtomicU64::new(1);
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or(0);
+    let sequence = COUNTER.fetch_add(1, Ordering::Relaxed);
+    format!("resume_{nanos}_{sequence}")
+}
+
+fn durable_index_job_record(
+    project_id: &str,
+    workspace_path: &str,
+    structural_generation: u64,
+) -> IndexJobRecord {
+    let now = crate::types::Datetime::default();
+    IndexJobRecord {
+        id: None,
+        job_id: new_index_job_id(),
+        project_id: project_id.to_string(),
+        target_generation: structural_generation,
+        workspace_path: workspace_path.to_string(),
+        target_fingerprint: None,
+        structural_generation,
+        state: IndexJobState::Running,
+        stored_phase: Some(IndexJobPhase::Discover),
+        phase: IndexJobPhase::Discover,
+        resume_token: new_index_resume_token(),
+        created_at: now.clone(),
+        started_at: Some(now.clone()),
+        updated_at: now,
+        completed_at: None,
+        error: None,
+        resume: Some(IndexJobResumeState {
+            supported: false,
+            token: None,
+            checkpoint_generation: None,
+            reason_if_not_supported: Some(IndexJobReasonCode::CheckpointGenerationMissing),
+        }),
+        completed_files_count: 0,
+        total_files_count: None,
+        reason_code: None,
+        progress: IndexJobProgress::default(),
+    }
+}
+
+fn index_job_state_str(state: &IndexJobState) -> &'static str {
+    match state {
+        IndexJobState::Queued => "queued",
+        IndexJobState::Running => "running",
+        IndexJobState::Paused => "paused",
+        IndexJobState::Interrupted => "interrupted",
+        IndexJobState::Resumable => "resumable",
+        IndexJobState::Completed => "completed",
+        IndexJobState::Failed => "failed",
+        IndexJobState::CancelRequested => "cancel_requested",
+        IndexJobState::Cancelled => "cancelled",
+        IndexJobState::Abandoned => "abandoned",
+    }
+}
+
+fn index_job_reason_code_str(reason: &IndexJobReasonCode) -> &'static str {
+    match reason {
+        IndexJobReasonCode::CancelledByUser => "cancelled_by_user",
+        IndexJobReasonCode::InterruptedByShutdown => "interrupted_by_shutdown",
+        IndexJobReasonCode::LostSameProcessTask => "lost_same_process_task",
+        IndexJobReasonCode::StorageError => "storage_error",
+        IndexJobReasonCode::ParseError => "parse_error",
+        IndexJobReasonCode::EmbeddingError => "embedding_error",
+        IndexJobReasonCode::Bm25Error => "bm25_error",
+        IndexJobReasonCode::Unknown => "unknown",
+        IndexJobReasonCode::ActiveIndexRunning => "active_index_running",
+        IndexJobReasonCode::ResumableInterruptedJob => "resumable_interrupted_job",
+        IndexJobReasonCode::LostOneShotIndexingTaskAfterRestart => {
+            "lost_one_shot_indexing_task_after_restart"
+        }
+        IndexJobReasonCode::CheckpointGenerationMissing => "checkpoint_generation_missing",
+        IndexJobReasonCode::WorkspaceChangedSinceCheckpoint => "workspace_changed_since_checkpoint",
+        IndexJobReasonCode::StaleGeneration => "stale_generation",
+        IndexJobReasonCode::IndexStorageCorrupt => "index_storage_corrupt",
+        IndexJobReasonCode::IllegalStateTransition => "illegal_state_transition",
+        IndexJobReasonCode::ResumeTokenRequired => "resume_token_required",
+        IndexJobReasonCode::ForceRestartConfirmationRequired => "force_restart_confirmation_required",
+        IndexJobReasonCode::CancellationRequested => "cancellation_requested",
+        IndexJobReasonCode::CleanupRequested => "cleanup_requested",
+    }
+}
+
+fn index_job_phase_str(phase: &IndexJobPhase) -> &'static str {
+    match phase {
+        IndexJobPhase::Discover => "discover",
+        IndexJobPhase::Parse => "parse",
+        IndexJobPhase::Chunk => "chunk",
+        IndexJobPhase::Symbols => "symbols",
+        IndexJobPhase::Relations => "relations",
+        IndexJobPhase::Embed => "embed",
+        IndexJobPhase::EmbedEnqueue => "embed_enqueue",
+        IndexJobPhase::Bm25 => "bm25",
+        IndexJobPhase::Finalize => "finalize",
+        IndexJobPhase::Promote => "promote",
+        IndexJobPhase::Cleanup => "cleanup",
+    }
+}
+
+fn index_job_json(job: &IndexJobRecord) -> serde_json::Value {
+    let reason_code = job
+        .reason_code
+        .as_ref()
+        .or_else(|| job.error.as_ref().map(|error| &error.code));
+
+    json!({
+        "job_id": job.job_id,
+        "state": index_job_state_str(&job.state),
+        "operation_id": null,
+        "can_resume": false,
+        "reason_code": reason_code.map(index_job_reason_code_str),
+        "requires_force": matches!(job.state, IndexJobState::Failed),
+        "requires_confirmation": matches!(job.state, IndexJobState::Failed),
+        "restart_fallback": if matches!(job.state, IndexJobState::Failed) {
+            Some(json!({ "force": true, "confirm_failed_restart": true }))
+        } else {
+            None
+        },
+        "resume_token": null,
+        "target_generation": job.target_generation,
+        "structural_generation": job.structural_generation,
+        "phase": index_job_phase_str(&job.phase),
+        "created_at": job.created_at,
+        "started_at": job.started_at,
+        "updated_at": job.updated_at,
+        "completed_at": job.completed_at,
+        "progress": job.progress,
+        "identity_semantics": {
+            "job_id": "durable indexing job id persisted in storage; use for cross-restart tracking and future resume/cancel/cleanup flows",
+            "operation_id": "same-process one-shot task id; null after restart and never valid for resume"
+        }
+    })
+}
+
+fn index_job_json_with_operation(
+    job: &IndexJobRecord,
+    operation_id: Option<String>,
+) -> serde_json::Value {
+    let mut value = index_job_json(job);
+    if let Some(object) = value.as_object_mut() {
+        object.insert("operation_id".to_string(), json!(operation_id));
+    }
+    value
+}
+
+fn lost_one_shot_index_job_json() -> serde_json::Value {
+    json!({
+        "job_id": null,
+        "state": "failed",
+        "operation_id": null,
+        "can_resume": false,
+        "reason_code": "lost_one_shot_indexing_task_after_restart",
+        "requires_force": true,
+        "requires_confirmation": true,
+        "restart_fallback": { "force": true, "confirm_failed_restart": true },
+        "resume_token": null,
+        "identity_semantics": {
+            "job_id": "durable indexing job id persisted in storage; unavailable for legacy one-shot lost-task status before durable job adoption",
+            "operation_id": "same-process one-shot task id; null after restart and never valid for resume"
+        }
+    })
+}
+
+async fn latest_index_job_json(
+    state: &Arc<AppState>,
+    project_id: &str,
+) -> Option<serde_json::Value> {
+    state
+        .storage
+        .list_index_jobs_for_project(project_id)
+        .await
+        .ok()
+        .and_then(|jobs| jobs.into_iter().next())
+        .map(|job| index_job_json(&job))
 }
 
 fn index_status_summary(
@@ -463,13 +657,16 @@ pub async fn index_project(
     state: &Arc<AppState>,
     params: IndexProjectParams,
 ) -> anyhow::Result<CallToolResult> {
-    let path = std::path::Path::new(&params.path);
+    let Some(request_path) = params.path.as_deref() else {
+        return Ok(error_response(
+            "path is required to start a new index job; resume-by-project/job is not implemented yet"
+                .to_string(),
+        ));
+    };
+    let path = std::path::Path::new(request_path);
 
     if !path.exists() {
-        return Ok(error_response(format!(
-            "Path does not exist: {}",
-            params.path
-        )));
+        return Ok(error_response(format!("Path does not exist: {}", request_path)));
     }
 
     let project_id = match derive_project_id(path) {
@@ -509,7 +706,7 @@ pub async fn index_project(
     let confirm_failed_restart = params.confirm_failed_restart.unwrap_or(false);
 
     tracing::info!(
-        path = %params.path,
+        path = %request_path,
         project_id = %project_id,
         force,
         confirm_failed_restart,
@@ -561,7 +758,7 @@ pub async fn index_project(
                             "example": {
                                 "tool": "index_project",
                                 "arguments": {
-                                    "path": params.path,
+                                    "path": request_path,
                                     "force": true,
                                     "confirm_failed_restart": true
                                 }
@@ -633,6 +830,7 @@ pub async fn index_project(
 
     if already_indexing {
         let background_task = one_shot_index_task_json(state, &project_id, "already_running").await;
+        let index_job = latest_index_job_json(state, &project_id).await;
         // Already indexing — return current progress from DB
         let (total_files, indexed_files, total_chunks) = state
             .storage
@@ -650,6 +848,7 @@ pub async fn index_project(
             "indexed_files": indexed_files,
             "total_chunks": total_chunks,
             "lifecycle": registry_lifecycle,
+            "index_job": index_job,
             "background_task": background_task,
             "message": "Indexing already in progress. Registry lifecycle only describes registry-managed workers; this manual index is tracked through index status/progress."
         })));
@@ -675,12 +874,35 @@ pub async fn index_project(
         .indexed_files
         .store(0, std::sync::atomic::Ordering::Relaxed);
     set_monitor_string(&monitor.current_file, "");
+    let previous_status = state.storage.get_index_status(&project_id).await.ok().flatten();
+    let structural_generation = previous_status
+        .as_ref()
+        .map(|status| status.structural_generation.saturating_add(1))
+        .unwrap_or(1);
+    let durable_job = durable_index_job_record(&project_id, &canonical_root_path, structural_generation);
+    // `operation_id` is same-process-only progress metadata. `job_id` is durable
+    // storage identity and intentionally exists before file enumeration starts.
+    if let Err(error) = state.storage.create_or_update_index_job(&durable_job).await {
+        if let Ok(mut guard) = state.indexing_projects.lock() {
+            guard.remove(&project_id);
+        }
+        set_monitor_string(&monitor.task_state, "failed");
+        set_monitor_optional_string(&monitor.last_error, Some(error.to_string()));
+        return Ok(error_response(format!(
+            "failed to create durable index job before file enumeration: {error}"
+        )));
+    }
     let background_task = monitor_one_shot_index_task_json(&monitor);
+    let index_job = index_job_json_with_operation(
+        &durable_job,
+        read_monitor_optional_string(&monitor.operation_id),
+    );
 
     // Spawn indexing in background
     let state_clone = state.clone();
-    let path_clone = params.path.clone();
+    let path_clone = request_path.to_string();
     let project_id_for_cleanup = project_id.clone();
+    let durable_job_for_task = durable_job.clone();
 
     tokio::spawn(async move {
         if let Some(monitor) = state_clone.progress.get(&project_id_for_cleanup).await {
@@ -707,6 +929,31 @@ pub async fn index_project(
                     set_monitor_string(&monitor.task_state, "completed");
                     set_monitor_optional_string(&monitor.last_error, None);
                 }
+                let mut completed_job = durable_job_for_task.clone();
+                completed_job.state = IndexJobState::Completed;
+                completed_job.phase = IndexJobPhase::Finalize;
+                completed_job.stored_phase = Some(IndexJobPhase::Finalize);
+                completed_job.updated_at = crate::types::Datetime::default();
+                completed_job.completed_at = Some(crate::types::Datetime::default());
+                completed_job.completed_files_count = u64::from(status.indexed_files);
+                completed_job.total_files_count = Some(u64::from(status.total_files));
+                completed_job.progress.total_files = Some(status.total_files);
+                completed_job.progress.discovered_files = Some(status.total_files);
+                completed_job.progress.indexed_files = Some(status.indexed_files);
+                completed_job.reason_code = None;
+                completed_job.error = None;
+                if let Err(error) = state_clone
+                    .storage
+                    .create_or_update_index_job(&completed_job)
+                    .await
+                {
+                    tracing::error!(
+                        project_id = %status.project_id,
+                        job_id = %completed_job.job_id,
+                        error = %error,
+                        "Failed to mark durable index job completed"
+                    );
+                }
                 tracing::info!(
                     project_id = %status.project_id,
                     operation_id = operation_id.as_deref().unwrap_or(""),
@@ -725,6 +972,28 @@ pub async fn index_project(
                 if let Some(monitor) = state_clone.progress.get(&project_id_for_cleanup).await {
                     set_monitor_string(&monitor.task_state, "failed");
                     set_monitor_optional_string(&monitor.last_error, Some(e.to_string()));
+                }
+                let mut failed_job = durable_job_for_task.clone();
+                failed_job.state = IndexJobState::Failed;
+                failed_job.updated_at = crate::types::Datetime::default();
+                failed_job.completed_at = Some(crate::types::Datetime::default());
+                failed_job.reason_code = Some(IndexJobReasonCode::Unknown);
+                failed_job.error = Some(IndexJobError {
+                    code: IndexJobReasonCode::Unknown,
+                    message: e.to_string(),
+                    retryable: true,
+                });
+                if let Err(error) = state_clone
+                    .storage
+                    .create_or_update_index_job(&failed_job)
+                    .await
+                {
+                    tracing::error!(
+                        project_id = %project_id_for_cleanup,
+                        job_id = %failed_job.job_id,
+                        error = %error,
+                        "Failed to mark durable index job failed"
+                    );
                 }
                 tracing::error!(
                     project_id = %project_id_for_cleanup,
@@ -745,7 +1014,12 @@ pub async fn index_project(
         "project_id": project_id,
         "root_path": canonical_root_path,
         "status": "indexing",
+        "job_id": durable_job.job_id,
+        "operation_id": background_task.get("operation_id").cloned().unwrap_or(serde_json::Value::Null),
+        "can_resume": false,
+        "reason_code": null,
         "lifecycle": registry_lifecycle,
+        "index_job": index_job,
         "background_task": background_task,
         "message": "Indexing queued in a one-shot background task. Use project_info(action=\"status\") or client alias project_status(action=\"status\") to track operation_id/state/progress; registry lifecycle only describes registry-managed workers."
     })))
@@ -875,6 +1149,12 @@ pub async fn get_index_status(
                 sync_queue_size,
             )
             .await;
+            let durable_index_job = latest_index_job_json(state, &project_id).await;
+            let index_job = if lost_one_shot_after_restart && durable_index_job.is_none() {
+                lost_one_shot_index_job_json()
+            } else {
+                durable_index_job.unwrap_or(serde_json::Value::Null)
+            };
 
             let parsing_done = status.total_files > 0 && indexed_files >= status.total_files;
             let indexing_message = match status.status {
@@ -935,6 +1215,7 @@ pub async fn get_index_status(
                 "started_at": status.started_at,
                 "completed_at": status.completed_at,
                 "lifecycle": lifecycle_json(&status),
+                "index_job": index_job,
                 "background_task": background_task,
                 "files": {
                     "total": status.total_files,
@@ -1001,6 +1282,9 @@ pub async fn get_index_status(
             if total_chunks == 0 && total_symbols == 0 && indexed_files == 0 {
                 if let Some(monitor) = state.progress.get(&project_id).await {
                     let background_task = monitor_one_shot_index_task_json(&monitor);
+                    let index_job = latest_index_job_json(state, &project_id)
+                        .await
+                        .unwrap_or(serde_json::Value::Null);
                     return Ok(success_json(json!({
                         "project_id": project_id,
                         "root_path": null,
@@ -1017,6 +1301,7 @@ pub async fn get_index_status(
                             true,
                             Some("Indexing queued. Persistent status will appear after the one-shot task starts.".to_string()),
                         ),
+                        "index_job": index_job,
                         "background_task": background_task,
                         "parsing": {
                             "status": "queued",
@@ -1405,6 +1690,12 @@ pub async fn get_project_stats(
         sync_queue_size,
     )
     .await;
+    let durable_index_job = latest_index_job_json(state, &project_id).await;
+    let index_job = if lost_one_shot_after_restart && durable_index_job.is_none() {
+        lost_one_shot_index_job_json()
+    } else {
+        durable_index_job.unwrap_or(serde_json::Value::Null)
+    };
     let indexing_message = if status_metadata_missing {
         status.error_message.clone()
     } else {
@@ -1471,6 +1762,7 @@ pub async fn get_project_stats(
         "is_syncing": is_syncing,
         "sync_queue_size": sync_queue_size,
         "lifecycle": lifecycle_json(&status),
+        "index_job": index_job,
         "background_task": background_task,
         "files": {
             "total": status.total_files,
@@ -1765,6 +2057,20 @@ mod tests {
             serde_json::Value::Null
         );
         assert_eq!(json["background_task"]["runner"], "local_tokio_task");
+        assert_eq!(json["index_job"]["job_id"], serde_json::Value::Null);
+        assert_eq!(json["index_job"]["state"], "failed");
+        assert_eq!(json["index_job"]["can_resume"], false);
+        assert_eq!(
+            json["index_job"]["reason_code"],
+            "lost_one_shot_indexing_task_after_restart"
+        );
+        assert_eq!(json["index_job"]["requires_force"], true);
+        assert_eq!(json["index_job"]["requires_confirmation"], true);
+        assert_eq!(json["index_job"]["restart_fallback"]["force"], true);
+        assert_eq!(
+            json["index_job"]["restart_fallback"]["confirm_failed_restart"],
+            true
+        );
         assert_eq!(json["files"]["total"], 0);
         assert_eq!(json["chunks"]["total"], 0);
         assert_eq!(json["overall_progress"]["is_complete"], false);
@@ -1843,6 +2149,106 @@ mod tests {
             .lock()
             .expect("indexing_projects mutex poisoned")
             .insert(project_id.to_string());
+    }
+
+    async fn persist_running_durable_job(ctx: &TestContext, project_id: &str) -> IndexJobRecord {
+        let job = durable_index_job_record(project_id, "/tmp/durable-workspace", 3);
+        ctx.state
+            .storage
+            .create_or_update_index_job(&job)
+            .await
+            .unwrap();
+        job
+    }
+
+    #[tokio::test]
+    async fn project_status_includes_durable_job_metadata() {
+        let ctx = TestContext::new().await;
+        let project_id = "durable-status-project";
+        let mut status = IndexStatus::new(project_id.to_string());
+        status.status = IndexState::Indexing;
+        status.structural_generation = 3;
+        status.refresh_lifecycle_states();
+        ctx.state.storage.update_index_status(status).await.unwrap();
+        let job = persist_running_durable_job(&ctx, project_id).await;
+
+        let result = get_index_status(
+            &ctx.state,
+            GetIndexStatusParams {
+                project_id: project_id.to_string(),
+            },
+        )
+        .await
+        .unwrap();
+
+        let json = call_result_json(&result);
+        assert_eq!(json["index_job"]["job_id"], job.job_id);
+        assert_eq!(json["index_job"]["state"], "running");
+        assert_eq!(json["index_job"]["can_resume"], false);
+        assert_eq!(json["index_job"]["reason_code"], serde_json::Value::Null);
+        assert_eq!(json["index_job"]["requires_force"], false);
+        assert_eq!(json["index_job"]["requires_confirmation"], false);
+        assert_eq!(json["index_job"]["restart_fallback"], serde_json::Value::Null);
+    }
+
+    #[tokio::test]
+    async fn status_reports_lost_one_shot_with_restart_fallback() {
+        let ctx = TestContext::new().await;
+        persist_lost_one_shot_indexing_status(&ctx, "lost-one-shot-job-project").await;
+
+        let result = get_index_status(
+            &ctx.state,
+            GetIndexStatusParams {
+                project_id: "lost-one-shot-job-project".to_string(),
+            },
+        )
+        .await
+        .unwrap();
+
+        let json = call_result_json(&result);
+        assert_eq!(
+            json["index_job"]["reason_code"],
+            "lost_one_shot_indexing_task_after_restart"
+        );
+        assert_eq!(json["index_job"]["can_resume"], false);
+        assert_eq!(json["index_job"]["requires_force"], true);
+        assert_eq!(json["index_job"]["requires_confirmation"], true);
+        assert_eq!(json["index_job"]["restart_fallback"]["force"], true);
+        assert_eq!(
+            json["index_job"]["restart_fallback"]["confirm_failed_restart"],
+            true
+        );
+    }
+
+    #[tokio::test]
+    async fn index_status_distinguishes_job_id_from_operation_id() {
+        let ctx = TestContext::new().await;
+        let project_id = "job-vs-operation-project";
+        persist_active_indexing_status(&ctx, project_id).await;
+        let job = persist_running_durable_job(&ctx, project_id).await;
+
+        let result = get_index_status(
+            &ctx.state,
+            GetIndexStatusParams {
+                project_id: project_id.to_string(),
+            },
+        )
+        .await
+        .unwrap();
+
+        let json = call_result_json(&result);
+        assert_eq!(json["index_job"]["job_id"], job.job_id);
+        assert_eq!(json["background_task"]["operation_id"], format!("idx-{project_id}-active-test"));
+        assert_eq!(json["index_job"]["operation_id"], serde_json::Value::Null);
+        assert_ne!(json["index_job"]["job_id"], json["background_task"]["operation_id"]);
+        assert!(json["index_job"]["identity_semantics"]["job_id"]
+            .as_str()
+            .unwrap()
+            .contains("durable"));
+        assert!(json["index_job"]["identity_semantics"]["operation_id"]
+            .as_str()
+            .unwrap()
+            .contains("same-process"));
     }
 
     #[tokio::test]
@@ -1950,7 +2356,12 @@ mod tests {
         let result = index_project(
             &ctx.state,
             IndexProjectParams {
-                path: project_dir.to_string_lossy().to_string(),
+                path: Some(project_dir.to_string_lossy().to_string()),
+                project_id: None,
+                resume: None,
+                job_id: None,
+                resume_token: None,
+                allow_full_restart_fallback: None,
                 force: None,
                 confirm_failed_restart: None,
             },
@@ -2032,7 +2443,12 @@ mod tests {
         let result = index_project(
             &ctx.state,
             IndexProjectParams {
-                path: project_dir.to_string_lossy().to_string(),
+                path: Some(project_dir.to_string_lossy().to_string()),
+                project_id: None,
+                resume: None,
+                job_id: None,
+                resume_token: None,
+                allow_full_restart_fallback: None,
                 force: Some(true),
                 confirm_failed_restart: None,
             },
@@ -2113,7 +2529,12 @@ mod tests {
         let result = index_project(
             &ctx.state,
             IndexProjectParams {
-                path: project_dir.to_string_lossy().to_string(),
+                path: Some(project_dir.to_string_lossy().to_string()),
+                project_id: None,
+                resume: None,
+                job_id: None,
+                resume_token: None,
+                allow_full_restart_fallback: None,
                 force: Some(true),
                 confirm_failed_restart: Some(true),
             },
@@ -2191,7 +2612,12 @@ mod tests {
         let first = index_project(
             &ctx.state,
             IndexProjectParams {
-                path: project_dir.to_string_lossy().to_string(),
+                path: Some(project_dir.to_string_lossy().to_string()),
+                project_id: None,
+                resume: None,
+                job_id: None,
+                resume_token: None,
+                allow_full_restart_fallback: None,
                 force: None,
                 confirm_failed_restart: None,
             },
@@ -2206,7 +2632,12 @@ mod tests {
         let second = index_project(
             &ctx.state,
             IndexProjectParams {
-                path: alias_path.to_string_lossy().to_string(),
+                path: Some(alias_path.to_string_lossy().to_string()),
+                project_id: None,
+                resume: None,
+                job_id: None,
+                resume_token: None,
+                allow_full_restart_fallback: None,
                 force: None,
                 confirm_failed_restart: None,
             },
@@ -2265,7 +2696,12 @@ mod tests {
         let result = index_project(
             &ctx.state,
             IndexProjectParams {
-                path: project_dir.to_string_lossy().to_string(),
+                path: Some(project_dir.to_string_lossy().to_string()),
+                project_id: None,
+                resume: None,
+                job_id: None,
+                resume_token: None,
+                allow_full_restart_fallback: None,
                 force: Some(true),
                 confirm_failed_restart: None,
             },
@@ -2300,7 +2736,12 @@ mod tests {
         let result = index_project(
             &ctx.state,
             IndexProjectParams {
-                path: disallowed_project.path().to_string_lossy().to_string(),
+                path: Some(disallowed_project.path().to_string_lossy().to_string()),
+                project_id: None,
+                resume: None,
+                job_id: None,
+                resume_token: None,
+                allow_full_restart_fallback: None,
                 force: None,
                 confirm_failed_restart: None,
             },
@@ -2339,7 +2780,12 @@ mod tests {
         let result = index_project(
             &ctx.state,
             IndexProjectParams {
-                path: second.to_string_lossy().to_string(),
+                path: Some(second.to_string_lossy().to_string()),
+                project_id: None,
+                resume: None,
+                job_id: None,
+                resume_token: None,
+                allow_full_restart_fallback: None,
                 force: None,
                 confirm_failed_restart: None,
             },
@@ -2760,6 +3206,7 @@ mod tests {
             embedding: None,
             content_hash: "hash-orphaned".to_string(),
             project_id: Some("orphaned-project".to_string()),
+            generation: None,
             indexed_at: crate::types::Datetime::default(),
         };
         ctx.state.storage.create_code_chunk(chunk).await.unwrap();
@@ -2852,6 +3299,7 @@ mod tests {
             embedding: None,
             content_hash: "hash-demo".to_string(),
             project_id: Some("list-lifecycle-project".to_string()),
+            generation: None,
             indexed_at: crate::types::Datetime::default(),
         };
         ctx.state.storage.create_code_chunk(chunk).await.unwrap();

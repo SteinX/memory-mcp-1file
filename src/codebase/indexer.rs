@@ -2546,6 +2546,7 @@ mod tests {
             embedding: None,
             content_hash: blake3::hash(b"seed_chunk").to_hex().to_string(),
             project_id: Some(project_id.clone()),
+            generation: None,
             indexed_at: crate::types::Datetime::default(),
         };
         let seeded_symbol = CodeSymbol::new(
