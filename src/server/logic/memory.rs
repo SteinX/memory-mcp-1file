@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use blake3;
@@ -12,10 +12,14 @@ use crate::server::params::{
     GetValidAtParams, GetValidParams, InvalidateParams, ListMemoriesParams,
     PreviewConsolidateMemoryParams, StoreMemoryParams, UpdateMemoryParams,
 };
-use crate::storage::traits::MemoryExportOptions;
+use crate::storage::traits::{MemoryExportOptions, MemoryImportOptions};
 use crate::storage::StorageBackend;
 use crate::types::{Datetime, EmbeddingState, MemoryQuery};
-use crate::types::{record_key_to_string, ExportIdentity, Memory, MemoryType, MemoryUpdate};
+use crate::types::{
+    record_key_to_string, ExportIdentity, ImportConflictStrategy, ImportError, ImportErrorCode,
+    ImportMemoryResponse, Memory, MemoryType, MemoryUpdate, MigrationMemoryRecord,
+    MigrationRecordType, MigrationSummary, MEMORY_MIGRATION_SCHEMA_VERSION,
+};
 
 use super::contracts::{export_contract_meta, summary_collection_response, with_surface_guidance};
 use super::{error_response, normalize_limit, strip_embedding, strip_embeddings, success_json};
@@ -36,6 +40,16 @@ pub struct ExportMemoryParams {
     pub event_before: Option<String>,
     pub ingestion_after: Option<String>,
     pub ingestion_before: Option<String>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct ImportMemoryParams {
+    pub project_id: Option<String>,
+    pub jsonl: String,
+    pub dry_run: Option<bool>,
+    pub conflict_strategy: Option<String>,
+    pub allow_invalidated: Option<bool>,
+    pub preserve_project_id: Option<bool>,
 }
 
 fn normalize_importance_score(value: Option<f32>) -> anyhow::Result<Option<f32>> {
@@ -100,6 +114,218 @@ impl ExportMemoryParams {
                 "ingestion_before",
             )?,
         })
+    }
+}
+
+fn parse_import_conflict_strategy(value: Option<&str>) -> anyhow::Result<ImportConflictStrategy> {
+    match value.map(str::trim).filter(|value| !value.is_empty()) {
+        None | Some("remap") => Ok(ImportConflictStrategy::Remap),
+        Some("skip") => Ok(ImportConflictStrategy::Skip),
+        Some("fail") => Ok(ImportConflictStrategy::Fail),
+        Some(value) => Err(anyhow::anyhow!(
+            "Unsupported import conflict_strategy '{}'. Supported values: remap, skip, fail",
+            value
+        )),
+    }
+}
+
+fn import_error_response(
+    dry_run: bool,
+    conflict_strategy: ImportConflictStrategy,
+    total_records: usize,
+    errors: Vec<ImportError>,
+) -> ImportMemoryResponse {
+    ImportMemoryResponse {
+        schema_version: MEMORY_MIGRATION_SCHEMA_VERSION,
+        record_type: MigrationRecordType::Memory,
+        conflict_strategy,
+        dry_run,
+        imported_count: 0,
+        skipped_count: 0,
+        failed_count: errors.len(),
+        summary: MigrationSummary {
+            schema_version: MEMORY_MIGRATION_SCHEMA_VERSION,
+            record_type: MigrationRecordType::Memory,
+            total_records,
+            memory_records: total_records,
+            exported_records: 0,
+            imported_records: 0,
+            skipped_records: 0,
+            failed_records: errors.len(),
+            valid_records: 0,
+            invalidated_records: 0,
+            dry_run,
+        },
+        id_mappings: Vec::new(),
+        errors,
+    }
+}
+
+fn import_validation_error(
+    code: ImportErrorCode,
+    message: impl Into<String>,
+    line_number: Option<usize>,
+    source_id: Option<String>,
+    field: Option<&str>,
+) -> ImportError {
+    ImportError {
+        code,
+        message: message.into(),
+        line_number,
+        source_id,
+        field: field.map(ToOwned::to_owned),
+    }
+}
+
+fn missing_required_field_error(line_number: usize, field: &str) -> ImportError {
+    import_validation_error(
+        ImportErrorCode::MissingRequiredField,
+        format!("Memory migration record field '{field}' is required"),
+        Some(line_number),
+        None,
+        Some(field),
+    )
+}
+
+fn parse_import_jsonl(jsonl: &str) -> (Vec<MigrationMemoryRecord>, Vec<ImportError>, usize) {
+    let mut records = Vec::new();
+    let mut errors = Vec::new();
+    let mut total_records = 0usize;
+    let mut id_lines: HashMap<String, usize> = HashMap::new();
+
+    for (index, line) in jsonl.lines().enumerate() {
+        let line_number = index + 1;
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        total_records += 1;
+
+        let value: serde_json::Value = match serde_json::from_str(trimmed) {
+            Ok(value) => value,
+            Err(error) => {
+                errors.push(import_validation_error(
+                    ImportErrorCode::InvalidJsonl,
+                    format!("Invalid JSONL at line {line_number}: {error}"),
+                    Some(line_number),
+                    None,
+                    None,
+                ));
+                continue;
+            }
+        };
+
+        for field in [
+            "schema_version",
+            "record_type",
+            "id",
+            "content",
+            "memory_type",
+            "importance_score",
+            "created_at",
+            "updated_at",
+            "valid_from",
+            "invalidated",
+        ] {
+            if value.get(field).is_none() {
+                errors.push(missing_required_field_error(line_number, field));
+            }
+        }
+        if errors
+            .last()
+            .is_some_and(|error| error.line_number == Some(line_number))
+        {
+            continue;
+        }
+
+        let source_id = value
+            .get("id")
+            .and_then(|id| id.as_str())
+            .map(ToOwned::to_owned);
+        let schema_version = value
+            .get("schema_version")
+            .and_then(|schema_version| schema_version.as_u64());
+        if let Some(schema_version) = schema_version {
+            if schema_version != MEMORY_MIGRATION_SCHEMA_VERSION as u64 {
+                errors.push(import_validation_error(
+                    ImportErrorCode::UnsupportedSchemaVersion,
+                    format!(
+                        "Unsupported memory migration schema_version {}. Supported schema_version is {}.",
+                        schema_version, MEMORY_MIGRATION_SCHEMA_VERSION
+                    ),
+                    Some(line_number),
+                    source_id,
+                    Some("schema_version"),
+                ));
+                continue;
+            }
+        }
+
+        match serde_json::from_value::<MigrationMemoryRecord>(value) {
+            Ok(record) => {
+                if let Some(first_line) = id_lines.insert(record.id.clone(), line_number) {
+                    errors.push(import_validation_error(
+                        ImportErrorCode::StorageError,
+                        format!(
+                            "Duplicate memory id {} in import payload (first seen at line {})",
+                            record.id, first_line
+                        ),
+                        Some(line_number),
+                        Some(record.id.clone()),
+                        Some("id"),
+                    ));
+                    continue;
+                }
+                records.push(record);
+            }
+            Err(error) => {
+                let message = error.to_string();
+                let (code, field) = if message.contains("unknown variant")
+                    && message.contains("memory_type")
+                {
+                    (ImportErrorCode::InvalidMemoryType, Some("memory_type"))
+                } else if message.contains("unknown variant") && message.contains("record_type") {
+                    (ImportErrorCode::InvalidRecordType, Some("record_type"))
+                } else {
+                    (ImportErrorCode::InvalidJsonl, None)
+                };
+                errors.push(import_validation_error(
+                    code,
+                    format!("Invalid memory migration record at line {line_number}: {message}"),
+                    Some(line_number),
+                    source_id,
+                    field,
+                ));
+            }
+        }
+    }
+
+    (records, errors, total_records)
+}
+
+fn resolve_import_project_id(
+    records: &[MigrationMemoryRecord],
+    target_project_id: Option<String>,
+    preserve_project_id: bool,
+) -> anyhow::Result<String> {
+    if !preserve_project_id {
+        return normalize_project_id(target_project_id)
+            .ok_or_else(|| anyhow::anyhow!("project_id is required for memory import"));
+    }
+
+    let project_ids: HashSet<String> = records
+        .iter()
+        .filter_map(|record| normalize_project_id(record.project_id.clone()))
+        .collect();
+
+    match project_ids.len() {
+        1 => Ok(project_ids.into_iter().next().unwrap()),
+        0 => Err(anyhow::anyhow!(
+            "preserve_project_id=true requires every import record to include project_id"
+        )),
+        _ => Err(anyhow::anyhow!(
+            "preserve_project_id=true only supports one source project_id per import payload"
+        )),
     }
 }
 
@@ -1094,6 +1320,71 @@ pub async fn export_memory(
     }
 }
 
+pub async fn import_memory(
+    state: &Arc<AppState>,
+    params: ImportMemoryParams,
+) -> anyhow::Result<CallToolResult> {
+    let dry_run = params.dry_run.unwrap_or(false);
+    let allow_invalidated = params.allow_invalidated.unwrap_or(false);
+    let preserve_project_id = params.preserve_project_id.unwrap_or(false);
+    let conflict_strategy = match parse_import_conflict_strategy(params.conflict_strategy.as_deref())
+    {
+        Ok(strategy) => strategy,
+        Err(e) => return Ok(error_response(e)),
+    };
+    let (records, errors, total_records) = parse_import_jsonl(&params.jsonl);
+
+    if !errors.is_empty() {
+        return Ok(success_json(
+            serde_json::to_value(import_error_response(
+                dry_run,
+                conflict_strategy,
+                total_records,
+                errors,
+            ))
+            .unwrap_or_default(),
+        ));
+    }
+
+    let project_id = match resolve_import_project_id(
+        &records,
+        params.project_id.clone(),
+        preserve_project_id,
+    ) {
+        Ok(project_id) => project_id,
+        Err(e) => return Ok(error_response(e)),
+    };
+    let options = MemoryImportOptions {
+        project_id,
+        conflict_strategy,
+        dry_run,
+        allow_invalidated,
+    };
+    let source_ids: Vec<String> = records.iter().map(|record| record.id.clone()).collect();
+
+    match state.storage.import_memories(records, &options).await {
+        Ok(response) => {
+            if !response.dry_run && response.imported_count > 0 && response.errors.is_empty() {
+                let remapped_ids: HashMap<String, String> = response
+                    .id_mappings
+                    .iter()
+                    .map(|mapping| (mapping.old_id.clone(), mapping.new_id.clone()))
+                    .collect();
+                for source_id in source_ids {
+                    let imported_id = remapped_ids.get(&source_id).unwrap_or(&source_id);
+                    if let Ok(Some(memory)) = state.storage.get_memory(imported_id).await {
+                        state.memory_search.upsert_memory(memory).await;
+                    }
+                }
+            }
+            Ok(success_json(
+                serde_json::to_value(response).unwrap_or_default(),
+            ))
+        }
+        Err(e) => Ok(error_response(e)),
+    }
+}
+
 pub async fn invalidate(
     state: &Arc<AppState>,
     params: InvalidateParams,
@@ -1136,6 +1427,40 @@ mod tests {
 
     fn stored_id(result: &CallToolResult) -> String {
         tool_json(result)["id"].as_str().unwrap().to_string()
+    }
+
+    fn import_record(id: &str, content: &str) -> MigrationMemoryRecord {
+        let now = Datetime::default();
+        MigrationMemoryRecord {
+            schema_version: MEMORY_MIGRATION_SCHEMA_VERSION,
+            record_type: MigrationRecordType::Memory,
+            id: id.to_string(),
+            content: content.to_string(),
+            memory_type: MemoryType::Semantic,
+            user_id: Some("import-user".to_string()),
+            agent_id: None,
+            run_id: None,
+            namespace: Some("source-project".to_string()),
+            project_id: Some("source-project".to_string()),
+            metadata: None,
+            importance_score: 1.0,
+            created_at: now,
+            updated_at: now,
+            valid_from: now,
+            valid_until: None,
+            superseded_by: None,
+            invalidated: false,
+            invalidation_reason: None,
+        }
+    }
+
+    fn import_jsonl(records: &[MigrationMemoryRecord]) -> String {
+        records
+            .iter()
+            .map(serde_json::to_string)
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap()
+            .join("\n")
     }
 
     #[tokio::test]
@@ -1479,6 +1804,344 @@ mod tests {
         assert!(records
             .iter()
             .any(|record| record.id == invalid_id && record.invalidated));
+    }
+
+    #[tokio::test]
+    async fn import_memory_dry_run_reports_remap_without_write() {
+        let ctx = TestContext::new().await;
+        let existing_id = stored_id(
+            &store_memory(
+                &ctx.state,
+                StoreMemoryParams {
+                    content: "existing import conflict".to_string(),
+                    memory_type: Some("semantic".to_string()),
+                    user_id: None,
+                    agent_id: None,
+                    run_id: None,
+                    namespace: Some("target-project".to_string()),
+                    importance_score: Some(1.0),
+                    metadata: None,
+                },
+            )
+            .await
+            .unwrap(),
+        );
+        let records = vec![
+            import_record(&existing_id, "incoming conflict"),
+            import_record("incomingtarget", "incoming target"),
+        ];
+        let result = import_memory(
+            &ctx.state,
+            ImportMemoryParams {
+                project_id: Some("target-project".to_string()),
+                jsonl: import_jsonl(&records),
+                dry_run: Some(true),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        let response = tool_json(&result);
+
+        assert_eq!(response["dry_run"], true);
+        assert_eq!(response["conflict_strategy"], "remap");
+        assert_eq!(response["imported_count"], 0);
+        assert_eq!(response["failed_count"], 0);
+        assert_eq!(response["id_mappings"].as_array().unwrap().len(), 1);
+        assert_eq!(response["id_mappings"][0]["old_id"], existing_id);
+        assert_ne!(response["id_mappings"][0]["new_id"], existing_id);
+        let missing = get_memory(
+            &ctx.state,
+            GetMemoryParams {
+                id: "incomingtarget".to_string(),
+            },
+        )
+        .await
+        .unwrap();
+        assert!(tool_json(&missing)["error"]
+            .as_str()
+            .unwrap()
+            .contains("Memory not found"));
+        let list = list_memories(
+            &ctx.state,
+            ListMemoriesParams {
+                limit: Some(10),
+                offset: None,
+                user_id: None,
+                agent_id: None,
+                run_id: None,
+                namespace: Some("target-project".to_string()),
+                memory_type: None,
+                metadata_filter: None,
+                valid_at: None,
+                event_after: None,
+                event_before: None,
+                ingestion_after: None,
+                ingestion_before: None,
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(tool_json(&list)["total"], 1);
+    }
+
+    #[tokio::test]
+    async fn import_memory_rejects_malformed_jsonl_without_partial_write() {
+        let ctx = TestContext::new().await;
+        let before = list_memories(
+            &ctx.state,
+            ListMemoriesParams {
+                limit: Some(10),
+                offset: None,
+                user_id: None,
+                agent_id: None,
+                run_id: None,
+                namespace: Some("target-project".to_string()),
+                memory_type: None,
+                metadata_filter: None,
+                valid_at: None,
+                event_after: None,
+                event_before: None,
+                ingestion_after: None,
+                ingestion_before: None,
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(tool_json(&before)["total"], 0);
+
+        let valid_line = serde_json::to_string(&import_record("valid-before-bad", "valid before bad"))
+            .unwrap();
+        let result = import_memory(
+            &ctx.state,
+            ImportMemoryParams {
+                project_id: Some("target-project".to_string()),
+                jsonl: format!("{valid_line}\n{{not-json"),
+                dry_run: Some(false),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        let response = tool_json(&result);
+
+        assert_eq!(response["imported_count"], 0);
+        assert_eq!(response["failed_count"], 1);
+        assert_eq!(response["errors"][0]["code"], "invalid_jsonl");
+        let after = list_memories(
+            &ctx.state,
+            ListMemoriesParams {
+                limit: Some(10),
+                offset: None,
+                user_id: None,
+                agent_id: None,
+                run_id: None,
+                namespace: Some("target-project".to_string()),
+                memory_type: None,
+                metadata_filter: None,
+                valid_at: None,
+                event_after: None,
+                event_before: None,
+                ingestion_after: None,
+                ingestion_before: None,
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(tool_json(&after)["total"], 0);
+    }
+
+    #[tokio::test]
+    async fn import_memory_defaults_to_write_mode() {
+        let ctx = TestContext::new().await;
+        let records = vec![import_record("defaultwriteimport", "default write import")];
+
+        let result = import_memory(
+            &ctx.state,
+            ImportMemoryParams {
+                project_id: Some("target-project".to_string()),
+                jsonl: import_jsonl(&records),
+                dry_run: None,
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        let response = tool_json(&result);
+
+        assert_eq!(response["dry_run"], false);
+        assert_eq!(response["imported_count"], 1);
+        assert_eq!(response["failed_count"], 0);
+
+        let imported = get_memory(
+            &ctx.state,
+            GetMemoryParams {
+                id: "defaultwriteimport".to_string(),
+            },
+        )
+        .await
+        .unwrap();
+        let imported_json = tool_json(&imported);
+        assert_eq!(imported_json["memory"]["content"], "default write import");
+        assert_eq!(imported_json["memory"]["namespace"], "target-project");
+    }
+
+    #[tokio::test]
+    async fn import_memory_rejects_duplicate_ids_without_partial_write() {
+        let ctx = TestContext::new().await;
+        let records = vec![
+            import_record("duplicateimport", "first duplicate"),
+            import_record("duplicateimport", "second duplicate"),
+            import_record("validimport", "valid should not import"),
+        ];
+        let result = import_memory(
+            &ctx.state,
+            ImportMemoryParams {
+                project_id: Some("target-project".to_string()),
+                jsonl: import_jsonl(&records),
+                dry_run: Some(false),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        let response = tool_json(&result);
+
+        assert_eq!(response["imported_count"], 0);
+        assert_eq!(response["failed_count"], 1);
+        assert_eq!(response["errors"][0]["field"], "id");
+        let list = list_memories(
+            &ctx.state,
+            ListMemoriesParams {
+                limit: Some(10),
+                offset: None,
+                user_id: None,
+                agent_id: None,
+                run_id: None,
+                namespace: Some("target-project".to_string()),
+                memory_type: None,
+                metadata_filter: None,
+                valid_at: None,
+                event_after: None,
+                event_before: None,
+                ingestion_after: None,
+                ingestion_before: None,
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(tool_json(&list)["total"], 0);
+    }
+
+    #[tokio::test]
+    async fn import_memory_rejects_invalidated_unless_allowed() {
+        let ctx = TestContext::new().await;
+        let mut invalidated = import_record("invalidatedimport", "invalidated import");
+        invalidated.invalidated = true;
+        invalidated.valid_until = Some(Datetime::default());
+        invalidated.invalidation_reason = Some("archived".to_string());
+
+        let rejected = import_memory(
+            &ctx.state,
+            ImportMemoryParams {
+                project_id: Some("target-project".to_string()),
+                jsonl: import_jsonl(&[invalidated.clone()]),
+                dry_run: Some(false),
+                allow_invalidated: Some(false),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        let rejected_json = tool_json(&rejected);
+        assert_eq!(rejected_json["imported_count"], 0);
+        assert_eq!(rejected_json["errors"].as_array().unwrap().len(), 1);
+
+        let allowed = import_memory(
+            &ctx.state,
+            ImportMemoryParams {
+                project_id: Some("target-project".to_string()),
+                jsonl: import_jsonl(&[invalidated]),
+                dry_run: Some(false),
+                allow_invalidated: Some(true),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        let allowed_json = tool_json(&allowed);
+        assert_eq!(allowed_json["imported_count"], 1);
+
+        let result = get_memory(
+            &ctx.state,
+            GetMemoryParams {
+                id: "invalidatedimport".to_string(),
+            },
+        )
+        .await
+        .unwrap();
+        let memory = tool_json(&result);
+        assert_eq!(memory["memory"]["namespace"], "target-project");
+        assert_eq!(memory["memory"]["invalidation_reason"], "archived");
+    }
+
+    #[tokio::test]
+    async fn import_memory_imports_records_and_rewrites_payload_superseded_by() {
+        let ctx = TestContext::new().await;
+        let mut source = import_record("sourceimport", "source import");
+        source.superseded_by = Some("targetimport".to_string());
+        let records = vec![source, import_record("targetimport", "target import")];
+
+        let result = import_memory(
+            &ctx.state,
+            ImportMemoryParams {
+                project_id: Some("target-project".to_string()),
+                jsonl: import_jsonl(&records),
+                dry_run: Some(false),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        let response = tool_json(&result);
+        assert_eq!(response["imported_count"], 2);
+        assert_eq!(response["failed_count"], 0);
+
+        let imported = get_memory(
+            &ctx.state,
+            GetMemoryParams {
+                id: "sourceimport".to_string(),
+            },
+        )
+        .await
+        .unwrap();
+        let imported_json = tool_json(&imported);
+        assert_eq!(imported_json["memory"]["content"], "source import");
+        assert_eq!(imported_json["memory"]["namespace"], "target-project");
+        assert_eq!(imported_json["memory"]["superseded_by"], "targetimport");
+        assert!(imported_json["memory"]["embedding"].is_null());
+
+        let list = list_memories(
+            &ctx.state,
+            ListMemoriesParams {
+                limit: Some(10),
+                offset: None,
+                user_id: Some("import-user".to_string()),
+                agent_id: None,
+                run_id: None,
+                namespace: Some("target-project".to_string()),
+                memory_type: None,
+                metadata_filter: None,
+                valid_at: None,
+                event_after: None,
+                event_before: None,
+                ingestion_after: None,
+                ingestion_before: None,
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(tool_json(&list)["total"], 2);
     }
 
     #[tokio::test]
