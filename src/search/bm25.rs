@@ -1274,12 +1274,15 @@ mod tests {
             unreachable!()
         }
         async fn get_active_generation(&self, _: &str) -> crate::Result<Option<u64>> {
-            unreachable!()
+            Ok(None)
         }
         async fn set_active_generation(&self, _: &str, _: u64) -> crate::Result<()> {
             unreachable!()
         }
         async fn list_abandoned_generations(&self, _: &str) -> crate::Result<Vec<u64>> {
+            unreachable!()
+        }
+        async fn delete_project_generation(&self, _: &str, _: u64) -> crate::Result<()> {
             unreachable!()
         }
         async fn get_file_hash(&self, _: &str, _: &str) -> crate::Result<Option<String>> {

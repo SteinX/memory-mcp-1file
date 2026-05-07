@@ -448,6 +448,9 @@ pub trait StorageBackend: Send + Sync {
     /// List generations that have rows/checkpoints but are not the active generation.
     async fn list_abandoned_generations(&self, project_id: &str) -> Result<Vec<u64>>;
 
+    /// Delete generation-scoped code intelligence rows for a project after a newer generation is active.
+    async fn delete_project_generation(&self, project_id: &str, generation: u64) -> Result<()>;
+
     // ─────────────────────────────────────────────────────────────────────────
     // File hash operations (incremental indexing)
     // ─────────────────────────────────────────────────────────────────────────

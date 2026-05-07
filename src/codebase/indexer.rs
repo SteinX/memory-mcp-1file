@@ -356,6 +356,65 @@ async fn rebuild_bm25_and_finalize_index_status(
     }
 }
 
+async fn promote_index_generation_and_cleanup(
+    state: &Arc<AppState>,
+    project_id: &str,
+    target_generation: u64,
+) -> Result<()> {
+    ensure_index_generation_current(state, project_id, target_generation).await?;
+
+    let promotion_started = Instant::now();
+    state
+        .storage
+        .set_active_generation(project_id, target_generation)
+        .await?;
+    emit_index_timing(
+        project_id,
+        "promote",
+        promotion_started.elapsed().as_millis(),
+        0,
+        0,
+        0,
+        0,
+        0,
+    );
+
+    let abandoned_generations = state.storage.list_abandoned_generations(project_id).await?;
+    if abandoned_generations.is_empty() {
+        return Ok(());
+    }
+
+    let cleanup_started = Instant::now();
+    for generation in abandoned_generations {
+        if generation >= target_generation {
+            continue;
+        }
+        let generation_cleanup_started = Instant::now();
+        state
+            .storage
+            .delete_project_generation(project_id, generation)
+            .await?;
+        tracing::info!(
+            project_id = %project_id,
+            generation,
+            elapsed_ms = generation_cleanup_started.elapsed().as_millis(),
+            "Deleted old staged code index generation"
+        );
+    }
+    emit_index_timing(
+        project_id,
+        "cleanup",
+        cleanup_started.elapsed().as_millis(),
+        0,
+        0,
+        0,
+        0,
+        0,
+    );
+
+    Ok(())
+}
+
 async fn do_index_project(
     state: Arc<AppState>,
     project_path: &Path,
@@ -398,13 +457,15 @@ async fn do_index_project(
         current_file.clear();
     }
 
-    // Persist the indexing state before destructive cleanup. If the server
-    // restarts while rebuilding from scratch, status/stats can report
-    // "indexing/unknown_after_restart" instead of "metadata missing".
+    // Persist the indexing state before writing staged rows. If the server
+    // restarts while rebuilding, status/stats can report
+    // "indexing/unknown_after_restart" while the previous active generation
+    // remains visible to readers until this target generation is promoted.
     tracing::info!(
         project_id = %project_id,
         root_path = status.root_path.as_deref().unwrap_or_default(),
-        "Persisting initial indexing metadata before cleanup"
+        target_generation = active_structural_generation,
+        "Persisting initial indexing metadata before staged writes"
     );
     tracing::info!(project_id = %project_id, phase = "task_spawned", "One-shot code index task spawned");
     let status_started = Instant::now();
@@ -414,58 +475,6 @@ async fn do_index_project(
         project_id,
         "status_update",
         status_started.elapsed().as_millis(),
-        status.indexed_files as u64,
-        status.total_chunks as u64,
-        status.total_symbols as u64,
-        0,
-        status.failed_files.len() as u64,
-    );
-
-    tracing::info!(project_id = %project_id, "Clearing stale code intelligence rows");
-
-    let cleanup_started = Instant::now();
-    let phase_started = Instant::now();
-    tracing::info!(project_id = %project_id, "Deleting stale code chunks");
-    let deleted_chunks = state.storage.delete_project_chunks(project_id).await?;
-    tracing::info!(
-        project_id = %project_id,
-        deleted = deleted_chunks,
-        elapsed_ms = phase_started.elapsed().as_millis(),
-        "Deleted stale code chunks"
-    );
-
-    let phase_started = Instant::now();
-    tracing::info!(project_id = %project_id, "Deleting stale code symbols");
-    let deleted_symbols = state.storage.delete_project_symbols(project_id).await?;
-    tracing::info!(
-        project_id = %project_id,
-        deleted = deleted_symbols,
-        elapsed_ms = phase_started.elapsed().as_millis(),
-        "Deleted stale code symbols"
-    );
-
-    let phase_started = Instant::now();
-    tracing::info!(project_id = %project_id, "Deleting stale file hashes");
-    state.storage.delete_file_hashes(project_id).await?;
-    tracing::info!(
-        project_id = %project_id,
-        elapsed_ms = phase_started.elapsed().as_millis(),
-        "Deleted stale file hashes"
-    );
-
-    let phase_started = Instant::now();
-    tracing::info!(project_id = %project_id, "Deleting stale manifest entries");
-    state.storage.delete_manifest_entries(project_id).await?;
-    tracing::info!(
-        project_id = %project_id,
-        elapsed_ms = phase_started.elapsed().as_millis(),
-        total_elapsed_ms = cleanup_started.elapsed().as_millis(),
-        "Deleted stale manifest entries"
-    );
-    emit_index_timing(
-        project_id,
-        "cleanup",
-        cleanup_started.elapsed().as_millis(),
         status.indexed_files as u64,
         status.total_chunks as u64,
         status.total_symbols as u64,
@@ -1141,6 +1150,7 @@ async fn run_legacy_index_pipeline(
         IndexState::EmbeddingPending
     };
 
+    promote_index_generation_and_cleanup(&state, project_id, active_structural_generation).await?;
     let bm25_started = Instant::now();
     status = rebuild_bm25_and_finalize_index_status(
         &state,
@@ -1661,6 +1671,7 @@ async fn finish_full_index(
         IndexState::EmbeddingPending
     };
 
+    promote_index_generation_and_cleanup(&state, project_id, active_structural_generation).await?;
     let bm25_started = Instant::now();
     status = rebuild_bm25_and_finalize_index_status(
         &state,
@@ -2918,7 +2929,7 @@ mod tests {
 
         let phases = captured_phases.lock().unwrap().clone();
         for required_phase in [
-            "cleanup",
+            "promote",
             "scan",
             "file_read_hash",
             "parse_chunk",
@@ -2990,6 +3001,14 @@ mod tests {
             .to_string()
     }
 
+    fn active_generation_for_compat(status: &IndexStatus) -> Option<u64> {
+        if status.structural_generation == 0 {
+            None
+        } else {
+            Some(status.structural_generation)
+        }
+    }
+
     fn write_equivalence_fixture(project_dir: &Path) {
         let files = [
             (
@@ -3033,13 +3052,19 @@ mod tests {
         let legacy_chunks = legacy_ctx
             .state
             .storage
-            .get_all_chunks_for_project(&legacy_status.project_id, None)
+            .get_all_chunks_for_project(
+                &legacy_status.project_id,
+                active_generation_for_compat(&legacy_status),
+            )
             .await
             .unwrap();
         let staged_chunks = staged_ctx
             .state
             .storage
-            .get_all_chunks_for_project(&staged_status.project_id, None)
+            .get_all_chunks_for_project(
+                &staged_status.project_id,
+                active_generation_for_compat(&staged_status),
+            )
             .await
             .unwrap();
         assert_eq!(
@@ -3050,13 +3075,19 @@ mod tests {
         let legacy_symbols = legacy_ctx
             .state
             .storage
-            .get_project_symbols(&legacy_status.project_id, None)
+            .get_project_symbols(
+                &legacy_status.project_id,
+                active_generation_for_compat(&legacy_status),
+            )
             .await
             .unwrap();
         let staged_symbols = staged_ctx
             .state
             .storage
-            .get_project_symbols(&staged_status.project_id, None)
+            .get_project_symbols(
+                &staged_status.project_id,
+                active_generation_for_compat(&staged_status),
+            )
             .await
             .unwrap();
         assert_eq!(
@@ -3327,13 +3358,13 @@ mod tests {
         let chunks1 = ctx
             .state
             .storage
-            .get_all_chunks_for_project(&status1.project_id, None)
+            .get_all_chunks_for_project(&status1.project_id, active_generation_for_compat(&status1))
             .await
             .unwrap();
         let symbols1 = ctx
             .state
             .storage
-            .get_project_symbols(&status1.project_id, None)
+            .get_project_symbols(&status1.project_id, active_generation_for_compat(&status1))
             .await
             .unwrap();
 
@@ -3387,13 +3418,13 @@ mod tests {
         let chunks2 = ctx
             .state
             .storage
-            .get_all_chunks_for_project(&status2.project_id, None)
+            .get_all_chunks_for_project(&status2.project_id, active_generation_for_compat(&status2))
             .await
             .unwrap();
         let symbols2 = ctx
             .state
             .storage
-            .get_project_symbols(&status2.project_id, None)
+            .get_project_symbols(&status2.project_id, active_generation_for_compat(&status2))
             .await
             .unwrap();
 

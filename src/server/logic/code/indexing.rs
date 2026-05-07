@@ -1546,7 +1546,7 @@ pub async fn list_projects(
                         "status_metadata_missing": status.is_none() && (chunks > 0 || symbols > 0),
                         "reason_code": if status.is_none() && (chunks > 0 || symbols > 0) { "degraded" } else { "ok" },
                         "message": if status.is_none() && (chunks > 0 || symbols > 0) {
-                            Some("Index status metadata is missing while code intelligence rows exist; force rebuild writes indexing metadata before clearing stale rows.".to_string())
+                            Some("Index status metadata is missing while code intelligence rows exist; force rebuild writes a staged generation before promoting it active.".to_string())
                         } else {
                             None
                         }

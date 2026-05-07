@@ -492,6 +492,38 @@ pub(super) async fn list_abandoned_generations(
     Ok(generations.into_iter().collect())
 }
 
+pub(super) async fn delete_project_generation(
+    db: &Surreal<Db>,
+    project_id: &str,
+    generation: u64,
+) -> Result<()> {
+    let sql = r#"
+        BEGIN TRANSACTION;
+        DELETE symbol_relation
+            WHERE project_id = $project_id
+              AND freshness_generation = $generation;
+        DELETE symbol_chunk_map
+            WHERE project_id = $project_id
+              AND freshness_generation = $generation;
+        DELETE code_symbols
+            WHERE project_id = $project_id
+              AND generation = $generation;
+        DELETE code_chunks
+            WHERE project_id = $project_id
+              AND generation = $generation;
+        DELETE index_file_checkpoints
+            WHERE project_id = $project_id
+              AND generation = $generation;
+        COMMIT TRANSACTION;
+    "#;
+
+    db.query(sql)
+        .bind(("project_id", project_id.to_string()))
+        .bind(("generation", generation as i64))
+        .await?;
+    Ok(())
+}
+
 pub(super) async fn get_file_hash(
     db: &Surreal<Db>,
     project_id: &str,

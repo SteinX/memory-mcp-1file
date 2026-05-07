@@ -701,6 +701,10 @@ impl StorageBackend for SurrealStorage {
         code_ops::list_abandoned_generations(&self.db, project_id).await
     }
 
+    async fn delete_project_generation(&self, project_id: &str, generation: u64) -> Result<()> {
+        code_ops::delete_project_generation(&self.db, project_id, generation).await
+    }
+
     async fn get_file_hash(&self, project_id: &str, file_path: &str) -> Result<Option<String>> {
         code_ops::get_file_hash(&self.db, project_id, file_path).await
     }
