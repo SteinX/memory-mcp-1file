@@ -768,10 +768,52 @@ Clients must key off `reason_code` (structured field), not the string `reason` f
 
 | Field | Scope | Survives restart? | Use for |
 |-------|-------|-------------------|---------|
-| `job_id` | Durable, persisted to storage | ✅ Yes | Resume, cancel `[planned]`, cleanup `[planned]`, cross-session tracking |
+| `job_id` | Durable, persisted to storage | ✅ Yes | Resume, cancel, cleanup, cross-session tracking |
 | `operation_id` | Same-process only, in-memory | ❌ No | In-flight progress tracking within a single process lifetime only |
 
 **Rule**: Clients must persist `job_id` if they need to resume or track a job across server restarts. `operation_id` is `null` after restart and must never be used for resume decisions.
+
+---
+
+#### Migration Notes (Upgrading from Pre-Resume Versions)
+
+This section is for operators upgrading from a server version that did not have durable indexing resume (i.e., before generation-scoped storage was introduced).
+
+**What changed:**
+
+- Indexing now writes all chunks, symbols, file hashes, and manifest entries tagged with a `generation` field. The active generation pointer (`active_generation`) determines which rows serve read queries.
+- A durable `IndexJobRecord` is created at job start and persisted to storage. It survives server restarts and is the basis for checkpoint resume, cancel, and cleanup operations.
+- On startup, the server runs a recovery pass: any job left in `Running` state is transitioned to `Resumable` (if checkpoints exist) or `Failed` (if no checkpoints exist).
+
+**Legacy rows (NULL generation):**
+
+- Rows written by pre-resume versions have no `generation` field (NULL in storage).
+- The server treats NULL-generation rows as belonging to the legacy active generation. They remain visible to all read queries (`recall_code`, `search_symbols`, BM25) until a new full index completes and promotes a new generation.
+- After the first successful full index post-upgrade, the new generation is promoted and old NULL-generation rows are cleaned up automatically.
+- No manual migration step is required. The first index after upgrade writes to generation 1; old rows remain readable until cleanup.
+
+**First index after upgrade:**
+
+```bash
+# Trigger a fresh full index after upgrading
+index_project({ "path": "/project" })
+```
+
+The server will:
+1. Assign `target_generation = 1` (first durable generation).
+2. Write all new rows with `generation = 1`.
+3. On completion, promote `active_generation` to 1 and delete the old NULL-generation rows.
+4. Create a durable `IndexJobRecord` with `job_id` for future resume/cancel/cleanup.
+
+**If the first post-upgrade index is interrupted:**
+
+The job will be marked `Resumable` on next startup (if checkpoints were written) or `Failed` (if interrupted before any checkpoint). Use `project_info(action="status")` to check `can_resume` and `resume_token`, then resume or force-restart as appropriate.
+
+**Backward compatibility:**
+
+- `index_project({ "path": "..." })` — unchanged, still works.
+- `index_project({ "path": "...", "force": true, "confirm_failed_restart": true })` — unchanged, still works.
+- All new resume/cancel/cleanup fields (`resume`, `job_id`, `resume_token`, `allow_full_restart_fallback`) are optional and default to `null`/`false`. Existing integrations that do not send these fields are unaffected.
 
 ### ⚙️ System & Maintenance
 | Tool | Description |
@@ -1007,6 +1049,32 @@ If the server process restarts while a full-index task is running, the task is l
 - `background_task.state = "failed"`, `retryable = true`, `reason_code = "lost_one_shot_indexing_task_after_restart"`, and `background_task.phase = "before_file_enumeration"` if the restart happened before file enumeration began.
 
 In both cases, retry with `index_project(path="...", force=true, confirm_failed_restart=true)` to start a fresh full index.
+
+### Durable resume: `can_resume: true` but resume fails
+
+If `project_info(action="status")` returns `can_resume: true` and a `resume_token`, but a subsequent resume request fails or returns `reason_code: "checkpoint_generation_missing"`:
+
+1. **Token mismatch**: The `resume_token` you sent does not match the stored checkpoint. Always read the current `resume_token` from a fresh `status` call immediately before resuming — do not cache tokens across restarts.
+2. **Checkpoint purged**: If `cleanup_abandoned_index_jobs` was called between the status check and the resume, the checkpoint records may have been deleted. Check `project_info(action="status")` again; if `can_resume` is now `false`, fall back to a full restart.
+3. **Generation superseded**: A newer full index completed and promoted a new generation, making the old checkpoint stale (`reason_code: "stale_generation"`). Start a fresh index.
+
+Recovery for all three cases:
+
+```bash
+index_project({ "path": "/project", "force": true, "confirm_failed_restart": true })
+```
+
+### Durable resume: job stuck in `cancel_requested` state
+
+If `project_info(action="status")` shows `state: "cancel_requested"` but the job never transitions to `cancelled`:
+
+The cancellation is cooperative — the indexer polls for cancel requests every 10 files. If the server process was killed before the poll ran, the job record remains in `cancel_requested`. On next startup, the recovery pass will transition it to `Failed` (no checkpoints) or `Resumable` (checkpoints exist). You can then resume or force-restart as appropriate.
+
+To clean up terminal jobs (failed, cancelled, abandoned) and reclaim storage:
+
+```bash
+project_info({ "action": "cleanup_abandoned_index_jobs", "project_id": "my-project" })
+```
 
 ### BM25 finalization failure
 
