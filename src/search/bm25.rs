@@ -971,6 +971,7 @@ mod tests {
                 embedding: None,
                 content_hash: String::new(),
                 project_id: Some("proj".to_string()),
+                generation: None,
                 indexed_at: crate::types::Datetime::default(),
             }
         }
@@ -1205,6 +1206,58 @@ mod tests {
             unreachable!()
         }
         async fn list_projects(&self) -> crate::Result<Vec<String>> {
+            unreachable!()
+        }
+        async fn create_or_update_index_job(
+            &self,
+            _: &crate::types::IndexJobRecord,
+        ) -> crate::Result<()> {
+            unreachable!()
+        }
+        async fn update_index_job(&self, _: crate::types::IndexJobRecord) -> crate::Result<()> {
+            unreachable!()
+        }
+        async fn get_index_job(
+            &self,
+            _: &str,
+            _: &str,
+        ) -> crate::Result<Option<crate::types::IndexJobRecord>> {
+            unreachable!()
+        }
+        async fn list_index_jobs_for_project(
+            &self,
+            _: &str,
+        ) -> crate::Result<Vec<crate::types::IndexJobRecord>> {
+            unreachable!()
+        }
+        async fn upsert_file_checkpoint(
+            &self,
+            _: &crate::types::IndexFileCheckpoint,
+        ) -> crate::Result<()> {
+            unreachable!()
+        }
+        async fn get_file_checkpoint(
+            &self,
+            _: &str,
+            _: u64,
+            _: &str,
+        ) -> crate::Result<Option<crate::types::IndexFileCheckpoint>> {
+            unreachable!()
+        }
+        async fn list_file_checkpoints_for_job(
+            &self,
+            _: &str,
+            _: u64,
+        ) -> crate::Result<Vec<crate::types::IndexFileCheckpoint>> {
+            unreachable!()
+        }
+        async fn get_active_generation(&self, _: &str) -> crate::Result<Option<u64>> {
+            unreachable!()
+        }
+        async fn set_active_generation(&self, _: &str, _: u64) -> crate::Result<()> {
+            unreachable!()
+        }
+        async fn list_abandoned_generations(&self, _: &str) -> crate::Result<Vec<u64>> {
             unreachable!()
         }
         async fn get_file_hash(&self, _: &str, _: &str) -> crate::Result<Option<String>> {

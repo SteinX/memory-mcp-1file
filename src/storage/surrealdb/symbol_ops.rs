@@ -47,6 +47,7 @@ pub(super) async fn create_code_symbols_batch(
             "end_line": symbol.end_line,
             "project_id": symbol.project_id,
             "signature": symbol.signature,
+            "generation": symbol.generation,
         }));
     }
 
@@ -60,6 +61,7 @@ pub(super) async fn create_code_symbols_batch(
             end_line = $input.end_line,
             project_id = $input.project_id,
             signature = $input.signature,
+            generation = $input.generation,
             indexed_at = time::now()
     "#;
 

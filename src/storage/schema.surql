@@ -93,6 +93,7 @@ DEFINE FIELD context_path     ON code_chunks TYPE option<string>;
 DEFINE FIELD embedding        ON code_chunks TYPE option<array<float>>;
 DEFINE FIELD content_hash     ON code_chunks TYPE string;
 DEFINE FIELD project_id       ON code_chunks TYPE option<string>;
+DEFINE FIELD generation       ON code_chunks TYPE option<int> DEFAULT NONE;
 DEFINE FIELD indexed_at       ON code_chunks TYPE datetime DEFAULT time::now();
 
 DEFINE INDEX IF NOT EXISTS idx_chunks_vec ON code_chunks 
@@ -101,6 +102,7 @@ DEFINE INDEX IF NOT EXISTS idx_chunks_vec ON code_chunks
 -- DEFINE INDEX IF NOT EXISTS idx_chunks_fts ON code_chunks FIELDS content FULLTEXT ANALYZER simple BM25;
 DEFINE INDEX IF NOT EXISTS idx_chunks_path ON code_chunks FIELDS file_path;
 DEFINE INDEX IF NOT EXISTS idx_chunks_project ON code_chunks FIELDS project_id;
+DEFINE INDEX IF NOT EXISTS idx_chunks_project_generation ON code_chunks FIELDS project_id, generation;
 DEFINE INDEX IF NOT EXISTS idx_chunks_hash ON code_chunks FIELDS content_hash;
 
 -- Index status table
@@ -143,11 +145,13 @@ DEFINE FIELD end_line       ON code_symbols TYPE int;
 DEFINE FIELD project_id     ON code_symbols TYPE string;
 DEFINE FIELD signature      ON code_symbols TYPE option<string>;
 DEFINE FIELD embedding      ON code_symbols TYPE option<array<float>>;
+DEFINE FIELD generation     ON code_symbols TYPE option<int> DEFAULT NONE;
 DEFINE FIELD indexed_at     ON code_symbols TYPE datetime DEFAULT time::now();
 
 DEFINE INDEX IF NOT EXISTS idx_symbols_name ON code_symbols FIELDS name;
 DEFINE INDEX IF NOT EXISTS idx_symbols_type_name ON code_symbols FIELDS symbol_type, name;
 DEFINE INDEX IF NOT EXISTS idx_symbols_project ON code_symbols FIELDS project_id;
+DEFINE INDEX IF NOT EXISTS idx_symbols_project_generation ON code_symbols FIELDS project_id, generation;
 DEFINE INDEX IF NOT EXISTS idx_symbols_path ON code_symbols FIELDS file_path;
 DEFINE INDEX IF NOT EXISTS idx_symbols_vec ON code_symbols 
     FIELDS embedding HNSW DIMENSION {dim} DIST COSINE;
@@ -159,3 +163,54 @@ DEFINE FIELD file_path    ON file_manifest TYPE string;
 DEFINE FIELD last_seen_at ON file_manifest TYPE datetime DEFAULT time::now();
 DEFINE INDEX IF NOT EXISTS idx_fm_project_path
     ON file_manifest FIELDS project_id, file_path UNIQUE;
+
+-- Durable indexing jobs. Additive table for resume support; existing code rows remain untouched.
+DEFINE TABLE IF NOT EXISTS index_jobs SCHEMAFULL;
+DEFINE FIELD job_id                ON index_jobs TYPE string;
+DEFINE FIELD project_id            ON index_jobs TYPE string;
+DEFINE FIELD target_generation     ON index_jobs TYPE int DEFAULT 0;
+DEFINE FIELD workspace_path        ON index_jobs TYPE string DEFAULT '';
+DEFINE FIELD target_fingerprint    ON index_jobs TYPE option<string>;
+DEFINE FIELD structural_generation ON index_jobs TYPE int DEFAULT 0;
+DEFINE FIELD state                 ON index_jobs TYPE string;
+DEFINE FIELD phase                 ON index_jobs TYPE string;
+DEFINE FIELD stored_phase          ON index_jobs TYPE option<string>;
+DEFINE FIELD resume_token          ON index_jobs TYPE string DEFAULT '';
+DEFINE FIELD created_at            ON index_jobs TYPE datetime DEFAULT time::now();
+DEFINE FIELD started_at            ON index_jobs TYPE option<datetime>;
+DEFINE FIELD updated_at            ON index_jobs TYPE datetime DEFAULT time::now();
+DEFINE FIELD completed_at          ON index_jobs TYPE option<datetime>;
+DEFINE FIELD error                 ON index_jobs TYPE option<object> FLEXIBLE;
+DEFINE FIELD resume                ON index_jobs TYPE option<object> FLEXIBLE;
+DEFINE FIELD completed_files_count ON index_jobs TYPE int DEFAULT 0;
+DEFINE FIELD total_files_count     ON index_jobs TYPE option<int>;
+DEFINE FIELD reason_code           ON index_jobs TYPE option<string>;
+DEFINE FIELD progress              ON index_jobs TYPE object FLEXIBLE DEFAULT {};
+DEFINE INDEX IF NOT EXISTS idx_jobs_job_id ON index_jobs FIELDS job_id UNIQUE;
+DEFINE INDEX IF NOT EXISTS idx_jobs_project ON index_jobs FIELDS project_id;
+
+-- File-level checkpoints keyed by project, generation, and relative path.
+DEFINE TABLE IF NOT EXISTS index_file_checkpoints SCHEMAFULL;
+DEFINE FIELD job_id                ON index_file_checkpoints TYPE string DEFAULT '';
+DEFINE FIELD project_id            ON index_file_checkpoints TYPE string;
+DEFINE FIELD generation            ON index_file_checkpoints TYPE int DEFAULT 0;
+DEFINE FIELD relative_file_path    ON index_file_checkpoints TYPE string;
+DEFINE FIELD file_path             ON index_file_checkpoints TYPE string DEFAULT '';
+DEFINE FIELD content_hash          ON index_file_checkpoints TYPE string;
+DEFINE FIELD checkpoint_generation ON index_file_checkpoints TYPE int DEFAULT 0;
+DEFINE FIELD phase                 ON index_file_checkpoints TYPE option<string>;
+DEFINE FIELD completed             ON index_file_checkpoints TYPE bool DEFAULT true;
+DEFINE FIELD completed_at          ON index_file_checkpoints TYPE datetime DEFAULT time::now();
+DEFINE FIELD updated_at            ON index_file_checkpoints TYPE datetime DEFAULT time::now();
+DEFINE FIELD chunks_written        ON index_file_checkpoints TYPE int DEFAULT 0;
+DEFINE FIELD symbols_written       ON index_file_checkpoints TYPE int DEFAULT 0;
+DEFINE INDEX IF NOT EXISTS idx_checkpoint_key
+    ON index_file_checkpoints FIELDS project_id, generation, relative_file_path UNIQUE;
+
+-- Project-level active generation pointer. Missing row means legacy active generation 0.
+DEFINE TABLE IF NOT EXISTS index_active_generations SCHEMAFULL;
+DEFINE FIELD project_id            ON index_active_generations TYPE string;
+DEFINE FIELD generation            ON index_active_generations TYPE int DEFAULT 0;
+DEFINE FIELD updated_at            ON index_active_generations TYPE datetime DEFAULT time::now();
+DEFINE INDEX IF NOT EXISTS idx_active_generation_project
+    ON index_active_generations FIELDS project_id UNIQUE;

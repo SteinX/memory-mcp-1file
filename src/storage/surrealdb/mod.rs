@@ -2,6 +2,8 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use surrealdb::engine::local::{Db, SurrealKv};
+#[cfg(test)]
+use surrealdb::engine::local::Mem;
 use surrealdb::Surreal;
 
 use super::StorageBackend;
@@ -9,8 +11,8 @@ use crate::graph::{GraphTraversalStorage, SymbolGraphTraversalStorage};
 use crate::storage::traits::{MemoryExportOptions, MemoryImportOptions};
 use crate::types::{
     CodeChunk, CodeSymbol, Direction, Entity, ExportMemoryResponse, ImportMemoryResponse,
-    IndexStatus, ManifestEntry, Memory, MemoryQuery, MemoryUpdate, MigrationMemoryRecord, Relation,
-    ScoredCodeChunk, SearchResult, SymbolRelation,
+    IndexFileCheckpoint, IndexJobRecord, IndexStatus, ManifestEntry, Memory, MemoryQuery,
+    MemoryUpdate, MigrationMemoryRecord, Relation, ScoredCodeChunk, SearchResult, SymbolRelation,
 };
 use crate::Result;
 
@@ -34,6 +36,20 @@ impl SurrealStorage {
         db.use_ns("memory").use_db("main").await?;
 
         // Drop old fulltext index on code_chunks that caused startup errors on existing databases
+        db.query("REMOVE INDEX IF EXISTS idx_chunks_fts ON code_chunks;")
+            .await?;
+
+        let schema = include_str!("../schema.surql").replace("{dim}", &model_dim.to_string());
+        db.query(&schema).await?;
+
+        Ok(Self { db })
+    }
+
+    #[cfg(test)]
+    async fn new_in_memory(model_dim: usize) -> Result<Self> {
+        let db: Surreal<Db> = Surreal::new::<Mem>(()).await?;
+        db.use_ns("memory").use_db("main").await?;
+
         db.query("REMOVE INDEX IF EXISTS idx_chunks_fts ON code_chunks;")
             .await?;
 
@@ -614,6 +630,63 @@ impl StorageBackend for SurrealStorage {
         code_ops::list_projects(&self.db).await
     }
 
+    async fn create_or_update_index_job(&self, job: &IndexJobRecord) -> Result<()> {
+        code_ops::create_or_update_index_job(&self.db, job).await
+    }
+
+    async fn create_index_job(&self, job: IndexJobRecord) -> Result<()> {
+        code_ops::create_index_job(&self.db, job).await
+    }
+
+    async fn update_index_job(&self, job: IndexJobRecord) -> Result<()> {
+        code_ops::update_index_job(&self.db, job).await
+    }
+
+    async fn get_index_job(
+        &self,
+        project_id: &str,
+        job_id: &str,
+    ) -> Result<Option<IndexJobRecord>> {
+        code_ops::get_index_job(&self.db, project_id, job_id).await
+    }
+
+    async fn list_index_jobs_for_project(&self, project_id: &str) -> Result<Vec<IndexJobRecord>> {
+        code_ops::list_index_jobs_for_project(&self.db, project_id).await
+    }
+
+    async fn upsert_file_checkpoint(&self, checkpoint: &IndexFileCheckpoint) -> Result<()> {
+        code_ops::upsert_file_checkpoint(&self.db, checkpoint).await
+    }
+
+    async fn get_file_checkpoint(
+        &self,
+        project_id: &str,
+        generation: u64,
+        relative_file_path: &str,
+    ) -> Result<Option<IndexFileCheckpoint>> {
+        code_ops::get_file_checkpoint(&self.db, project_id, generation, relative_file_path).await
+    }
+
+    async fn list_file_checkpoints_for_job(
+        &self,
+        project_id: &str,
+        generation: u64,
+    ) -> Result<Vec<IndexFileCheckpoint>> {
+        code_ops::list_file_checkpoints_for_job(&self.db, project_id, generation).await
+    }
+
+    async fn get_active_generation(&self, project_id: &str) -> Result<Option<u64>> {
+        code_ops::get_active_generation(&self.db, project_id).await
+    }
+
+    async fn set_active_generation(&self, project_id: &str, generation: u64) -> Result<()> {
+        code_ops::set_active_generation(&self.db, project_id, generation).await
+    }
+
+    async fn list_abandoned_generations(&self, project_id: &str) -> Result<Vec<u64>> {
+        code_ops::list_abandoned_generations(&self.db, project_id).await
+    }
+
     async fn get_file_hash(&self, project_id: &str, file_path: &str) -> Result<Option<String>> {
         code_ops::get_file_hash(&self.db, project_id, file_path).await
     }
@@ -871,7 +944,8 @@ mod tests {
     use crate::storage::traits::{MemoryExportOptions, MemoryImportOptions};
     use crate::types::{
         ChunkType, CodeRelationType, CodeSymbol, ConfidenceClass, Datetime, Entity,
-        ImportConflictStrategy, Language, Memory, MemoryQuery, MemoryType, MemoryUpdate,
+        ImportConflictStrategy, IndexFileCheckpoint, IndexJobPhase, IndexJobReasonCode,
+        IndexJobRecord, IndexJobState, Language, Memory, MemoryQuery, MemoryType, MemoryUpdate,
         MigrationMemoryRecord, MigrationRecordType, RecordId, Relation, RelationClass,
         RelationProvenance, StalenessState, SymbolRelation, SymbolType,
         MEMORY_MIGRATION_SCHEMA_VERSION,
@@ -963,6 +1037,10 @@ mod tests {
         (storage, tmp)
     }
 
+    async fn setup_in_memory_test_db() -> SurrealStorage {
+        SurrealStorage::new_in_memory(768).await.unwrap()
+    }
+
     fn migration_memory_record(id: &str, content: &str) -> MigrationMemoryRecord {
         let now = Datetime::default();
         MigrationMemoryRecord {
@@ -986,6 +1064,158 @@ mod tests {
             invalidated: false,
             invalidation_reason: None,
         }
+    }
+
+    fn durable_job(job_id: &str, project_id: &str) -> IndexJobRecord {
+        IndexJobRecord {
+            id: None,
+            job_id: job_id.to_string(),
+            project_id: project_id.to_string(),
+            target_generation: 7,
+            workspace_path: "/durable/workspace".to_string(),
+            target_fingerprint: None,
+            structural_generation: 7,
+            state: IndexJobState::Running,
+            stored_phase: Some(IndexJobPhase::Chunk),
+            phase: IndexJobPhase::Chunk,
+            resume_token: "resume-token-123".to_string(),
+            created_at: Datetime::default(),
+            started_at: None,
+            updated_at: Datetime::default(),
+            completed_at: None,
+            error: None,
+            resume: None,
+            completed_files_count: 3,
+            total_files_count: Some(9),
+            reason_code: Some(IndexJobReasonCode::InterruptedByShutdown),
+            progress: Default::default(),
+        }
+    }
+
+    #[tokio::test]
+    async fn legacy_index_status_survives_job_schema_migration() {
+        let storage = setup_in_memory_test_db().await;
+
+        let mut status = IndexStatus::new("legacy_project".to_string());
+        status.root_path = Some("/legacy/workspace".to_string());
+        status.total_files = 12;
+        status.indexed_files = 5;
+        status.structural_generation = 0;
+        status.semantic_generation = 0;
+
+        storage.update_index_status(status.clone()).await.unwrap();
+
+        let loaded = storage
+            .get_index_status("legacy_project")
+            .await
+            .unwrap()
+            .expect("legacy index status should remain readable");
+        assert_eq!(loaded.project_id, status.project_id);
+        assert_eq!(loaded.root_path, status.root_path);
+        assert_eq!(loaded.total_files, 12);
+        assert_eq!(loaded.indexed_files, 5);
+        assert!(storage
+            .list_index_jobs_for_project("legacy_project")
+            .await
+            .unwrap()
+            .is_empty());
+        assert_eq!(storage.get_active_generation("legacy_project").await.unwrap(), None);
+    }
+
+    #[tokio::test]
+    async fn index_job_record_survives_backend_reopen() {
+        let storage = setup_in_memory_test_db().await;
+        storage
+            .create_or_update_index_job(&durable_job("durable-job-1", "durable_project"))
+            .await
+            .unwrap();
+
+        let job = storage
+            .get_index_job("durable_project", "durable-job-1")
+            .await
+            .unwrap()
+            .expect("job should survive readback from backend");
+
+        assert_eq!(job.job_id, "durable-job-1");
+        assert_eq!(job.project_id, "durable_project");
+        assert_eq!(job.target_generation, 7);
+        assert_eq!(job.state, IndexJobState::Running);
+        assert_eq!(job.phase, IndexJobPhase::Chunk);
+        assert_eq!(job.stored_phase, Some(IndexJobPhase::Chunk));
+        assert_eq!(job.resume_token, "resume-token-123");
+        assert_eq!(job.completed_files_count, 3);
+        assert_eq!(job.total_files_count, Some(9));
+        assert_eq!(job.reason_code, Some(IndexJobReasonCode::InterruptedByShutdown));
+    }
+
+    #[tokio::test]
+    async fn file_checkpoint_upsert_is_idempotent() {
+        let storage = setup_in_memory_test_db().await;
+
+        let checkpoint = IndexFileCheckpoint {
+            id: None,
+            job_id: "checkpoint-job".to_string(),
+            project_id: "checkpoint_project".to_string(),
+            generation: 42,
+            relative_file_path: "src/lib.rs".to_string(),
+            file_path: "src/lib.rs".to_string(),
+            content_hash: "hash-a".to_string(),
+            checkpoint_generation: 42,
+            phase: IndexJobPhase::Chunk,
+            completed: true,
+            completed_at: Datetime::default(),
+            chunks_written: 2,
+            symbols_written: 4,
+            updated_at: Datetime::default(),
+        };
+
+        storage
+            .upsert_file_checkpoint(&checkpoint)
+            .await
+            .unwrap();
+
+        let mut updated = checkpoint;
+        updated.content_hash = "hash-b".to_string();
+        updated.chunks_written = 5;
+        updated.symbols_written = 8;
+        storage.upsert_file_checkpoint(&updated).await.unwrap();
+
+        let loaded = storage
+            .get_file_checkpoint("checkpoint_project", 42, "src/lib.rs")
+            .await
+            .unwrap()
+            .expect("checkpoint should exist");
+
+        assert_eq!(loaded.content_hash, "hash-b");
+        assert_eq!(loaded.chunks_written, 5);
+        assert_eq!(loaded.symbols_written, 8);
+
+        let checkpoints = storage
+            .list_file_checkpoints_for_job("checkpoint_project", 42)
+            .await
+            .unwrap();
+        assert_eq!(checkpoints.len(), 1);
+        assert_eq!(checkpoints[0].content_hash, "hash-b");
+
+        let abandoned = storage
+            .list_abandoned_generations("checkpoint_project")
+            .await
+            .unwrap();
+        assert_eq!(abandoned, vec![42]);
+
+        storage
+            .set_active_generation("checkpoint_project", 42)
+            .await
+            .unwrap();
+        assert_eq!(
+            storage.get_active_generation("checkpoint_project").await.unwrap(),
+            Some(42)
+        );
+        assert!(storage
+            .list_abandoned_generations("checkpoint_project")
+            .await
+            .unwrap()
+            .is_empty());
     }
 
     #[tokio::test]
@@ -2123,6 +2353,7 @@ mod tests {
                 embedding: Some(vec![0.1; 768]),
                 content_hash: format!("hash_{}", i),
                 project_id: Some("test_project".to_string()),
+                generation: None,
                 indexed_at: Datetime::default(),
             })
             .collect();
@@ -2164,6 +2395,7 @@ mod tests {
                 embedding: None,
                 content_hash: "chunk-hash".to_string(),
                 project_id: Some("chunk_project".to_string()),
+                generation: None,
                 indexed_at: Datetime::default(),
             })
             .await
@@ -2212,6 +2444,7 @@ mod tests {
                 embedding: None,
                 content_hash: format!("embed_hash_{}", i),
                 project_id: Some("embed_project".to_string()),
+                generation: None,
                 indexed_at: Datetime::default(),
             })
             .collect();
@@ -2363,6 +2596,7 @@ mod tests {
                 embedding: Some(vec![0.1; 768]),
                 content_hash: format!("hash_a_{}", i),
                 project_id: Some("project_alpha".to_string()),
+                generation: None,
                 indexed_at: Datetime::default(),
             };
             storage.create_code_chunks_batch(vec![chunk]).await.unwrap();
@@ -2381,6 +2615,7 @@ mod tests {
                 embedding: Some(vec![0.1; 768]),
                 content_hash: format!("hash_b_{}", i),
                 project_id: Some("project_beta".to_string()),
+                generation: None,
                 indexed_at: Datetime::default(),
             };
             storage.create_code_chunks_batch(vec![chunk]).await.unwrap();

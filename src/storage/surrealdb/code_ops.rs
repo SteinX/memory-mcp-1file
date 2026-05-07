@@ -3,7 +3,7 @@ use surrealdb::Surreal;
 
 use std::collections::BTreeSet;
 
-use crate::types::{CodeChunk, IndexStatus, ScoredCodeChunk};
+use crate::types::{CodeChunk, IndexFileCheckpoint, IndexJobRecord, IndexStatus, ScoredCodeChunk};
 use crate::Result;
 
 use super::helpers::generate_id;
@@ -251,6 +251,221 @@ pub(super) async fn list_projects(db: &Surreal<Db>) -> Result<Vec<String>> {
     }
 
     Ok(projects.into_iter().collect())
+}
+
+fn index_job_record_id(project_id: &str, job_id: &str) -> String {
+    format!("{}::{}", project_id, job_id)
+}
+
+fn index_file_checkpoint_record_id(
+    project_id: &str,
+    generation: u64,
+    relative_file_path: &str,
+) -> String {
+    let path_hash = blake3::hash(relative_file_path.as_bytes()).to_hex();
+    format!("{}::{}::{}", project_id, generation, path_hash)
+}
+
+pub(super) async fn create_or_update_index_job(
+    db: &Surreal<Db>,
+    job: &IndexJobRecord,
+) -> Result<()> {
+    let mut job = job.clone();
+    if job.target_generation == 0 {
+        job.target_generation = job.structural_generation;
+    }
+    if job.resume_token.is_empty() {
+        if let Some(resume) = &job.resume {
+            job.resume_token = resume.token.clone().unwrap_or_default();
+        }
+    }
+    if job.completed_files_count == 0 {
+        job.completed_files_count = u64::from(job.progress.indexed_files.unwrap_or(0));
+    }
+    if job.total_files_count.is_none() {
+        job.total_files_count = job.progress.total_files.map(u64::from);
+    }
+    if job.reason_code.is_none() {
+        job.reason_code = job.error.as_ref().map(|error| error.code.clone());
+    }
+    let record_id = index_job_record_id(&job.project_id, &job.job_id);
+    job.id = Some(crate::types::RecordId::new("index_jobs", record_id.as_str()));
+    let _: Option<IndexJobRecord> = db
+        .upsert(("index_jobs", record_id.as_str()))
+        .content(job)
+        .await?;
+    Ok(())
+}
+
+pub(super) async fn create_index_job(db: &Surreal<Db>, job: IndexJobRecord) -> Result<()> {
+    create_or_update_index_job(db, &job).await
+}
+
+pub(super) async fn update_index_job(db: &Surreal<Db>, job: IndexJobRecord) -> Result<()> {
+    create_index_job(db, job).await
+}
+
+pub(super) async fn get_index_job(
+    db: &Surreal<Db>,
+    project_id: &str,
+    job_id: &str,
+) -> Result<Option<IndexJobRecord>> {
+    let record_id = index_job_record_id(project_id, job_id);
+    let job: Option<IndexJobRecord> = db.select(("index_jobs", record_id.as_str())).await?;
+    Ok(job)
+}
+
+pub(super) async fn list_index_jobs_for_project(
+    db: &Surreal<Db>,
+    project_id: &str,
+) -> Result<Vec<IndexJobRecord>> {
+    let sql = "SELECT * FROM index_jobs WHERE project_id = $project_id ORDER BY updated_at DESC";
+    let mut response = db
+        .query(sql)
+        .bind(("project_id", project_id.to_string()))
+        .await?;
+    let jobs: Vec<IndexJobRecord> = response.take(0).unwrap_or_default();
+    Ok(jobs)
+}
+
+pub(super) async fn upsert_file_checkpoint(
+    db: &Surreal<Db>,
+    checkpoint: &IndexFileCheckpoint,
+) -> Result<()> {
+    let mut checkpoint = checkpoint.clone();
+    if checkpoint.relative_file_path.is_empty() {
+        checkpoint.relative_file_path = checkpoint.file_path.clone();
+    }
+    if checkpoint.file_path.is_empty() {
+        checkpoint.file_path = checkpoint.relative_file_path.clone();
+    }
+    if checkpoint.checkpoint_generation == 0 {
+        checkpoint.checkpoint_generation = checkpoint.generation;
+    }
+    let record_id = index_file_checkpoint_record_id(
+        &checkpoint.project_id,
+        checkpoint.generation,
+        &checkpoint.relative_file_path,
+    );
+    checkpoint.id = Some(crate::types::RecordId::new(
+        "index_file_checkpoints",
+        record_id.as_str(),
+    ));
+    let _: Option<IndexFileCheckpoint> = db
+        .upsert(("index_file_checkpoints", record_id.as_str()))
+        .content(checkpoint)
+        .await?;
+    Ok(())
+}
+
+pub(super) async fn list_file_checkpoints_for_job(
+    db: &Surreal<Db>,
+    project_id: &str,
+    generation: u64,
+) -> Result<Vec<IndexFileCheckpoint>> {
+    let sql = r#"
+        SELECT * FROM index_file_checkpoints
+        WHERE project_id = $project_id
+          AND generation = $generation
+        ORDER BY relative_file_path ASC
+    "#;
+    let mut response = db
+        .query(sql)
+        .bind(("project_id", project_id.to_string()))
+        .bind(("generation", generation as i64))
+        .await?;
+    let checkpoints: Vec<IndexFileCheckpoint> = response.take(0).unwrap_or_default();
+    Ok(checkpoints)
+}
+
+pub(super) async fn get_file_checkpoint(
+    db: &Surreal<Db>,
+    project_id: &str,
+    generation: u64,
+    relative_file_path: &str,
+) -> Result<Option<IndexFileCheckpoint>> {
+    let sql = r#"
+        SELECT * FROM index_file_checkpoints
+        WHERE project_id = $project_id
+          AND generation = $generation
+          AND relative_file_path = $relative_file_path
+        LIMIT 1
+    "#;
+    let mut response = db
+        .query(sql)
+        .bind(("project_id", project_id.to_string()))
+        .bind(("generation", generation as i64))
+        .bind(("relative_file_path", relative_file_path.to_string()))
+        .await?;
+    let checkpoints: Vec<IndexFileCheckpoint> = response.take(0).unwrap_or_default();
+    Ok(checkpoints.into_iter().next())
+}
+
+pub(super) async fn get_active_generation(
+    db: &Surreal<Db>,
+    project_id: &str,
+) -> Result<Option<u64>> {
+    let sql = "SELECT generation FROM index_active_generations WHERE project_id = $project_id LIMIT 1";
+    let mut response = db
+        .query(sql)
+        .bind(("project_id", project_id.to_string()))
+        .await?;
+    let result: Vec<serde_json::Value> = response.take(0).unwrap_or_default();
+    Ok(result
+        .first()
+        .and_then(|v| v.get("generation"))
+        .and_then(|g| g.as_u64().or_else(|| g.as_i64().and_then(|i| u64::try_from(i).ok()))))
+}
+
+pub(super) async fn set_active_generation(
+    db: &Surreal<Db>,
+    project_id: &str,
+    generation: u64,
+) -> Result<()> {
+    let sql = r#"
+        UPSERT index_active_generations SET
+            project_id = $project_id,
+            generation = $generation,
+            updated_at = time::now()
+        WHERE project_id = $project_id
+    "#;
+    db.query(sql)
+        .bind(("project_id", project_id.to_string()))
+        .bind(("generation", generation as i64))
+        .await?;
+    Ok(())
+}
+
+pub(super) async fn list_abandoned_generations(
+    db: &Surreal<Db>,
+    project_id: &str,
+) -> Result<Vec<u64>> {
+    let active = get_active_generation(db, project_id).await?.unwrap_or(0);
+    let sql = r#"
+        SELECT generation FROM code_chunks WHERE project_id = $project_id AND generation IS NOT NONE;
+        SELECT generation FROM code_symbols WHERE project_id = $project_id AND generation IS NOT NONE;
+        SELECT generation FROM index_file_checkpoints WHERE project_id = $project_id;
+        SELECT target_generation AS generation FROM index_jobs WHERE project_id = $project_id;
+    "#;
+    let mut response = db
+        .query(sql)
+        .bind(("project_id", project_id.to_string()))
+        .await?;
+    let mut generations = BTreeSet::new();
+    for result_index in 0..4 {
+        let rows: Vec<serde_json::Value> = response.take(result_index).unwrap_or_default();
+        for row in rows {
+            if let Some(generation) = row
+                .get("generation")
+                .and_then(|g| g.as_u64().or_else(|| g.as_i64().and_then(|i| u64::try_from(i).ok())))
+            {
+                if generation != active {
+                    generations.insert(generation);
+                }
+            }
+        }
+    }
+    Ok(generations.into_iter().collect())
 }
 
 pub(super) async fn get_file_hash(

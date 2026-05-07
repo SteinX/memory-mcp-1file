@@ -11,8 +11,9 @@ use chrono::{DateTime, Utc};
 
 use crate::types::{
     CodeChunk, CodeSymbol, Direction, Entity, ExportMemoryResponse, ImportConflictStrategy,
-    ImportMemoryResponse, IndexStatus, ManifestEntry, Memory, MemoryQuery, MemoryType,
-    MemoryUpdate, MigrationMemoryRecord, Relation, ScoredCodeChunk, SearchResult, SymbolRelation,
+    ImportMemoryResponse, IndexFileCheckpoint, IndexJobRecord, IndexStatus, ManifestEntry,
+    Memory, MemoryQuery, MemoryType, MemoryUpdate, MigrationMemoryRecord, Relation,
+    ScoredCodeChunk, SearchResult, SymbolRelation,
 };
 use crate::Result;
 
@@ -378,6 +379,59 @@ pub trait StorageBackend: Send + Sync {
 
     /// List all indexed project IDs
     async fn list_projects(&self) -> Result<Vec<String>>;
+
+    /// Create or replace a durable indexing job record keyed by (project_id, job_id).
+    ///
+    /// Durable `job_id` is distinct from same-process indexing operation IDs:
+    /// job records survive process restart and are used by resume/cleanup flows.
+    async fn create_or_update_index_job(&self, job: &IndexJobRecord) -> Result<()>;
+
+    /// Create or replace a durable indexing job record keyed by (project_id, job_id).
+    async fn create_index_job(&self, job: IndexJobRecord) -> Result<()> {
+        self.create_or_update_index_job(&job).await
+    }
+
+    /// Update an existing durable indexing job record keyed by job_id.
+    async fn update_index_job(&self, job: IndexJobRecord) -> Result<()> {
+        self.create_or_update_index_job(&job).await
+    }
+
+    /// Get a durable indexing job by (project_id, job_id).
+    async fn get_index_job(
+        &self,
+        project_id: &str,
+        job_id: &str,
+    ) -> Result<Option<IndexJobRecord>>;
+
+    /// List durable indexing jobs for a project, newest first.
+    async fn list_index_jobs_for_project(&self, project_id: &str) -> Result<Vec<IndexJobRecord>>;
+
+    /// Upsert a per-file checkpoint keyed by (project_id, generation, relative_file_path).
+    async fn upsert_file_checkpoint(&self, checkpoint: &IndexFileCheckpoint) -> Result<()>;
+
+    /// Get a per-file checkpoint by (project_id, generation, relative_file_path).
+    async fn get_file_checkpoint(
+        &self,
+        project_id: &str,
+        generation: u64,
+        relative_file_path: &str,
+    ) -> Result<Option<IndexFileCheckpoint>>;
+
+    /// List checkpoints for a project generation/job target generation.
+    async fn list_file_checkpoints_for_job(
+        &self,
+        project_id: &str,
+        generation: u64,
+    ) -> Result<Vec<IndexFileCheckpoint>>;
+
+    /// Return the active generation for a project. Missing metadata means legacy rows are active.
+    async fn get_active_generation(&self, project_id: &str) -> Result<Option<u64>>;
+
+    /// Set the active generation for a project.
+    async fn set_active_generation(&self, project_id: &str, generation: u64) -> Result<()>;
+
+    /// List generations that have rows/checkpoints but are not the active generation.
+    async fn list_abandoned_generations(&self, project_id: &str) -> Result<Vec<u64>>;
 
     // ─────────────────────────────────────────────────────────────────────────
     // File hash operations (incremental indexing)
