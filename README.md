@@ -394,7 +394,7 @@ Or with Docker:
 
 ## 🛠️ Tools Available
 
-The server exposes **21 tools** to the AI model, organized into logical categories.
+The server exposes **23 tools** to the AI model, organized into logical categories.
 
 ### 🧠 Core Memory Management
 | Tool | Description |
@@ -408,6 +408,8 @@ The server exposes **21 tools** to the AI model, organized into logical categori
 | `get_memory` | Get full memory by ID. Memory IDs are stable public identities; response includes additive contract and summary metadata. |
 | `invalidate` | Soft-delete memory, optionally linking replacement via `superseded_by`. |
 | `get_valid` | Get valid memories. Supports optional timestamp (ISO 8601), scope filters, memory_type, metadata_filter, and event/ingestion ranges. Response includes additive contract and summary metadata. |
+| `export_memory` | Export memories for a project as inline JSONL using the public migration contract. Returns a `jsonl` string in the response body — no filesystem path or file is involved. By default exports only valid (non-invalidated) records. To include invalidated records, set `valid_only=false` and `include_invalidated=true`. Raw embeddings and vectors are never exported. |
+| `import_memory` | Import memories from an inline JSONL string using the public migration contract. The `jsonl` field in the request carries the JSONL content directly — no filesystem path or file is involved. Defaults: `dry_run=false`, `conflict_strategy=remap`, `preserve_project_id=false`. Set `dry_run=true` to validate and preview without writing anything. Invalidated records are skipped unless `allow_invalidated=true`. Imported records are re-embedded by the current service; no vector payloads are preserved. |
 
 ### 🔎 Search & Retrieval
 | Tool | Description |
@@ -429,6 +431,93 @@ The server exposes **21 tools** to the AI model, organized into logical categori
 | `search_symbols` | Symbol lookup by name with additive contract/summary metadata. |
 | `symbol_graph` | Symbol relationship traversal with additive contract/summary metadata; `frontier` is an unexpanded boundary hint, not a cursor. |
 | `project_info` | Project indexing information. Actions: list() \| index(path, force?, confirm_failed_restart?) \| status(project_id) \| stats(project_id) \| projection(project_id) \| projection_by_locator() \| bind(project_id) \| unbind() \| binding_status(). bind/unbind/status actions manage session-scoped project binding for HTTP MCP clients. Responses include additive contract/summary metadata, including lifecycle, generation, and projection/materialization fields. |
+
+### 📦 Memory Migration (export\_memory / import\_memory)
+
+These two tools let you move memories between server instances or namespaces using inline JSONL. The JSONL string travels inside the MCP tool request and response — there are no filesystem paths, local files, or URLs involved.
+
+#### Export
+
+`export_memory` requires a `project_id` and returns a `jsonl` field in the response. Each line is one `MigrationMemoryRecord` JSON object.
+
+**Default behavior** (valid records only):
+
+```json
+{
+  "project_id": "my-project"
+}
+```
+
+**Archival export** (include invalidated records — requires both flags):
+
+```json
+{
+  "project_id": "my-project",
+  "valid_only": false,
+  "include_invalidated": true
+}
+```
+
+Setting `valid_only=true` while also setting `include_invalidated=true` is rejected. You must set both to opt into archival export.
+
+Additional optional filters: `user_id`, `agent_id`, `run_id`, `memory_type`, `metadata_filter`, `valid_at`, `event_after`, `event_before`, `ingestion_after`, `ingestion_before`, `limit`.
+
+Raw embeddings and vectors are never included in the export. The `jsonl` field in the response is the portable payload.
+
+#### Import
+
+`import_memory` requires a `project_id` and a `jsonl` field containing the JSONL string from a prior export.
+
+**Default import** (live write, remap conflicting IDs):
+
+```json
+{
+  "project_id": "target-project",
+  "jsonl": "<paste jsonl string here>"
+}
+```
+
+**Dry-run** (validate and preview without writing anything):
+
+```json
+{
+  "project_id": "target-project",
+  "jsonl": "<paste jsonl string here>",
+  "dry_run": true
+}
+```
+
+When `dry_run=true`, the tool parses and validates every record and returns the full `id_mappings` report, but writes nothing to the database.
+
+**Parameters and defaults:**
+
+| Parameter | Default | Notes |
+|-----------|---------|-------|
+| `dry_run` | `false` | Set `true` to validate without writing. |
+| `conflict_strategy` | `remap` | `remap` assigns new IDs to avoid collisions and reports old/new pairs in `id_mappings`. `skip` silently drops conflicting records. `fail` aborts on first conflict. |
+| `preserve_project_id` | `false` | When `false`, the target `project_id` is applied to all imported records. |
+| `allow_invalidated` | `false` | Invalidated records are skipped unless this is `true`. |
+
+#### Response fields
+
+`export_memory` returns:
+- `jsonl` — the portable JSONL string
+- `exported_count` — number of records in the export
+- `truncated` — `true` if a `limit` was applied and more records exist
+- `summary` — counts of valid vs invalidated records
+
+`import_memory` returns:
+- `imported_count`, `skipped_count`, `failed_count`
+- `id_mappings` — array of `{ old_id, new_id }` pairs for remapped records
+- `errors` — per-record validation errors with `code`, `message`, `line_number`, and `source_id`
+- `dry_run` — echoes whether the call was a dry run
+- `summary` — aggregate counts
+
+#### What this is not
+
+- Not a database backup or restore. The JSONL payload carries memory content and metadata, not raw DB records.
+- Not a generalized migration framework. Only memory records are supported; code index data and knowledge graph entities are not exported.
+- Not vector migration. Imported records are re-embedded by the current service using its configured embedding model. No vector payloads are preserved or transferred.
 
 ### Contract compatibility notes for plugin / MCP integrators
 

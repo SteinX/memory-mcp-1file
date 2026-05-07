@@ -191,3 +191,64 @@ The locator record now includes typed lifecycle and lookup metadata:
 - Symbol APIs: symbol IDs are stable project-scoped identities.
 - Code recall APIs: `results[].id` is local-only; the stable re-find locator is `project_id + file_path + start_line + end_line`.
 - Projection locators: transient handles only, never promoted to stable public identity.
+
+## Memory Migration: JSONL MCP Workflow
+
+### Overview
+
+`export_memory` and `import_memory` are MCP-level tools that move memory records between server instances or project namespaces. The entire payload travels inline as a JSONL string inside the tool request and response. There are no filesystem paths, local files, temp files, or URLs involved at any point.
+
+### Layering
+
+```
+MCP Handler (handler.rs)
+  └── Logic Layer (logic/memory.rs)
+        ├── export_memory: validates options, calls storage export, serializes records to JSONL
+        └── import_memory: parses JSONL, validates records, calls storage import with conflict/remap options
+              └── Storage Layer (storage/traits.rs + memory_ops.rs)
+                    ├── export_memories: queries by namespace (project scope), applies valid_only / include_invalidated gates
+                    └── import_memories: plans conflict detection, executes dry-run or live write
+```
+
+The handler is thin: it forwards `ExportMemoryParams` / `ImportMemoryParams` directly into the logic layer and returns the result. All business rules live in the logic and storage layers.
+
+### Project scope
+
+Memory records have no separate `project_id` field. The storage layer maps `project_id` to the memory `namespace` field for both export and import. Export is always scoped to a single project; cross-project export is not supported.
+
+### Export behavior
+
+- Default: `valid_only=true`, `include_invalidated=false`. Only non-invalidated records are exported.
+- Archival opt-in: set `valid_only=false` **and** `include_invalidated=true`. Both flags are required; setting `include_invalidated=true` alone while `valid_only=true` is rejected.
+- Raw embeddings, vectors, `content_hash`, and `embedding_state` are never included. The `MigrationMemoryRecord` DTO carries only portable content and metadata fields.
+- The response `jsonl` field is a newline-delimited string. Each line is one JSON object with `schema_version`, `record_type`, `id`, `content`, `memory_type`, timestamps, and optional scope/metadata fields.
+- `truncated=true` in the response means a `limit` was applied and more records exist.
+
+### Import behavior
+
+- Default: `dry_run=false`, `conflict_strategy=remap`, `preserve_project_id=false`.
+- `dry_run=true` parses and validates every record, computes `id_mappings`, and returns the full report without writing anything to the database.
+- `conflict_strategy=remap` (default): records whose source IDs already exist in the target DB receive new IDs. Old/new pairs are reported in `id_mappings`.
+- `conflict_strategy=skip`: conflicting records are silently dropped.
+- `conflict_strategy=fail`: the import aborts on the first conflict.
+- `preserve_project_id=false` (default): the target `project_id` is applied to all imported records, overriding the source namespace.
+- Invalidated records are skipped unless `allow_invalidated=true`.
+- Imported records are written without embedding payloads. The embedding service re-indexes them through the normal lifecycle after import.
+
+### Timestamp and import metadata
+
+- `created_at`, `updated_at`, `valid_from`, and `valid_until` are preserved from the source record.
+- `superseded_by` links are rewritten to use the remapped target IDs when `conflict_strategy=remap`.
+- No import-specific metadata field is added to the stored record; the original content and scope fields are preserved as-is.
+
+### Non-goals
+
+The following are explicitly out of scope and not supported:
+
+- **Filesystem path migration**: no `path`, `url`, or `file` parameter exists on either tool.
+- **DB backup/restore**: this is not a SurrealDB table copy or raw database backup mechanism.
+- **Vector import**: embedding payloads are not transferred. Imports trigger re-embedding through the current service.
+- **Overwrite/replace-all**: there is no overwrite mode. Conflict handling is `remap`, `skip`, or `fail`.
+- **`migrate_memory` tool**: no such tool exists. The migration surface is `export_memory` + `import_memory`.
+- **Code index migration**: only memory records are supported. Code chunks, symbols, and knowledge graph entities are not exported or imported by these tools.
+- **CI integration**: these tools are MCP-level interactive tools, not CI pipeline primitives.
