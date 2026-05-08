@@ -288,6 +288,8 @@ mod tests {
             allow_full_restart_fallback: None,
             force: None,
             confirm_failed_restart: None,
+            include_patterns: None,
+            exclude_patterns: None,
         };
 
         // 1. Trigger Indexing
@@ -375,6 +377,8 @@ mod tests {
                 allow_full_restart_fallback: None,
                 force: None,
                 confirm_failed_restart: None,
+            include_patterns: None,
+            exclude_patterns: None,
             },
         )
         .await
@@ -446,6 +450,8 @@ mod tests {
                 allow_full_restart_fallback: None,
                 force: None,
                 confirm_failed_restart: None,
+            include_patterns: None,
+            exclude_patterns: None,
             },
         )
         .await
@@ -561,6 +567,8 @@ mod tests {
                 allow_full_restart_fallback: None,
                 force: None,
                 confirm_failed_restart: None,
+            include_patterns: None,
+            exclude_patterns: None,
             },
         )
         .await
@@ -639,6 +647,8 @@ mod tests {
                 allow_full_restart_fallback: None,
                 force: None,
                 confirm_failed_restart: None,
+            include_patterns: None,
+            exclude_patterns: None,
             },
         )
         .await
@@ -789,6 +799,8 @@ mod tests {
                 allow_full_restart_fallback: None,
                 force: None,
                 confirm_failed_restart: None,
+            include_patterns: None,
+            exclude_patterns: None,
             },
         )
         .await
@@ -938,6 +950,8 @@ mod tests {
                 allow_full_restart_fallback: None,
                 force: None,
                 confirm_failed_restart: None,
+            include_patterns: None,
+            exclude_patterns: None,
             },
         )
         .await
@@ -953,6 +967,8 @@ mod tests {
                 allow_full_restart_fallback: None,
                 force: None,
                 confirm_failed_restart: None,
+            include_patterns: None,
+            exclude_patterns: None,
             },
         )
         .await
@@ -1123,6 +1139,8 @@ mod tests {
                 allow_full_restart_fallback: None,
                 force: None,
                 confirm_failed_restart: None,
+            include_patterns: None,
+            exclude_patterns: None,
             },
         )
         .await
@@ -1220,6 +1238,8 @@ mod tests {
                 allow_full_restart_fallback: None,
                     force: None,
                     confirm_failed_restart: None,
+            include_patterns: None,
+            exclude_patterns: None,
                 },
             )
             .await
@@ -1366,6 +1386,8 @@ mod tests {
                 allow_full_restart_fallback: None,
                     force: None,
                     confirm_failed_restart: None,
+            include_patterns: None,
+            exclude_patterns: None,
                 },
             )
             .await
@@ -1519,6 +1541,8 @@ mod tests {
                 allow_full_restart_fallback: None,
                 force: None,
                 confirm_failed_restart: None,
+            include_patterns: None,
+            exclude_patterns: None,
             },
         )
         .await
@@ -1676,6 +1700,8 @@ mod tests {
                 allow_full_restart_fallback: None,
                 force: None,
                 confirm_failed_restart: None,
+            include_patterns: None,
+            exclude_patterns: None,
             },
         )
         .await
@@ -1783,6 +1809,8 @@ mod tests {
                 allow_full_restart_fallback: None,
                 force: None,
                 confirm_failed_restart: None,
+            include_patterns: None,
+            exclude_patterns: None,
             },
         )
         .await
@@ -1927,6 +1955,8 @@ mod tests {
                 allow_full_restart_fallback: None,
                 force: None,
                 confirm_failed_restart: None,
+            include_patterns: None,
+            exclude_patterns: None,
             },
         )
         .await

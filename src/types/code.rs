@@ -146,6 +146,14 @@ pub struct IndexStatus {
     /// Monotonic counter for semantic enrichment aligned to structural generations.
     #[serde(default)]
     pub semantic_generation: u64,
+
+    /// Active include glob patterns for this index generation. Empty = no whitelist.
+    #[serde(default)]
+    pub include_patterns: Vec<String>,
+
+    /// Active exclude glob patterns for this index generation. Empty = no extra excludes.
+    #[serde(default)]
+    pub exclude_patterns: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -430,6 +438,19 @@ mod tests {
             IndexJobReasonCode::IllegalStateTransition
         );
     }
+
+    #[test]
+    fn index_status_old_json_deserializes_without_filter_fields() {
+        let json = r#"{
+            "project_id": "proj-abc",
+            "status": "completed",
+            "structural_generation": 3,
+            "semantic_generation": 3
+        }"#;
+        let status: super::IndexStatus = serde_json::from_str(json).expect("deserialize");
+        assert!(status.include_patterns.is_empty());
+        assert!(status.exclude_patterns.is_empty());
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
@@ -520,6 +541,8 @@ impl IndexStatus {
             projection_state: ProjectionState::Stale,
             structural_generation: 0,
             semantic_generation: 0,
+            include_patterns: Vec::new(),
+            exclude_patterns: Vec::new(),
         };
         status.refresh_lifecycle_states();
         status

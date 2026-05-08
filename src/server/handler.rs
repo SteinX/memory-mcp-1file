@@ -490,6 +490,8 @@ impl MemoryMcpServer {
                     allow_full_restart_fallback: None,
                     force: params.0.force,
                     confirm_failed_restart: params.0.confirm_failed_restart,
+                    include_patterns: params.0.include_patterns,
+                    exclude_patterns: params.0.exclude_patterns,
                 };
                 logic::code::index_project(&self.state, index_params)
                     .await
@@ -1023,6 +1025,8 @@ mod tests {
                                     path: None,
                                     force: None,
                                     confirm_failed_restart: None,
+                    include_patterns: None,
+                    exclude_patterns: None,
                                     locator: None,
                                     relation_scope: None,
                                     sort_mode: None,
@@ -1057,6 +1061,8 @@ mod tests {
                                 path: Some(project_path.to_string_lossy().to_string()),
                                 force: None,
                                 confirm_failed_restart: None,
+                    include_patterns: None,
+                    exclude_patterns: None,
                                 locator: None,
                                 relation_scope: None,
                                 sort_mode: None,
@@ -1107,6 +1113,8 @@ mod tests {
                                     path: None,
                                     force: None,
                                     confirm_failed_restart: None,
+                    include_patterns: None,
+                    exclude_patterns: None,
                                     locator: None,
                                     relation_scope: None,
                                     sort_mode: None,
@@ -1130,6 +1138,8 @@ mod tests {
                                     path: None,
                                     force: None,
                                     confirm_failed_restart: None,
+                    include_patterns: None,
+                    exclude_patterns: None,
                                     locator: None,
                                     relation_scope: None,
                                     sort_mode: None,
@@ -1153,6 +1163,8 @@ mod tests {
                                     path: None,
                                     force: None,
                                     confirm_failed_restart: None,
+                    include_patterns: None,
+                    exclude_patterns: None,
                                     locator: None,
                                     relation_scope: None,
                                     sort_mode: None,
@@ -1190,6 +1202,8 @@ mod tests {
                                     path: None,
                                     force: None,
                                     confirm_failed_restart: None,
+                    include_patterns: None,
+                    exclude_patterns: None,
                                     locator: None,
                                     relation_scope: None,
                                     sort_mode: None,
@@ -1236,6 +1250,8 @@ mod tests {
                     allow_full_restart_fallback: None,
                     force: None,
                     confirm_failed_restart: None,
+                    include_patterns: None,
+                    exclude_patterns: None,
                 },
             )
             .await
@@ -1311,6 +1327,8 @@ mod tests {
                                     path: None,
                                     force: None,
                                     confirm_failed_restart: None,
+                    include_patterns: None,
+                    exclude_patterns: None,
                                     locator: None,
                                     relation_scope: None,
                                     sort_mode: None,
@@ -1368,6 +1386,8 @@ mod tests {
                                     path: None,
                                     force: None,
                                     confirm_failed_restart: None,
+                    include_patterns: None,
+                    exclude_patterns: None,
                                     locator: None,
                                     relation_scope: None,
                                     sort_mode: None,
@@ -1409,6 +1429,8 @@ mod tests {
                 allow_full_restart_fallback: None,
                 force: None,
                 confirm_failed_restart: None,
+                    include_patterns: None,
+                    exclude_patterns: None,
             }))
             .await
             .expect("index_project should return success json");

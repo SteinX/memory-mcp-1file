@@ -96,6 +96,16 @@ Responsible for understanding code.
     *   *Logic*: Respects function and class boundaries. Large functions are broken down into smaller logical blocks, preserving context.
     *   *Why*: Vector search works better with logically complete code pieces than with arbitrary text slices.
 *   **Content Hashing (Blake3)**: Fast hashing for deduplication. If a file hasn't changed, it's not re-indexed.
+*   **Index Filter (`IndexFilterConfig`)**: Controls which files are included or excluded during indexing via glob patterns.
+    *   `include_patterns: Vec<String>` — only files matching at least one pattern are indexed (empty = include all).
+    *   `exclude_patterns: Vec<String>` — files matching any pattern are skipped; excludes override includes.
+    *   **Config defaults**: set via environment variables `CODE_INDEX_INCLUDE_PATTERNS` and `CODE_INDEX_EXCLUDE_PATTERNS` (comma-separated glob lists).
+    *   **Per-call MCP overrides**: `index_project` and `project_info(action="index")` accept `include_patterns` and `exclude_patterns` parameters.
+        *   `Some(vec)` — replaces the config default for that call.
+        *   `None` — uses the config default.
+        *   `Some([])` — disables filtering for that side (include all / exclude nothing).
+    *   **Compile-before-cleanup**: invalid glob patterns are rejected before any destructive indexing work begins.
+    *   **Filter snapshot**: the active filter is persisted in `IndexStatus` to ensure incremental re-index consistency.
 
 ## Data Flow: Store Memory
 

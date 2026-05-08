@@ -589,6 +589,12 @@ pub struct IndexProjectParams {
     /// Required together with force=true when retrying a previously failed full index.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub confirm_failed_restart: Option<bool>,
+    /// Glob patterns for files to include (replaces config default when Some).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub include_patterns: Option<Vec<String>>,
+    /// Glob patterns for files to exclude (replaces config default when Some).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exclude_patterns: Option<Vec<String>>,
 }
 
 #[cfg(test)]
@@ -598,7 +604,7 @@ mod index_project_param_tests {
     #[test]
     fn index_project_params_legacy_deserializes() {
         let params: IndexProjectParams = serde_json::from_str(r#"{"path":"/tmp/p"}"#)
-        .expect("legacy index_project payload should deserialize");
+            .expect("legacy index_project payload should deserialize");
 
         assert_eq!(params.path.as_deref(), Some("/tmp/p"));
         assert_eq!(params.project_id, None);
@@ -608,6 +614,8 @@ mod index_project_param_tests {
         assert_eq!(params.allow_full_restart_fallback, None);
         assert_eq!(params.force, None);
         assert_eq!(params.confirm_failed_restart, None);
+        assert_eq!(params.include_patterns, None);
+        assert_eq!(params.exclude_patterns, None);
     }
 
     #[test]
@@ -627,6 +635,24 @@ mod index_project_param_tests {
         assert_eq!(params.job_id.as_deref(), Some("job-123"));
         assert_eq!(params.resume_token.as_deref(), Some("resume-token-456"));
         assert_eq!(params.allow_full_restart_fallback, Some(false));
+        assert_eq!(params.force, None);
+        assert_eq!(params.confirm_failed_restart, None);
+        assert_eq!(params.include_patterns, None);
+        assert_eq!(params.exclude_patterns, None);
+    }
+
+    #[test]
+    fn index_project_params_with_filter_deserializes() {
+        let params: IndexProjectParams = serde_json::from_value(serde_json::json!({
+            "path": "/tmp/p",
+            "include_patterns": ["src/**/*.rs"],
+            "exclude_patterns": ["**/target/**"]
+        }))
+        .expect("filter index_project payload should deserialize");
+
+        assert_eq!(params.path.as_deref(), Some("/tmp/p"));
+        assert_eq!(params.include_patterns, Some(vec!["src/**/*.rs".to_string()]));
+        assert_eq!(params.exclude_patterns, Some(vec!["**/target/**".to_string()]));
         assert_eq!(params.force, None);
         assert_eq!(params.confirm_failed_restart, None);
     }
@@ -671,6 +697,12 @@ pub struct ProjectInfoParams {
     /// For: cancel_index (required). Durable job ID to cancel.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub job_id: Option<String>,
+    /// For: index. Glob patterns for files to include (replaces config default when Some).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub include_patterns: Option<Vec<String>>,
+    /// For: index. Glob patterns for files to exclude (replaces config default when Some).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exclude_patterns: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -993,8 +1025,12 @@ mod tests {
             );
         }
 
-        assert!(export_object.contains_key("projectId") || export_object.contains_key("project_id"));
-        assert!(import_object.contains_key("projectId") || import_object.contains_key("project_id"));
+        assert!(
+            export_object.contains_key("projectId") || export_object.contains_key("project_id")
+        );
+        assert!(
+            import_object.contains_key("projectId") || import_object.contains_key("project_id")
+        );
         assert!(import_object.contains_key("jsonl"));
     }
 }

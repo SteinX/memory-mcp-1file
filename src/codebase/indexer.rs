@@ -17,7 +17,7 @@ use super::relations::{
     create_symbol_relations, create_symbol_relations_for_generation, detect_containment_references,
     RelationStats,
 };
-use super::scanner::scan_directory;
+use super::scanner::{scan_directory_with_filter, IndexFilterConfig};
 use super::symbol_index::SymbolIndex;
 
 use crate::embedding::{EmbeddingRequest, EmbeddingTarget};
@@ -105,6 +105,28 @@ pub async fn index_project(state: Arc<AppState>, project_path: &Path) -> Result<
     result
 }
 
+pub async fn index_project_with_filter(
+    state: Arc<AppState>,
+    project_path: &Path,
+    filter_config: IndexFilterConfig,
+) -> Result<IndexStatus> {
+    let project_id = derive_project_id(project_path)
+        .map_err(|error| crate::AppError::InvalidPath(error.to_string()))?;
+
+    let admission = IndexAdmissionGuard::try_acquire(state.clone(), project_id.clone())?;
+
+    let result = index_project_after_admission_with_resume_and_filter(
+        state,
+        project_path,
+        IndexResumeOptions::default(),
+        filter_config,
+    )
+    .await;
+    drop(admission);
+
+    result
+}
+
 pub(crate) async fn index_project_after_admission(
     state: Arc<AppState>,
     project_path: &Path,
@@ -117,6 +139,19 @@ pub(crate) async fn index_project_after_admission_with_resume(
     project_path: &Path,
     resume_options: IndexResumeOptions,
 ) -> Result<IndexStatus> {
+    let filter_config = IndexFilterConfig {
+        include_patterns: state.config.code_index.include_patterns.clone(),
+        exclude_patterns: state.config.code_index.exclude_patterns.clone(),
+    };
+    index_project_after_admission_with_resume_and_filter(state, project_path, resume_options, filter_config).await
+}
+
+pub(crate) async fn index_project_after_admission_with_resume_and_filter(
+    state: Arc<AppState>,
+    project_path: &Path,
+    resume_options: IndexResumeOptions,
+    filter_config: IndexFilterConfig,
+) -> Result<IndexStatus> {
     let project_id = derive_project_id(project_path)
         .map_err(|error| crate::AppError::InvalidPath(error.to_string()))?;
 
@@ -124,9 +159,8 @@ pub(crate) async fn index_project_after_admission_with_resume(
     let project_path_clone = project_path.to_path_buf();
     let project_id_clone = project_id.clone();
 
-    // Spawn as a task so we can catch panics natively
     let handle = tokio::spawn(async move {
-        do_index_project(state_clone, &project_path_clone, &project_id_clone, resume_options).await
+        do_index_project(state_clone, &project_path_clone, &project_id_clone, resume_options, filter_config).await
     });
 
     tracing::info!(
@@ -233,6 +267,8 @@ fn prepare_started_index_status(
     project_id: &str,
     project_path: &Path,
     previous: Option<IndexStatus>,
+    include_patterns: Vec<String>,
+    exclude_patterns: Vec<String>,
 ) -> IndexStatus {
     let previous_structural_generation = previous
         .as_ref()
@@ -256,6 +292,8 @@ fn prepare_started_index_status(
     // EmbeddingPending after a newer generation has started.
     status.structural_generation = previous_structural_generation.saturating_add(1);
     status.semantic_generation = previous_semantic_generation.min(status.structural_generation);
+    status.include_patterns = include_patterns;
+    status.exclude_patterns = exclude_patterns;
     status.refresh_lifecycle_states();
     status
 }
@@ -561,7 +599,13 @@ async fn do_index_project(
     project_path: &Path,
     project_id: &str,
     resume_options: IndexResumeOptions,
+    filter_config: IndexFilterConfig,
 ) -> Result<IndexStatus> {
+    // Compile filter BEFORE any destructive cleanup — invalid patterns fail fast without data loss.
+    let compiled_filter = filter_config
+        .compile()
+        .map_err(|e| crate::AppError::Indexing(format!("invalid_filter: {e}").into()))?;
+
     let total_started = Instant::now();
     let file_read_hash_elapsed_ms = 0u128;
     let parse_chunk_elapsed_ms = 0u128;
@@ -586,7 +630,13 @@ async fn do_index_project(
         "One-shot code index task accepted"
     );
     let previous_status = state.storage.get_index_status(project_id).await?;
-    let mut status = prepare_started_index_status(project_id, project_path, previous_status);
+    let mut status = prepare_started_index_status(
+        project_id,
+        project_path,
+        previous_status,
+        filter_config.include_patterns.clone(),
+        filter_config.exclude_patterns.clone(),
+    );
     if resume_options.resume {
         if let Some(job_id) = resume_options.job_id.as_deref() {
             if let Some(job) = state.storage.get_index_job(project_id, job_id).await? {
@@ -648,7 +698,7 @@ async fn do_index_project(
     tracing::info!(project_id = %project_id, phase = "file_enumeration_started", "Project file enumeration started");
     let project_path_for_scan = project_path.to_path_buf();
     let scan_started = Instant::now();
-    let files = tokio::task::spawn_blocking(move || scan_directory(&project_path_for_scan))
+    let files = tokio::task::spawn_blocking(move || scan_directory_with_filter(&project_path_for_scan, &compiled_filter))
         .await
         .map_err(|e| crate::AppError::Internal(format!("scan_directory panicked: {e}").into()))??;
     tracing::info!(project_id = %project_id, phase = "file_enumeration_completed", total_files = files.len(), "Project file enumeration completed");
@@ -3291,6 +3341,8 @@ mod tests {
             status_flush_ms: 1,
             relation_batch_size: 2,
             bm25_mode: crate::config::CodeIndexBm25Mode::FinalRebuild,
+            include_patterns: vec![],
+            exclude_patterns: vec![],
         }
     }
 
@@ -3461,7 +3513,7 @@ mod tests {
         std::fs::write(project_dir.join("c.rs"), "pub fn gamma() -> i32 { 11 }\n").unwrap();
 
         let project_id = derive_project_id(&project_dir).unwrap();
-        let mut status = prepare_started_index_status(&project_id, &project_dir, None);
+        let mut status = prepare_started_index_status(&project_id, &project_dir, None, vec![], vec![]);
         status.total_files = 3;
         let active_structural_generation = status.structural_generation;
         ctx.state.storage.update_index_status(status.clone()).await.unwrap();
@@ -3598,7 +3650,7 @@ mod tests {
         std::fs::write(project_dir.join("z.rs"), "pub fn second() -> i32 { 2 }\n").unwrap();
 
         let project_id = derive_project_id(&project_dir).unwrap();
-        let mut status = prepare_started_index_status(&project_id, &project_dir, None);
+        let mut status = prepare_started_index_status(&project_id, &project_dir, None, vec![], vec![]);
         status.total_files = 3;
         let active_structural_generation = status.structural_generation;
         ctx.state.storage.update_index_status(status.clone()).await.unwrap();
@@ -4039,5 +4091,122 @@ mod tests {
             metrics.status_update_elapsed_ms > 0,
             "expected at least one throttled status update when interval elapsed"
         );
+    }
+
+    #[tokio::test]
+    async fn invalid_filter_fails_before_cleanup() {
+        let ctx = TestContext::new().await;
+        let project_dir = ctx._temp_dir.path().join("filter-invalid-project");
+        fs::create_dir_all(&project_dir).unwrap();
+        fs::write(project_dir.join("main.rs"), "fn main() {}").unwrap();
+
+        let filter_config = IndexFilterConfig {
+            include_patterns: vec!["\\invalid\\pattern".to_string()],
+            exclude_patterns: vec![],
+        };
+
+        let err = index_project_with_filter(ctx.state.clone(), &project_dir, filter_config)
+            .await
+            .unwrap_err();
+
+        let msg = err.to_string();
+        assert!(
+            msg.contains("invalid_filter") || msg.contains("invalid glob"),
+            "expected invalid_filter error, got: {msg}"
+        );
+
+        let stored = ctx
+            .state
+            .storage
+            .get_index_status("filter-invalid-project")
+            .await
+            .unwrap();
+        assert!(
+            stored.is_none() || stored.map(|s| s.status != IndexState::Indexing).unwrap_or(true),
+            "index status should not be left in Indexing state after filter validation failure"
+        );
+    }
+
+    #[tokio::test]
+    async fn filtered_index_only_indexes_matching_files() {
+        let ctx = TestContext::new().await;
+        let project_dir = ctx._temp_dir.path().join("filter-include-project");
+        fs::create_dir_all(project_dir.join("src")).unwrap();
+        fs::create_dir_all(project_dir.join("tests")).unwrap();
+
+        fs::write(project_dir.join("src/lib.rs"), "pub fn lib_fn() {}").unwrap();
+        fs::write(project_dir.join("src/main.rs"), "fn main() {}").unwrap();
+        fs::write(project_dir.join("tests/test_a.rs"), "fn test_a() {}").unwrap();
+
+        let filter_config = IndexFilterConfig {
+            include_patterns: vec!["src/**".to_string()],
+            exclude_patterns: vec![],
+        };
+
+        let status = index_project_with_filter(ctx.state.clone(), &project_dir, filter_config)
+            .await
+            .unwrap();
+
+        assert_eq!(status.total_files, 2, "only src/ files should be indexed");
+        assert!(
+            status.status == IndexState::Completed || status.status == IndexState::EmbeddingPending,
+            "expected Completed or EmbeddingPending, got: {:?}",
+            status.status
+        );
+    }
+
+    #[tokio::test]
+    async fn no_filter_returns_same_count_as_default() {
+        let ctx = TestContext::new().await;
+        let project_dir = ctx._temp_dir.path().join("filter-nofilter-project");
+        fs::create_dir_all(&project_dir).unwrap();
+
+        for i in 0..5 {
+            fs::write(project_dir.join(format!("file_{i}.rs")), format!("fn f{i}() {{}}")).unwrap();
+        }
+
+        let status_default = index_project(ctx.state.clone(), &project_dir)
+            .await
+            .unwrap();
+
+        let ctx2 = TestContext::new().await;
+        let project_dir2 = ctx2._temp_dir.path().join("filter-nofilter-project2");
+        fs::create_dir_all(&project_dir2).unwrap();
+        for i in 0..5 {
+            fs::write(project_dir2.join(format!("file_{i}.rs")), format!("fn f{i}() {{}}")).unwrap();
+        }
+
+        let filter_config = IndexFilterConfig {
+            include_patterns: vec![],
+            exclude_patterns: vec![],
+        };
+        let status_filtered = index_project_with_filter(ctx2.state.clone(), &project_dir2, filter_config)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            status_default.total_files, status_filtered.total_files,
+            "empty filter should index same files as default"
+        );
+    }
+
+    #[tokio::test]
+    async fn filter_snapshot_stored_in_index_status() {
+        let ctx = TestContext::new().await;
+        let project_dir = ctx._temp_dir.path().join("filter-snapshot-project");
+        fs::create_dir_all(&project_dir).unwrap();
+        fs::write(project_dir.join("main.rs"), "fn main() {}").unwrap();
+        fs::write(project_dir.join("lib.rs"), "pub fn lib() {}").unwrap();
+
+        let filter_config = IndexFilterConfig {
+            include_patterns: vec!["*.rs".to_string()],
+            exclude_patterns: vec!["**/generated/**".to_string()],
+        };
+        let status = index_project_with_filter(ctx.state.clone(), &project_dir, filter_config)
+            .await
+            .unwrap();
+
+        assert_eq!(status.include_patterns, vec!["*.rs".to_string()]);
+        assert_eq!(status.exclude_patterns, vec!["**/generated/**".to_string()]);
     }
 }

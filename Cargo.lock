@@ -3242,6 +3242,7 @@ dependencies = [
  "convert_case",
  "dirs",
  "filetime",
+ "globset",
  "hf-hub",
  "hf-hub-simple-progress",
  "ignore",

@@ -1008,6 +1008,16 @@ pub async fn index_project(
     let path_clone = request_path.to_string();
     let project_id_for_cleanup = project_id.clone();
     let durable_job_for_task = durable_job.clone();
+    let filter_config_opt = if params.include_patterns.is_some() || params.exclude_patterns.is_some() {
+        let include = params.include_patterns.unwrap_or_else(|| state.config.code_index.include_patterns.clone());
+        let exclude = params.exclude_patterns.unwrap_or_else(|| state.config.code_index.exclude_patterns.clone());
+        Some(crate::codebase::scanner::IndexFilterConfig {
+            include_patterns: include,
+            exclude_patterns: exclude,
+        })
+    } else {
+        None
+    };
 
     tokio::spawn(async move {
         if let Some(monitor) = state_clone.progress.get(&project_id_for_cleanup).await {
@@ -1021,16 +1031,27 @@ pub async fn index_project(
             );
         }
         let path = std::path::Path::new(&path_clone);
-        match crate::codebase::indexer::index_project_after_admission_with_resume(
-            state_clone.clone(),
-            path,
-            crate::codebase::indexer::IndexResumeOptions {
-                resume: resume_requested,
-                job_id: requested_job_id.clone(),
-                resume_token: requested_resume_token.clone(),
-            },
-        )
+        let resume_options = crate::codebase::indexer::IndexResumeOptions {
+            resume: resume_requested,
+            job_id: requested_job_id.clone(),
+            resume_token: requested_resume_token.clone(),
+        };
+        match if let Some(filter_config) = filter_config_opt {
+            crate::codebase::indexer::index_project_after_admission_with_resume_and_filter(
+                state_clone.clone(),
+                path,
+                resume_options,
+                filter_config,
+            )
             .await
+        } else {
+            crate::codebase::indexer::index_project_after_admission_with_resume(
+                state_clone.clone(),
+                path,
+                resume_options,
+            )
+            .await
+        }
         {
             Ok(status) => {
                 let operation_id = state_clone
@@ -2604,6 +2625,8 @@ mod tests {
                 allow_full_restart_fallback: None,
                 force: None,
                 confirm_failed_restart: None,
+            include_patterns: None,
+            exclude_patterns: None,
             },
         )
         .await
@@ -2691,6 +2714,8 @@ mod tests {
                 allow_full_restart_fallback: None,
                 force: Some(true),
                 confirm_failed_restart: None,
+            include_patterns: None,
+            exclude_patterns: None,
             },
         )
         .await
@@ -2777,6 +2802,8 @@ mod tests {
                 allow_full_restart_fallback: None,
                 force: Some(true),
                 confirm_failed_restart: Some(true),
+                include_patterns: None,
+                exclude_patterns: None,
             },
         )
         .await
@@ -2860,6 +2887,8 @@ mod tests {
                 allow_full_restart_fallback: None,
                 force: None,
                 confirm_failed_restart: None,
+            include_patterns: None,
+            exclude_patterns: None,
             },
         )
         .await
@@ -2880,6 +2909,8 @@ mod tests {
                 allow_full_restart_fallback: None,
                 force: None,
                 confirm_failed_restart: None,
+            include_patterns: None,
+            exclude_patterns: None,
             },
         )
         .await
@@ -2944,6 +2975,8 @@ mod tests {
                 allow_full_restart_fallback: None,
                 force: Some(true),
                 confirm_failed_restart: None,
+            include_patterns: None,
+            exclude_patterns: None,
             },
         )
         .await
@@ -2984,6 +3017,8 @@ mod tests {
                 allow_full_restart_fallback: None,
                 force: None,
                 confirm_failed_restart: None,
+            include_patterns: None,
+            exclude_patterns: None,
             },
         )
         .await
@@ -3028,6 +3063,8 @@ mod tests {
                 allow_full_restart_fallback: None,
                 force: None,
                 confirm_failed_restart: None,
+            include_patterns: None,
+            exclude_patterns: None,
             },
         )
         .await

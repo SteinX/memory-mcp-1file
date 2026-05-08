@@ -125,6 +125,8 @@ DEFINE FIELD semantic_state   ON index_status TYPE string DEFAULT 'pending';
 DEFINE FIELD projection_state ON index_status TYPE string DEFAULT 'stale';
 DEFINE FIELD structural_generation ON index_status TYPE int DEFAULT 0;
 DEFINE FIELD semantic_generation   ON index_status TYPE int DEFAULT 0;
+DEFINE FIELD include_patterns      ON index_status TYPE array<string> DEFAULT [];
+DEFINE FIELD exclude_patterns      ON index_status TYPE array<string> DEFAULT [];
 
 -- File hashes table (for incremental indexing)
 DEFINE TABLE IF NOT EXISTS file_hashes SCHEMAFULL;

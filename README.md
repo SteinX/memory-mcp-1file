@@ -425,12 +425,10 @@ The server exposes **23 tools** to the AI model, organized into logical categori
 ### 💻 Codebase Intelligence
 | Tool | Description |
 |------|-------------|
-| `index_project` | Index codebase directory for code search. Retrying a previously failed full index requires `force=true` and `confirm_failed_restart=true`. |
-| `delete_project` | Delete indexed project. |
-| `recall_code` | Hybrid code retrieval (vector+BM25+graph) with additive `contract`/`summary` metadata. `results[].id` is a local chunk-record reference; stable refind locator is `project_id + file_path + start_line + end_line`. |
-| `search_symbols` | Symbol lookup by name with additive contract/summary metadata. |
-| `symbol_graph` | Symbol relationship traversal with additive contract/summary metadata; `frontier` is an unexpanded boundary hint, not a cursor. |
-| `project_info` | Project indexing information. Actions: list() \| index(path, force?, confirm_failed_restart?) \| status(project_id) \| stats(project_id) \| projection(project_id) \| projection_by_locator() \| bind(project_id) \| unbind() \| binding_status(). bind/unbind/status actions manage session-scoped project binding for HTTP MCP clients. Responses include additive contract/summary metadata, including lifecycle, generation, and projection/materialization fields. |
+| `index_project` | Index codebase directory for code search. Retrying a previously failed full index requires `force=true` and `confirm_failed_restart=true`. Optional `include_patterns` and `exclude_patterns` allow filtering indexed files. |
+| `code_search` | Semantic code search within indexed projects. Actions: query(project_id, query, limit?) \| find_symbol(project_id, symbol_name) \| find_references(project_id, symbol_name). |
+| `project_info` | Project indexing information. Actions: list() \| index(path, force?, confirm_failed_restart?, include_patterns?, exclude_patterns?) \| status(project_id) \| stats(project_id) \| projection(project_id) \| projection_by_locator() \| bind(project_id) \| unbind() \| binding_status(). bind/unbind/status actions manage session-scoped project binding for HTTP MCP clients. Responses include additive contract/summary metadata, including lifecycle, generation, and projection/materialization fields. |
+
 
 ### 📦 Memory Migration (export\_memory / import\_memory)
 
@@ -466,7 +464,7 @@ Raw embeddings and vectors are never included in the export. The `jsonl` field i
 
 #### Import
 
-`import_memory` requires a `project_id` and a `jsonl` field containing the JSONL string from a prior export.
+`import_memory` requires a `jsonl` field containing the JSONL string from a prior export. By default it also requires `project_id`; `project_id` may be omitted only when `preserve_project_id=true` and the JSONL records contain exactly one non-empty source project ID.
 
 **Default import** (live write, remap conflicting IDs):
 
@@ -487,6 +485,18 @@ Raw embeddings and vectors are never included in the export. The `jsonl` field i
 }
 ```
 
+**Preserve source project** (validate and import under the single project ID carried by the JSONL records):
+
+```json
+{
+  "jsonl": "<paste jsonl string here>",
+  "preserve_project_id": true,
+  "dry_run": true
+}
+```
+
+Do not combine `project_id` with `preserve_project_id=true`; choose either retargeting mode (`project_id` provided, `preserve_project_id=false`) or preserve-source-project mode (`project_id` omitted, `preserve_project_id=true`). This does not make `export_memory` cross-project: exports are still scoped to one source `project_id`.
+
 When `dry_run=true`, the tool parses and validates every record and returns the full `id_mappings` report, but writes nothing to the database.
 
 **Parameters and defaults:**
@@ -495,7 +505,8 @@ When `dry_run=true`, the tool parses and validates every record and returns the 
 |-----------|---------|-------|
 | `dry_run` | `false` | Set `true` to validate without writing. |
 | `conflict_strategy` | `remap` | `remap` assigns new IDs to avoid collisions and reports old/new pairs in `id_mappings`. `skip` silently drops conflicting records. `fail` aborts on first conflict. |
-| `preserve_project_id` | `false` | When `false`, the target `project_id` is applied to all imported records. |
+| `project_id` | Required unless `preserve_project_id=true` | Target project for retargeting mode. Omit only in preserve-source-project mode. |
+| `preserve_project_id` | `false` | When `false`, the target `project_id` is applied to all imported records. When `true`, `project_id` must be omitted and all records must carry the same non-empty source project ID. |
 | `allow_invalidated` | `false` | Invalidated records are skipped unless this is `true`. |
 
 #### Response fields
@@ -525,7 +536,7 @@ When `dry_run=true`, the tool parses and validates every record and returns the 
 - `summary.partial.reason_code` is the canonical machine-readable contract reason. Current Phase 5A values are: `missing`, `stale`, `partial`, `degraded`, `invalid_locator`, `generation_mismatch`, and `unsupported`.
 - `summary.partial.reason` is retained as a legacy compatibility string. Existing values like `projection_stale`, `indexing_in_progress`, and `progress:NN.N` remain readable, but new integrations should key off `reason_code`.
 - `project_info(action="list")` discovers projects from the union of index status metadata, code chunks, code symbols, and file manifests, so partially indexed or degraded projects remain operator-visible. Each project entry includes persisted `root_path` when index metadata is available, allowing clients to verify which canonical workspace a `project_id` belongs to even when multiple same-shard projects exist.
-- `project_info(action="index", path="...")` is a compatibility entrypoint for the same behavior as `index_project`. Manual index requests run as one-shot background tasks; the returned `lifecycle` describes registry-managed watchers/workers only, while `background_task` and `project_info(action="status")` describe the one-shot indexing task. Client wrappers may expose the same surface as `project_status`; in that case use `project_status(action="status")` to inspect `background_task.operation_id`, `state`, progress, and restart guidance.
+- `project_info(action="index", path="...", include_patterns?, exclude_patterns?)` is a compatibility entrypoint for the same behavior as `index_project`. Manual index requests run as one-shot background tasks; the returned `lifecycle` describes registry-managed watchers/workers only, while `background_task` and `project_info(action="status")` describe the one-shot indexing task. Client wrappers may expose the same surface as `project_status`; in that case use `project_status(action="status")` to inspect `background_task.operation_id`, `state`, progress, and restart guidance.
 - Immediately after queuing, `project_info(action="status")` can return the in-memory `background_task` even before persistent index metadata has been written, so clients do not see a transient `Project not found` during the queued-to-running handoff.
 - Force rebuild persists `status="indexing"` before clearing stale chunks/symbols/manifest rows. If the process restarts during rebuild, `status/stats` report `background_task.state="unknown_after_restart"` instead of degrading to missing metadata, so operators can decide whether to retry with `force=true` and `confirm_failed_restart=true`.
 - If a same-process one-shot indexing task is lost after restart before file enumeration, `status/stats` surface `status="failed"`, `retryable=true`, `reason_code="lost_one_shot_indexing_task_after_restart"`, and `background_task.phase="before_file_enumeration"`; recovery requires an explicit retry with `force=true` and `confirm_failed_restart=true`.
@@ -869,6 +880,8 @@ The indexing pipeline has been partially concurrent since its initial implementa
 | `CODE_INDEX_STATUS_FLUSH_MS` | `1000` | integer >= 1 | Minimum interval (ms) between indexed-file progress status flushes. Lower values give more granular progress at the cost of more DB writes. |
 | `CODE_INDEX_RELATION_BATCH_SIZE` | `5000` | integer >= 1 | Number of symbol relations written per batch during final relation finalization. |
 | `CODE_INDEX_BM25_MODE` | `final_rebuild` | `final_rebuild`, `incremental` | BM25 finalization strategy. `final_rebuild` (default) rebuilds the lexical index from storage after all chunks are committed and produces a deterministic index state. `incremental` is accepted by the config parser but is not yet consumed by the production indexer; setting it has no effect beyond being stored. |
+| `CODE_INDEX_INCLUDE_PATTERNS` | *(None)* | comma-delimited glob patterns | Optional whitelist of project-relative glob patterns. If specified, only files matching at least one include pattern are indexed. |
+| `CODE_INDEX_EXCLUDE_PATTERNS` | *(None)* | comma-delimited glob patterns | Optional blacklist of project-relative glob patterns. Files matching any exclude pattern are skipped, even if they match an include pattern. |
 
 #### Rollout and rollback
 
@@ -883,6 +896,31 @@ To revert to the legacy path (the default):
 ```bash
 CODE_INDEX_PIPELINE_MODE=legacy memory-mcp
 # or simply omit the variable; legacy is the default
+```
+
+#### 🔍 Indexing Filters
+
+Code indexing can be filtered using glob patterns to include or exclude specific files or directories. This is configurable via environment variables or per-call tool arguments.
+
+- **Patterns are project-relative**: Use `src/**/*.rs` to match files in `src`, not `/absolute/path/src/**/*.rs`.
+- **Path separators**: Always use forward slashes `/` as a separator, even on Windows.
+- **Excludes override includes**: If a file matches both an include and an exclude pattern, it will be excluded.
+- **Built-in skip dirs**: Common directories like `node_modules`, `target`, `.git`, `build`, and `dist` are always skipped and cannot be overridden by include patterns.
+- **Validation**: Invalid glob patterns (e.g., those containing `\` or starting with `/`) are rejected with a clear error before indexing begins, ensuring no partial or incorrect data is persisted.
+
+**Example Env Var Configuration:**
+```bash
+CODE_INDEX_INCLUDE_PATTERNS=src/**,lib/**
+CODE_INDEX_EXCLUDE_PATTERNS=**/*.test.rs,**/generated/**
+```
+
+**Example MCP Tool Call (`index_project`):**
+```json
+{
+  "path": "/my/project",
+  "include_patterns": ["src/**"],
+  "exclude_patterns": ["**/*_test.rs"]
+}
 ```
 
 #### Embedding concurrency caution

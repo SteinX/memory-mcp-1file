@@ -1,5 +1,6 @@
 use std::path::{Path, PathBuf};
 
+use globset::{Glob, GlobSet, GlobSetBuilder};
 use ignore::{overrides::OverrideBuilder, WalkBuilder};
 
 use crate::types::Language;
@@ -54,6 +55,85 @@ const SKIP_DIRS: &[&str] = &[
 ];
 
 pub fn scan_directory(root: &Path) -> crate::Result<Vec<PathBuf>> {
+    let default_filter = CompiledIndexFilter::default();
+    scan_directory_with_filter(root, &default_filter)
+}
+
+/// Raw include/exclude glob patterns for filtering indexed files.
+#[derive(Debug, Clone, Default)]
+pub struct IndexFilterConfig {
+    pub include_patterns: Vec<String>,
+    pub exclude_patterns: Vec<String>,
+}
+
+impl IndexFilterConfig {
+    /// Compile raw patterns into a `CompiledIndexFilter`.
+    ///
+    /// Rejects patterns containing `\` or starting with `/`.
+    pub fn compile(&self) -> Result<CompiledIndexFilter, String> {
+        fn validate_and_build(patterns: &[String]) -> Result<GlobSet, String> {
+            let mut builder = GlobSetBuilder::new();
+            for pattern in patterns {
+                if pattern.contains('\\') {
+                    return Err(format!(
+                        "invalid glob pattern: {pattern} (use '/' path separators)"
+                    ));
+                }
+                if pattern.starts_with('/') {
+                    return Err(format!(
+                        "invalid glob pattern: {pattern} (patterns must be project-relative, do not start with '/')"
+                    ));
+                }
+                let glob = Glob::new(pattern).map_err(|e| {
+                    format!("invalid glob pattern: {pattern} ({e})")
+                })?;
+                builder.add(glob);
+            }
+            builder.build().map_err(|e| format!("invalid glob pattern: ({e})"))
+        }
+
+        let include_set = validate_and_build(&self.include_patterns)?;
+        let exclude_set = validate_and_build(&self.exclude_patterns)?;
+        let has_includes = !self.include_patterns.is_empty();
+
+        Ok(CompiledIndexFilter {
+            include_set,
+            exclude_set,
+            has_includes,
+        })
+    }
+}
+
+/// Compiled GlobSet matchers for fast file filtering.
+#[derive(Debug, Default)]
+pub struct CompiledIndexFilter {
+    include_set: GlobSet,
+    exclude_set: GlobSet,
+    has_includes: bool,
+}
+
+impl CompiledIndexFilter {
+    /// Returns `true` if the project-relative slash path should be indexed.
+    ///
+    /// Decision logic:
+    /// 1. If include_set is non-empty AND candidate does NOT match → false
+    /// 2. If candidate matches exclude_set → false
+    /// 3. Otherwise → true
+    pub fn accepts_project_relative(&self, candidate: &str) -> bool {
+        if self.has_includes && !self.include_set.is_match(candidate) {
+            return false;
+        }
+        if self.exclude_set.is_match(candidate) {
+            return false;
+        }
+        true
+    }
+}
+
+pub fn scan_directory_with_filter(
+    root: &Path,
+    filter: &CompiledIndexFilter,
+) -> crate::Result<Vec<PathBuf>> {
     let mut overrides = OverrideBuilder::new(root);
     // Generated dart files (match at any depth)
     let _ = overrides.add("!**/*.g.dart");
@@ -104,7 +184,13 @@ pub fn scan_directory(root: &Path) -> crate::Result<Vec<PathBuf>> {
     for entry in walker.filter_map(|e| e.ok()) {
         let path = entry.path();
         if path.is_file() && !is_ignored_file(path) && is_code_file(path) {
-            files.push(path.to_path_buf());
+            let project_relative = path
+                .strip_prefix(root)
+                .map(|p| p.to_string_lossy().replace('\\', "/"))
+                .unwrap_or_default();
+            if filter.accepts_project_relative(&project_relative) {
+                files.push(path.to_path_buf());
+            }
         }
     }
 
@@ -408,6 +494,156 @@ void token_init(struct Token *token);
                 .all(|path| !path.starts_with(".generated/")),
             "scanner unexpectedly included .generated directory file: {:?}",
             scanned_set
+        );
+    }
+
+    #[test]
+    fn default_filter_preserves_existing_scan_behavior() {
+        let temp_dir = tempfile::tempdir().expect("create temp dir");
+        let root = temp_dir.path();
+
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::write(root.join("src/main.rs"), "fn main() {}").unwrap();
+        fs::write(root.join("src/readme.txt"), "not code").unwrap();
+        fs::create_dir_all(root.join("node_modules")).unwrap();
+        fs::write(root.join("node_modules/index.js"), "module.exports = {}").unwrap();
+
+        let result_plain = scan_directory(root).expect("scan_directory");
+        let filter = CompiledIndexFilter::default();
+        let result_filtered = scan_directory_with_filter(root, &filter).expect("scan_directory_with_filter");
+
+        assert_eq!(result_plain.len(), result_filtered.len());
+    }
+
+    #[test]
+    fn include_patterns_whitelist_relative_paths() {
+        let temp_dir = tempfile::tempdir().expect("create temp dir");
+        let root = temp_dir.path();
+
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::create_dir_all(root.join("other")).unwrap();
+        fs::write(root.join("src/main.rs"), "fn main() {}").unwrap();
+        fs::write(root.join("other/main.rs"), "fn other() {}").unwrap();
+
+        let filter = IndexFilterConfig {
+            include_patterns: vec!["src/**".to_string()],
+            exclude_patterns: vec![],
+        }
+        .compile()
+        .expect("compile filter");
+
+        let results = scan_directory_with_filter(root, &filter).expect("scan");
+        let rel_paths: Vec<String> = results
+            .iter()
+            .map(|p| p.strip_prefix(root).unwrap().to_string_lossy().replace('\\', "/"))
+            .collect();
+
+        assert_eq!(rel_paths.len(), 1);
+        assert!(rel_paths.contains(&"src/main.rs".to_string()));
+    }
+
+    #[test]
+    fn exclude_patterns_override_includes() {
+        let temp_dir = tempfile::tempdir().expect("create temp dir");
+        let root = temp_dir.path();
+
+        fs::create_dir_all(root.join("src/gen")).unwrap();
+        fs::write(root.join("src/main.rs"), "fn main() {}").unwrap();
+        fs::write(root.join("src/gen/out.rs"), "fn gen() {}").unwrap();
+
+        let filter = IndexFilterConfig {
+            include_patterns: vec!["src/**".to_string()],
+            exclude_patterns: vec!["src/gen/**".to_string()],
+        }
+        .compile()
+        .expect("compile filter");
+
+        let results = scan_directory_with_filter(root, &filter).expect("scan");
+        let rel_paths: Vec<String> = results
+            .iter()
+            .map(|p| p.strip_prefix(root).unwrap().to_string_lossy().replace('\\', "/"))
+            .collect();
+
+        assert_eq!(rel_paths.len(), 1);
+        assert!(rel_paths.contains(&"src/main.rs".to_string()));
+    }
+
+    #[test]
+    fn invalid_glob_pattern_returns_error_with_pattern() {
+        let result = IndexFilterConfig {
+            include_patterns: vec!["[abc".to_string()],
+            exclude_patterns: vec![],
+        }
+        .compile();
+
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.contains("invalid glob pattern"), "error was: {err}");
+        assert!(err.contains("[abc"), "error was: {err}");
+    }
+
+    #[test]
+    fn built_in_skip_dirs_cannot_be_included() {
+        let temp_dir = tempfile::tempdir().expect("create temp dir");
+        let root = temp_dir.path();
+
+        fs::create_dir_all(root.join("node_modules")).unwrap();
+        fs::write(root.join("node_modules/index.js"), "module.exports = {}").unwrap();
+
+        let filter = IndexFilterConfig {
+            include_patterns: vec!["node_modules/**".to_string()],
+            exclude_patterns: vec![],
+        }
+        .compile()
+        .expect("compile filter");
+
+        let results = scan_directory_with_filter(root, &filter).expect("scan");
+        assert!(
+            results.is_empty(),
+            "expected no files from node_modules, got: {:?}",
+            results
+        );
+    }
+
+    #[test]
+    fn paths_are_matched_relative_to_project_root() {
+        let temp_dir = tempfile::tempdir().expect("create temp dir");
+        let root = temp_dir.path();
+
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::write(root.join("src/lib.rs"), "pub fn lib() {}").unwrap();
+
+        let absolute_pattern = format!("{}/src/lib.rs", root.display());
+        let abs_result = IndexFilterConfig {
+            include_patterns: vec![absolute_pattern.clone()],
+            exclude_patterns: vec![],
+        }
+        .compile();
+        if abs_result.is_ok() {
+            let results = scan_directory_with_filter(root, &abs_result.unwrap()).expect("scan");
+            assert!(
+                results.is_empty(),
+                "absolute pattern should not match any project-relative path"
+            );
+        }
+
+        let filter = IndexFilterConfig {
+            include_patterns: vec!["src/lib.rs".to_string()],
+            exclude_patterns: vec![],
+        }
+        .compile()
+        .expect("compile filter");
+
+        let results = scan_directory_with_filter(root, &filter).expect("scan");
+        let rel_paths: Vec<String> = results
+            .iter()
+            .map(|p| p.strip_prefix(root).unwrap().to_string_lossy().replace('\\', "/"))
+            .collect();
+
+        assert!(
+            rel_paths.contains(&"src/lib.rs".to_string()),
+            "expected src/lib.rs, got: {:?}",
+            rel_paths
         );
     }
 }

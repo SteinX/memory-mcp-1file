@@ -73,6 +73,8 @@ pub struct CodeIndexConfig {
     pub status_flush_ms: u64,
     pub relation_batch_size: usize,
     pub bm25_mode: CodeIndexBm25Mode,
+    pub include_patterns: Vec<String>,
+    pub exclude_patterns: Vec<String>,
 }
 
 impl CodeIndexConfig {
@@ -117,6 +119,12 @@ impl CodeIndexConfig {
             relation_batch_size: Self::parse_env_min(&lookup, "CODE_INDEX_RELATION_BATCH_SIZE", 1, defaults.relation_batch_size),
             bm25_mode: Self::parse_env::<CodeIndexBm25Mode, _>(&lookup, "CODE_INDEX_BM25_MODE")
                 .unwrap_or(defaults.bm25_mode),
+            include_patterns: lookup("CODE_INDEX_INCLUDE_PATTERNS")
+                .map(|v| v.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect())
+                .unwrap_or_default(),
+            exclude_patterns: lookup("CODE_INDEX_EXCLUDE_PATTERNS")
+                .map(|v| v.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect())
+                .unwrap_or_default(),
         }
     }
 }
@@ -134,6 +142,8 @@ impl Default for CodeIndexConfig {
             status_flush_ms: 1000,
             relation_batch_size: 5000,
             bm25_mode: CodeIndexBm25Mode::default(),
+            include_patterns: vec![],
+            exclude_patterns: vec![],
         }
     }
 }
@@ -352,6 +362,8 @@ mod tests {
         assert_eq!(config.status_flush_ms, 1000);
         assert_eq!(config.relation_batch_size, 5000);
         assert_eq!(config.bm25_mode, CodeIndexBm25Mode::FinalRebuild);
+        assert!(config.include_patterns.is_empty());
+        assert!(config.exclude_patterns.is_empty());
     }
 
     #[test]
@@ -366,6 +378,8 @@ mod tests {
             "CODE_INDEX_STATUS_FLUSH_MS" => Some("250".to_string()),
             "CODE_INDEX_RELATION_BATCH_SIZE" => Some("9000".to_string()),
             "CODE_INDEX_BM25_MODE" => Some("incremental".to_string()),
+            "CODE_INDEX_INCLUDE_PATTERNS" => Some("src/**/*.rs, tests/**/*.rs".to_string()),
+            "CODE_INDEX_EXCLUDE_PATTERNS" => Some("target/**, .git/**".to_string()),
             _ => None,
         });
 
@@ -378,6 +392,8 @@ mod tests {
         assert_eq!(config.status_flush_ms, 250);
         assert_eq!(config.relation_batch_size, 9000);
         assert_eq!(config.bm25_mode, CodeIndexBm25Mode::Incremental);
+        assert_eq!(config.include_patterns, vec!["src/**/*.rs".to_string(), "tests/**/*.rs".to_string()]);
+        assert_eq!(config.exclude_patterns, vec!["target/**".to_string(), ".git/**".to_string()]);
     }
 
     #[test]
@@ -388,5 +404,32 @@ mod tests {
         });
 
         assert_eq!(config.pipeline_mode, CodeIndexPipelineMode::Legacy);
+    }
+
+    #[test]
+    fn code_index_pattern_env_parsing_trims_and_drops_empty_entries() {
+        let config = CodeIndexConfig::from_env_with(|key| match key {
+            "CODE_INDEX_INCLUDE_PATTERNS" => Some("  src/**/*.rs , , tests/**/*.rs ,   ".to_string()),
+            "CODE_INDEX_EXCLUDE_PATTERNS" => Some("  target/**, ,  .git/**  ".to_string()),
+            _ => None,
+        });
+
+        assert_eq!(config.include_patterns, vec!["src/**/*.rs".to_string(), "tests/**/*.rs".to_string()]);
+        assert_eq!(config.exclude_patterns, vec!["target/**".to_string(), ".git/**".to_string()]);
+    }
+
+    #[test]
+    fn code_index_pattern_env_handles_empty_and_missing_values() {
+        let empty = CodeIndexConfig::from_env_with(|key| match key {
+            "CODE_INDEX_INCLUDE_PATTERNS" => Some(String::new()),
+            "CODE_INDEX_EXCLUDE_PATTERNS" => Some("   ".to_string()),
+            _ => None,
+        });
+        let missing = CodeIndexConfig::from_env_with(|_| None);
+
+        assert!(empty.include_patterns.is_empty());
+        assert!(empty.exclude_patterns.is_empty());
+        assert!(missing.include_patterns.is_empty());
+        assert!(missing.exclude_patterns.is_empty());
     }
 }
