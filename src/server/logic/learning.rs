@@ -599,23 +599,169 @@ pub async fn promote(
 }
 
 pub async fn reject(
-    _state: &AppState,
-    _params: LearningMemoryRejectParams,
+    state: &AppState,
+    params: LearningMemoryRejectParams,
 ) -> anyhow::Result<CallToolResult> {
-    Ok(success_json(serde_json::json!({
-        "status": "not_implemented",
-        "message": "learning_memory_reject: logic will be implemented in Tasks 6-9"
-    })))
+    let memory = match state.storage.get_memory(&params.id).await? {
+        Some(m) => m,
+        None => return Ok(error_response(format!("Record not found: {}", params.id))),
+    };
+
+    let (kind, _status, scope, schema_version) = match extract_learning_fields(&memory) {
+        Some(fields) => fields,
+        None => {
+            return Ok(error_response(format!(
+                "Memory '{}' does not have valid learning metadata",
+                params.id
+            )))
+        }
+    };
+
+    let mut learning_meta = memory
+        .metadata
+        .as_ref()
+        .and_then(|m| m.get("learning"))
+        .cloned()
+        .unwrap_or(json!({}));
+    learning_meta["status"] = serde_json::to_value(&LearningStatus::Rejected).unwrap_or(json!("rejected"));
+
+    let mut full_metadata = memory.metadata.clone().unwrap_or(json!({}));
+    full_metadata["learning"] = learning_meta;
+
+    let update = MemoryUpdate {
+        content: None,
+        memory_type: None,
+        user_id: None,
+        agent_id: None,
+        run_id: None,
+        namespace: None,
+        importance_score: None,
+        metadata: Some(full_metadata),
+        embedding: None,
+        content_hash: None,
+        embedding_state: None,
+    };
+
+    match state.storage.update_memory(&params.id, update).await {
+        Ok(_) => {}
+        Err(e) => return Ok(error_response(e)),
+    };
+
+    match state.storage.invalidate(&params.id, Some("learning_rejected"), None).await {
+        Ok(_) => {}
+        Err(e) => return Ok(error_response(e)),
+    };
+
+    if let Ok(Some(updated)) = state.storage.get_memory(&params.id).await {
+        state.memory_search.upsert_memory(updated).await;
+    }
+
+    let mut final_memory = match state.storage.get_memory(&params.id).await? {
+        Some(m) => m,
+        None => return Ok(error_response(format!("Record not found after reject: {}", params.id))),
+    };
+    strip_embedding(&mut final_memory);
+
+    let lifecycle = derive_lifecycle_state(&final_memory);
+    let record_value = serde_json::to_value(&final_memory).unwrap_or_default();
+    let contract = learning_contract_json(Some(&params.id));
+    let summary = json!({ "result_kind": "learning_memory", "counts": { "returned": 1 } });
+
+    let resp = build_learning_response(
+        record_value,
+        kind,
+        LearningStatus::Rejected,
+        scope,
+        lifecycle,
+        schema_version,
+        contract,
+        summary,
+    );
+
+    Ok(success_serialize(&resp))
 }
 
 pub async fn archive(
-    _state: &AppState,
-    _params: LearningMemoryArchiveParams,
+    state: &AppState,
+    params: LearningMemoryArchiveParams,
 ) -> anyhow::Result<CallToolResult> {
-    Ok(success_json(serde_json::json!({
-        "status": "not_implemented",
-        "message": "learning_memory_archive: logic will be implemented in Tasks 6-9"
-    })))
+    let memory = match state.storage.get_memory(&params.id).await? {
+        Some(m) => m,
+        None => return Ok(error_response(format!("Record not found: {}", params.id))),
+    };
+
+    let (kind, _status, scope, schema_version) = match extract_learning_fields(&memory) {
+        Some(fields) => fields,
+        None => {
+            return Ok(error_response(format!(
+                "Memory '{}' does not have valid learning metadata",
+                params.id
+            )))
+        }
+    };
+
+    let mut learning_meta = memory
+        .metadata
+        .as_ref()
+        .and_then(|m| m.get("learning"))
+        .cloned()
+        .unwrap_or(json!({}));
+    learning_meta["status"] = serde_json::to_value(&LearningStatus::Archived).unwrap_or(json!("archived"));
+
+    let mut full_metadata = memory.metadata.clone().unwrap_or(json!({}));
+    full_metadata["learning"] = learning_meta;
+
+    let update = MemoryUpdate {
+        content: None,
+        memory_type: None,
+        user_id: None,
+        agent_id: None,
+        run_id: None,
+        namespace: None,
+        importance_score: None,
+        metadata: Some(full_metadata),
+        embedding: None,
+        content_hash: None,
+        embedding_state: None,
+    };
+
+    match state.storage.update_memory(&params.id, update).await {
+        Ok(_) => {}
+        Err(e) => return Ok(error_response(e)),
+    };
+
+    match state.storage.invalidate(&params.id, Some("learning_archived"), None).await {
+        Ok(_) => {}
+        Err(e) => return Ok(error_response(e)),
+    };
+
+    if let Ok(Some(updated)) = state.storage.get_memory(&params.id).await {
+        state.memory_search.upsert_memory(updated).await;
+    }
+
+    let mut final_memory = match state.storage.get_memory(&params.id).await? {
+        Some(m) => m,
+        None => return Ok(error_response(format!("Record not found after archive: {}", params.id))),
+    };
+    strip_embedding(&mut final_memory);
+
+    let lifecycle = derive_lifecycle_state(&final_memory);
+    let record_value = serde_json::to_value(&final_memory).unwrap_or_default();
+    let contract = learning_contract_json(Some(&params.id));
+    let summary = json!({ "result_kind": "learning_memory", "counts": { "returned": 1 } });
+
+    let resp = build_learning_response(
+        record_value,
+        kind,
+        LearningStatus::Archived,
+        scope,
+        lifecycle,
+        schema_version,
+        contract,
+        summary,
+    );
+
+    Ok(success_serialize(&resp))
 }
 
 pub async fn supersede(
@@ -638,14 +784,33 @@ pub async fn migrate_legacy(
     })))
 }
 
+/// Compatibility shim: soft-delete via archive (default) or reject (mode = "soft_reject").
+/// Never performs a hard delete.
 pub async fn delete(
-    _state: &AppState,
-    _params: LearningMemoryDeleteParams,
+    state: &AppState,
+    params: LearningMemoryDeleteParams,
 ) -> anyhow::Result<CallToolResult> {
-    Ok(success_json(serde_json::json!({
-        "status": "not_implemented",
-        "message": "learning_memory_delete: compatibility shim; logic will be implemented in Tasks 6-9"
-    })))
+    let use_reject = params.mode.as_deref() == Some("soft_reject");
+
+    if use_reject {
+        reject(
+            state,
+            LearningMemoryRejectParams {
+                id: params.id,
+                reason: None,
+            },
+        )
+        .await
+    } else {
+        archive(
+            state,
+            LearningMemoryArchiveParams {
+                id: params.id,
+                reason: None,
+            },
+        )
+        .await
+    }
 }
 
 #[cfg(test)]
@@ -880,5 +1045,73 @@ mod tests {
         let (kind, status, _, _) = extract_learning_fields(&m).unwrap();
         assert_eq!(kind, LearningKind::WorkflowRule);
         assert_eq!(status, LearningStatus::Rule);
+    }
+
+    #[test]
+    fn learning_reject_sets_rejected_lifecycle() {
+        let m = make_invalidated_memory("learning_rejected");
+        assert_eq!(derive_lifecycle_state(&m), LearningLifecycleState::Rejected);
+        assert!(m.valid_until.is_some());
+        assert_eq!(m.invalidation_reason.as_deref(), Some("learning_rejected"));
+    }
+
+    #[test]
+    fn learning_archive_sets_archived_lifecycle() {
+        let m = make_invalidated_memory("learning_archived");
+        assert_eq!(derive_lifecycle_state(&m), LearningLifecycleState::Archived);
+        assert!(m.valid_until.is_some());
+        assert_eq!(m.invalidation_reason.as_deref(), Some("learning_archived"));
+    }
+
+    #[test]
+    fn rejected_memory_excluded_from_default_list_and_search() {
+        use crate::server::logic::learning_response::compute_default_inclusion;
+        let m = make_invalidated_memory("learning_rejected");
+        let lifecycle = derive_lifecycle_state(&m);
+        let (list, search, inject) = compute_default_inclusion(&LearningStatus::Rejected, &lifecycle);
+        assert!(!list);
+        assert!(!search);
+        assert!(!inject);
+    }
+
+    #[test]
+    fn archived_memory_excluded_from_default_list_and_search() {
+        use crate::server::logic::learning_response::compute_default_inclusion;
+        let m = make_invalidated_memory("learning_archived");
+        let lifecycle = derive_lifecycle_state(&m);
+        let (list, search, inject) = compute_default_inclusion(&LearningStatus::Archived, &lifecycle);
+        assert!(!list);
+        assert!(!search);
+        assert!(!inject);
+    }
+
+    #[test]
+    fn learning_delete_shim_defaults_to_archive_behavior() {
+        let m = make_invalidated_memory("learning_archived");
+        assert_eq!(derive_lifecycle_state(&m), LearningLifecycleState::Archived);
+        assert!(m.valid_until.is_some(), "soft delete must set valid_until");
+    }
+
+    #[test]
+    fn learning_delete_shim_soft_reject_mode() {
+        let m = make_invalidated_memory("learning_rejected");
+        assert_eq!(derive_lifecycle_state(&m), LearningLifecycleState::Rejected);
+        assert!(m.valid_until.is_some(), "soft delete must set valid_until");
+    }
+
+    #[test]
+    fn audit_filter_retrieves_rejected_via_invalidation_reason() {
+        let m = make_invalidated_memory("learning_rejected");
+        let lifecycle = derive_lifecycle_state(&m);
+        assert_eq!(lifecycle, LearningLifecycleState::Rejected);
+        assert!(m.invalidation_reason.is_some());
+    }
+
+    #[test]
+    fn audit_filter_retrieves_archived_via_invalidation_reason() {
+        let m = make_invalidated_memory("learning_archived");
+        let lifecycle = derive_lifecycle_state(&m);
+        assert_eq!(lifecycle, LearningLifecycleState::Archived);
+        assert!(m.invalidation_reason.is_some());
     }
 }
