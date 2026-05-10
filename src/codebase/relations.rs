@@ -20,8 +20,11 @@ pub struct RelationStats {
 
 /// Create symbol relations from references using the symbol index for resolution.
 ///
-/// Collects all resolvable relations into a Vec and writes them in a single
-/// batch query instead of N individual RELATE round-trips.
+/// Uses a two-pass approach to avoid N individual DB round-trips:
+///   Pass 1: resolve all references in-memory via SymbolIndex (O(1) per lookup).
+///           Collect names that failed in-memory resolution for a single batch DB query.
+///   Pass 2: resolve remaining names from the batch DB result.
+///   Final:  write all resolved relations in a single batch RELATE query.
 pub async fn create_symbol_relations(
     storage: &impl StorageBackend,
     project_id: &str,
@@ -29,46 +32,97 @@ pub async fn create_symbol_relations(
     symbol_index: &SymbolIndex,
 ) -> RelationStats {
     let mut stats = RelationStats::default();
-    let mut batch: Vec<SymbolRelation> = Vec::with_capacity(references.len());
 
-    let mut db_fallback_count: u32 = 0;
-    tracing::info!(
-        total_references = references.len(),
-        "DIAG: create_symbol_relations starting"
-    );
+    if references.is_empty() {
+        return stats;
+    }
+
+    // ── Pass 1: in-memory resolution ────────────────────────────────────────
+    // For each reference, try the SymbolIndex first (hash-map lookup, no I/O).
+    // Collect names that need a DB fallback — deduplicated to minimise the
+    // number of rows the batch query must scan.
+
+    struct Pending<'a> {
+        reference: &'a CodeReference,
+        from_thing: surrealdb::types::RecordId,
+        // None means we need a DB fallback for to_symbol
+        to_thing: Option<surrealdb::types::RecordId>,
+        in_memory: bool, // true → use reference's own class/provenance
+    }
+
+    let mut pending: Vec<Pending> = Vec::with_capacity(references.len());
+    let mut fallback_names: Vec<String> = Vec::new();
+    let mut fallback_name_set: std::collections::HashSet<String> = std::collections::HashSet::new();
 
     for reference in references {
-        // 1. Build from_symbol Thing using the stored definition line
         let from_thing = safe_thing::symbol_thing(
             project_id,
             &reference.file_path,
             &reference.from_symbol,
             reference.from_symbol_line,
         );
-
-        // 2. Resolve to_symbol with priority (same file > same dir > any)
         let ctx = ResolutionContext::new(reference.file_path.clone());
 
-        let to_thing = if let Some(resolved) = symbol_index.resolve(&reference.to_symbol, &ctx) {
-            resolved.to_thing(project_id)
+        if let Some(resolved) = symbol_index.resolve(&reference.to_symbol, &ctx) {
+            pending.push(Pending {
+                reference,
+                from_thing,
+                to_thing: Some(resolved.to_thing(project_id)),
+                in_memory: true,
+            });
         } else {
-            // Fallback: DB lookup with file context preference
-            db_fallback_count += 1;
-            match storage
-                .find_symbol_by_name_with_context(
-                    project_id,
-                    &reference.to_symbol,
-                    Some(&reference.file_path),
-                )
-                .await
-            {
-                Ok(Some(sym)) => SymbolRef::from_symbol(&sym).to_thing(project_id),
-                _ => {
+            // Need DB fallback — deduplicate names to avoid redundant queries
+            if fallback_name_set.insert(reference.to_symbol.clone()) {
+                fallback_names.push(reference.to_symbol.clone());
+            }
+            pending.push(Pending {
+                reference,
+                from_thing,
+                to_thing: None,
+                in_memory: false,
+            });
+        }
+    }
+
+    // ── Pass 2: single batched DB query for all unresolved names ────────────
+    // One round-trip replaces up to N individual find_symbol_by_name_with_context calls.
+    let db_fallback_count = fallback_names.len();
+    let mut db_symbol_map: HashMap<String, SymbolRef> = HashMap::new();
+
+    if !fallback_names.is_empty() {
+        tracing::debug!(
+            count = fallback_names.len(),
+            "Batch DB fallback for unresolved symbol names"
+        );
+        match storage.find_symbols_by_names(project_id, &fallback_names).await {
+            Ok(symbols) => {
+                for sym in symbols {
+                    // Keep the first match per name (same priority as the old single-lookup path)
+                    db_symbol_map.entry(sym.name.clone()).or_insert_with(|| SymbolRef::from_symbol(&sym));
+                }
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "Batch symbol name lookup failed; relations for unresolved names will be skipped");
+            }
+        }
+    }
+
+    // ── Build relation batch ─────────────────────────────────────────────────
+    let mut batch: Vec<SymbolRelation> = Vec::with_capacity(pending.len());
+
+    for p in pending {
+        let to_thing = if let Some(t) = p.to_thing {
+            t
+        } else {
+            // Resolve from batch DB result
+            match db_symbol_map.get(&p.reference.to_symbol) {
+                Some(sym_ref) => sym_ref.to_thing(project_id),
+                None => {
                     stats.unresolved += 1;
                     tracing::debug!(
-                        from = %reference.from_symbol,
-                        to = %reference.to_symbol,
-                        file = %reference.file_path,
+                        from = %p.reference.from_symbol,
+                        to = %p.reference.to_symbol,
+                        file = %p.reference.file_path,
                         "Skipping external symbol (not in project)"
                     );
                     continue;
@@ -76,42 +130,34 @@ pub async fn create_symbol_relations(
             }
         };
 
-        let (relation_class, provenance, confidence_class) =
-            if symbol_index.resolve(&reference.to_symbol, &ctx).is_some() {
-                (
-                    reference.relation_class,
-                    reference.provenance,
-                    reference.confidence_class,
-                )
-            } else {
-                (
-                    RelationClass::Inferred,
-                    RelationProvenance::HeuristicResolver,
-                    ConfidenceClass::Ambiguous,
-                )
-            };
+        let (relation_class, provenance, confidence_class) = if p.in_memory {
+            (p.reference.relation_class, p.reference.provenance, p.reference.confidence_class)
+        } else {
+            (RelationClass::Inferred, RelationProvenance::HeuristicResolver, ConfidenceClass::Ambiguous)
+        };
 
-        // 3. Collect the relation for batch write
         batch.push(SymbolRelation::new(
-            from_thing,
+            p.from_thing,
             to_thing,
-            reference.relation_type,
+            p.reference.relation_type,
             relation_class,
             provenance,
             confidence_class,
-            reference.freshness_generation,
-            reference.staleness_state,
-            reference.file_path.clone(),
-            reference.line,
+            p.reference.freshness_generation,
+            p.reference.staleness_state,
+            p.reference.file_path.clone(),
+            p.reference.line,
             project_id.to_string(),
         ));
     }
 
     tracing::info!(
         total_references = references.len(),
-        db_fallback_count,
+        db_fallback_names = db_fallback_count,
+        db_symbols_found = db_symbol_map.len(),
         batch_size = batch.len(),
-        "DIAG: create_symbol_relations resolved"
+        unresolved = stats.unresolved,
+        "Symbol relation resolution complete"
     );
 
     // 4. Flush all relations in a single batch query
