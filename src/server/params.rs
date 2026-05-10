@@ -866,6 +866,200 @@ pub struct HowToUseParams {
     pub _placeholder: bool,
 }
 
+// ============================================================================
+// Learning memory tool parameter structs
+// ============================================================================
+
+/// Parameters for `learning_memory_create`.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[schemars(title = "")]
+pub struct LearningMemoryCreateParams {
+    /// The learning content to store.
+    pub content: String,
+    /// Kind of learning: user_preference | project_lesson | project_pattern | project_pitfall | workflow_rule
+    pub kind: String,
+    /// Lifecycle status (default: candidate): candidate | confirmed | rule
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status: Option<String>,
+    /// Confidence score in [0.0, 1.0].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub confidence: Option<f32>,
+    /// Scope level: global | project | workspace | mode | agent | session
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scope: Option<String>,
+    /// Optional project_id for project-scoped learning.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_id: Option<String>,
+    /// Source of the learning: manual | plugin | migration | promotion | supersede | consolidation
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
+    /// Supporting evidence or examples.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub evidence: Option<Vec<String>>,
+    /// Contexts where this learning applies (e.g. file globs, tool names).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub applies_to: Option<Vec<String>>,
+    /// Phrases or patterns that should trigger recall of this learning.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trigger_hints: Option<Vec<String>>,
+    /// Constraints or caveats on applicability.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub constraints: Option<Vec<String>>,
+}
+
+/// Parameters for `learning_memory_get`.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[schemars(title = "")]
+pub struct LearningMemoryGetParams {
+    /// Memory record ID.
+    pub id: String,
+}
+
+/// Parameters for `learning_memory_list`.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[schemars(title = "")]
+pub struct LearningMemoryListParams {
+    /// Filter object (include_status, exclude_status, include_invalidated, audit, fallback).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(schema_with = "any_value_schema")]
+    pub filter: Option<serde_json::Value>,
+    /// Scope level: global | project | workspace | mode | agent | session
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scope: Option<String>,
+    /// Optional project_id for project-scoped listing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_id: Option<String>,
+    /// Maximum number of results (default: 20, max: 100).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limit: Option<usize>,
+    /// Pagination offset.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub offset: Option<usize>,
+}
+
+/// Parameters for `learning_memory_search`.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[schemars(title = "")]
+pub struct LearningMemorySearchParams {
+    /// Semantic search query.
+    pub query: String,
+    /// Filter object (include_status, exclude_status, include_invalidated, audit, fallback).
+    /// Defaults to confirmed+rule only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(schema_with = "any_value_schema")]
+    pub filter: Option<serde_json::Value>,
+    /// Scope level: global | project | workspace | mode | agent | session
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scope: Option<String>,
+    /// Optional project_id for project-scoped search.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_id: Option<String>,
+    /// Maximum number of results (default: 20, max: 100).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limit: Option<usize>,
+}
+
+/// Parameters for `learning_memory_update`.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[schemars(title = "")]
+pub struct LearningMemoryUpdateParams {
+    /// Memory record ID.
+    pub id: String,
+    /// Updated content (optional).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub content: Option<String>,
+    /// Updated confidence score in [0.0, 1.0] (optional).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub confidence: Option<f32>,
+    /// Updated evidence list (optional).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub evidence: Option<Vec<String>>,
+}
+
+/// Parameters for `learning_memory_promote`.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[schemars(title = "")]
+pub struct LearningMemoryPromoteParams {
+    /// Memory record ID.
+    pub id: String,
+    /// Target status: confirmed | rule
+    pub target_status: String,
+    /// Optional target kind override: user_preference | project_lesson | project_pattern | project_pitfall | workflow_rule
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target_kind: Option<String>,
+}
+
+/// Parameters for `learning_memory_reject`.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[schemars(title = "")]
+pub struct LearningMemoryRejectParams {
+    /// Memory record ID.
+    pub id: String,
+    /// Optional human-readable reason for rejection.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
+/// Parameters for `learning_memory_archive`.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[schemars(title = "")]
+pub struct LearningMemoryArchiveParams {
+    /// Memory record ID.
+    pub id: String,
+    /// Optional human-readable reason for archiving.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
+/// Parameters for `learning_memory_supersede`.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[schemars(title = "")]
+pub struct LearningMemorySupersededParams {
+    /// ID of the record being superseded.
+    pub id: String,
+    /// ID of the replacement record.
+    pub replacement_id: String,
+    /// Optional human-readable reason.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
+/// Parameters for `learning_memory_migrate_legacy`.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[schemars(title = "")]
+pub struct LearningMemoryMigrateLegacyParams {
+    /// Memory content prefix allowlist (e.g. ["LEARNING:", "RULE:", "PATTERN:"]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prefix_allowlist: Option<Vec<String>>,
+    /// Scope level to assign migrated records: global | project | workspace
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scope: Option<String>,
+    /// Optional project_id for project-scoped migration.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_id: Option<String>,
+    /// Dry-run mode — preview without writing (default: true).
+    #[serde(default = "default_dry_run")]
+    pub dry_run: bool,
+    /// Maximum number of records to migrate per call (default: 50).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limit: Option<usize>,
+}
+
+fn default_dry_run() -> bool {
+    true
+}
+
+/// Parameters for `learning_memory_delete` (compatibility shim).
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[schemars(title = "")]
+pub struct LearningMemoryDeleteParams {
+    /// Memory record ID.
+    pub id: String,
+    /// Soft-delete mode: soft_reject | soft_archive (default: soft_reject).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mode: Option<String>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::{

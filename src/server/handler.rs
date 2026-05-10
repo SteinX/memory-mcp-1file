@@ -716,6 +716,138 @@ impl MemoryMcpServer {
     }
 
     #[tool(
+        description = "Create a new learning memory record. Typed wrapper over existing Memory protocol — stores structured learning metadata (kind, status, confidence, scope, evidence) alongside the content."
+    )]
+    async fn learning_memory_create(
+        &self,
+        params: Parameters<LearningMemoryCreateParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        logic::learning::create(&self.state, params.0)
+            .await
+            .map_err(to_rpc_error)
+    }
+
+    #[tool(
+        description = "Get a learning memory record by ID. Typed wrapper over existing Memory protocol — returns the full record including learning metadata."
+    )]
+    async fn learning_memory_get(
+        &self,
+        params: Parameters<LearningMemoryGetParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        logic::learning::get(&self.state, params.0)
+            .await
+            .map_err(to_rpc_error)
+    }
+
+    #[tool(
+        description = "List learning memory records with filters. Typed wrapper over existing Memory protocol — supports status, scope, and pagination filters."
+    )]
+    async fn learning_memory_list(
+        &self,
+        params: Parameters<LearningMemoryListParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        logic::learning::list(&self.state, params.0)
+            .await
+            .map_err(to_rpc_error)
+    }
+
+    #[tool(
+        description = "Search learning memories (confirmed+rule by default). Typed wrapper over existing Memory protocol — semantic search scoped to learning records."
+    )]
+    async fn learning_memory_search(
+        &self,
+        params: Parameters<LearningMemorySearchParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        logic::learning::search(&self.state, params.0)
+            .await
+            .map_err(to_rpc_error)
+    }
+
+    #[tool(
+        description = "Update content or metadata of a learning memory record. Typed wrapper over existing Memory protocol."
+    )]
+    async fn learning_memory_update(
+        &self,
+        params: Parameters<LearningMemoryUpdateParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        logic::learning::update(&self.state, params.0)
+            .await
+            .map_err(to_rpc_error)
+    }
+
+    #[tool(
+        description = "Promote a learning record from candidate→confirmed or confirmed→rule. Typed wrapper over existing Memory protocol — advances lifecycle status."
+    )]
+    async fn learning_memory_promote(
+        &self,
+        params: Parameters<LearningMemoryPromoteParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        logic::learning::promote(&self.state, params.0)
+            .await
+            .map_err(to_rpc_error)
+    }
+
+    #[tool(
+        description = "Reject a learning record (soft invalidate). Typed wrapper over existing Memory protocol — sets status to rejected and invalidates the record."
+    )]
+    async fn learning_memory_reject(
+        &self,
+        params: Parameters<LearningMemoryRejectParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        logic::learning::reject(&self.state, params.0)
+            .await
+            .map_err(to_rpc_error)
+    }
+
+    #[tool(
+        description = "Archive a learning record (soft invalidate). Typed wrapper over existing Memory protocol — sets status to archived and invalidates the record."
+    )]
+    async fn learning_memory_archive(
+        &self,
+        params: Parameters<LearningMemoryArchiveParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        logic::learning::archive(&self.state, params.0)
+            .await
+            .map_err(to_rpc_error)
+    }
+
+    #[tool(
+        description = "Supersede a learning record with a replacement. Typed wrapper over existing Memory protocol — links the old record to its replacement and invalidates it."
+    )]
+    async fn learning_memory_supersede(
+        &self,
+        params: Parameters<LearningMemorySupersededParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        logic::learning::supersede(&self.state, params.0)
+            .await
+            .map_err(to_rpc_error)
+    }
+
+    #[tool(
+        description = "Migrate legacy memory records to learning format. Typed wrapper over existing Memory protocol — scans existing memories matching prefix allowlist and re-stores them with learning metadata."
+    )]
+    async fn learning_memory_migrate_legacy(
+        &self,
+        params: Parameters<LearningMemoryMigrateLegacyParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        logic::learning::migrate_legacy(&self.state, params.0)
+            .await
+            .map_err(to_rpc_error)
+    }
+
+    #[tool(
+        description = "Compatibility shim; performs soft reject/archive/invalidate by default. Hard delete unsupported unless explicitly enabled by future protocol. Typed wrapper over existing Memory protocol."
+    )]
+    async fn learning_memory_delete(
+        &self,
+        params: Parameters<LearningMemoryDeleteParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        logic::learning::delete(&self.state, params.0)
+            .await
+            .map_err(to_rpc_error)
+    }
+
+    #[tool(
         description = "Meta-help tool. Returns concise usage guidance for the MCP tool surface."
     )]
     async fn how_to_use(
@@ -977,7 +1109,7 @@ mod tests {
         let tools = server.tool_router.list_all();
         let names: BTreeSet<String> = tools.iter().map(|tool| tool.name.to_string()).collect();
 
-        assert_eq!(names.len(), 23, "public MCP tool count changed");
+        assert_eq!(names.len(), 34, "public MCP tool count changed");
         assert!(names.contains("export_memory"));
         assert!(names.contains("import_memory"));
         assert!(names.contains("recall_code"));
@@ -998,7 +1130,7 @@ mod tests {
         let tools = server.tool_router.list_all();
         let names: BTreeSet<String> = tools.iter().map(|tool| tool.name.to_string()).collect();
 
-        assert_eq!(names.len(), 23, "public MCP tool count changed");
+        assert_eq!(names.len(), 34, "public MCP tool count changed");
         assert!(names.contains("recall_code"));
         assert!(names.contains("search_symbols"));
         assert!(names.contains("symbol_graph"));
@@ -1010,6 +1142,44 @@ mod tests {
         assert!(names.contains("import_memory"));
         assert!(!names.contains("search"));
         assert!(!names.contains("search_code"));
+    }
+
+    #[tokio::test]
+    async fn tool_discovery_all_learning_tools_present_with_schemas() {
+        let ctx = TestContext::new().await;
+        let server = MemoryMcpServer::new(ctx.state.clone());
+        let tools = server.tool_router.list_all();
+
+        let learning_tools = [
+            "learning_memory_create",
+            "learning_memory_get",
+            "learning_memory_list",
+            "learning_memory_search",
+            "learning_memory_update",
+            "learning_memory_promote",
+            "learning_memory_reject",
+            "learning_memory_archive",
+            "learning_memory_supersede",
+            "learning_memory_migrate_legacy",
+            "learning_memory_delete",
+        ];
+
+        let tool_map: std::collections::HashMap<String, &_> = tools
+            .iter()
+            .map(|t| (t.name.to_string(), t))
+            .collect();
+
+        for name in &learning_tools {
+            let tool = tool_map.get(*name).unwrap_or_else(|| {
+                panic!("learning tool '{}' not found in tool list", name)
+            });
+            let schema = schema_value(&serde_json::to_value(tool).unwrap());
+            assert!(
+                schema != Value::Null,
+                "tool '{}' has null schema",
+                name
+            );
+        }
     }
 
     #[tokio::test]
