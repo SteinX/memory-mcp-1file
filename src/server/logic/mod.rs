@@ -1,6 +1,7 @@
 pub mod code;
 pub mod contracts;
 pub mod graph;
+pub mod learning_filters;
 pub mod memory;
 pub mod search;
 pub mod system;
