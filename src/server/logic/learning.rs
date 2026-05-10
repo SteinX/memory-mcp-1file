@@ -765,13 +765,124 @@ pub async fn archive(
 }
 
 pub async fn supersede(
-    _state: &AppState,
-    _params: LearningMemorySupersededParams,
+    state: &AppState,
+    params: LearningMemorySupersededParams,
 ) -> anyhow::Result<CallToolResult> {
-    Ok(success_json(serde_json::json!({
-        "status": "not_implemented",
-        "message": "learning_memory_supersede: logic will be implemented in Tasks 6-9"
-    })))
+    let memory = match state.storage.get_memory(&params.id).await? {
+        Some(m) => m,
+        None => return Ok(error_response(format!("Record not found: {}", params.id))),
+    };
+
+    let (kind, _status, scope, schema_version) = match extract_learning_fields(&memory) {
+        Some(fields) => fields,
+        None => {
+            return Ok(error_response(format!(
+                "Memory '{}' does not have valid learning metadata",
+                params.id
+            )))
+        }
+    };
+
+    let lifecycle = derive_lifecycle_state(&memory);
+    if matches!(
+        lifecycle,
+        LearningLifecycleState::Rejected
+            | LearningLifecycleState::Archived
+            | LearningLifecycleState::Superseded
+    ) {
+        return Ok(error_response(format!(
+            "Record '{}' is already in a terminal state ({:?}) and cannot be superseded",
+            params.id, lifecycle
+        )));
+    }
+
+    if state.storage.get_memory(&params.replacement_id).await?.is_none() {
+        return Ok(error_response(format!(
+            "Replacement record not found: {}",
+            params.replacement_id
+        )));
+    }
+
+    let mut learning_meta = memory
+        .metadata
+        .as_ref()
+        .and_then(|m| m.get("learning"))
+        .cloned()
+        .unwrap_or(json!({}));
+    learning_meta["status"] =
+        serde_json::to_value(&LearningStatus::Superseded).unwrap_or(json!("superseded"));
+    learning_meta["superseded_by"] = json!(&params.replacement_id);
+    if let Some(ref reason) = params.reason {
+        learning_meta["supersede_reason"] = json!(reason);
+    }
+
+    let mut full_metadata = memory.metadata.clone().unwrap_or(json!({}));
+    full_metadata["learning"] = learning_meta;
+
+    let update = MemoryUpdate {
+        content: None,
+        memory_type: None,
+        user_id: None,
+        agent_id: None,
+        run_id: None,
+        namespace: None,
+        importance_score: None,
+        metadata: Some(full_metadata),
+        embedding: None,
+        content_hash: None,
+        embedding_state: None,
+    };
+
+    match state.storage.update_memory(&params.id, update).await {
+        Ok(_) => {}
+        Err(e) => return Ok(error_response(e)),
+    };
+
+    match state
+        .storage
+        .invalidate(
+            &params.id,
+            Some("superseded"),
+            Some(&params.replacement_id),
+        )
+        .await
+    {
+        Ok(_) => {}
+        Err(e) => return Ok(error_response(e)),
+    };
+
+    if let Ok(Some(updated)) = state.storage.get_memory(&params.id).await {
+        state.memory_search.upsert_memory(updated).await;
+    }
+
+    let mut final_memory = match state.storage.get_memory(&params.id).await? {
+        Some(m) => m,
+        None => {
+            return Ok(error_response(format!(
+                "Record not found after supersede: {}",
+                params.id
+            )))
+        }
+    };
+    strip_embedding(&mut final_memory);
+
+    let lifecycle = derive_lifecycle_state(&final_memory);
+    let record_value = serde_json::to_value(&final_memory).unwrap_or_default();
+    let contract = learning_contract_json(Some(&params.id));
+    let summary = json!({ "result_kind": "learning_memory", "counts": { "returned": 1 } });
+
+    let resp = build_learning_response(
+        record_value,
+        kind,
+        LearningStatus::Superseded,
+        scope,
+        lifecycle,
+        schema_version,
+        contract,
+        summary,
+    );
+
+    Ok(success_serialize(&resp))
 }
 
 pub async fn migrate_legacy(
@@ -1113,5 +1224,56 @@ mod tests {
         let lifecycle = derive_lifecycle_state(&m);
         assert_eq!(lifecycle, LearningLifecycleState::Archived);
         assert!(m.invalidation_reason.is_some());
+    }
+
+    #[test]
+    fn superseded_memory_has_superseded_lifecycle_via_invalidation_reason() {
+        let m = make_invalidated_memory("superseded");
+        let lifecycle = derive_lifecycle_state(&m);
+        assert_eq!(lifecycle, LearningLifecycleState::Superseded);
+        assert!(m.valid_until.is_some());
+        assert!(m.invalidation_reason.is_some());
+    }
+
+    #[test]
+    fn terminal_states_are_rejected_archived_superseded() {
+        for (reason, expected) in [
+            ("learning_rejected", LearningLifecycleState::Rejected),
+            ("learning_archived", LearningLifecycleState::Archived),
+            ("superseded", LearningLifecycleState::Superseded),
+        ] {
+            let m = make_invalidated_memory(reason);
+            assert_eq!(derive_lifecycle_state(&m), expected, "reason={reason}");
+            assert!(
+                matches!(
+                    derive_lifecycle_state(&m),
+                    LearningLifecycleState::Rejected
+                        | LearningLifecycleState::Archived
+                        | LearningLifecycleState::Superseded
+                ),
+                "reason={reason} should be terminal"
+            );
+        }
+    }
+
+    #[test]
+    fn active_states_are_not_terminal() {
+        for status in [
+            LearningStatus::Candidate,
+            LearningStatus::Confirmed,
+            LearningStatus::Rule,
+        ] {
+            let m = make_memory_with_status(status.clone());
+            let lifecycle = derive_lifecycle_state(&m);
+            assert!(
+                !matches!(
+                    lifecycle,
+                    LearningLifecycleState::Rejected
+                        | LearningLifecycleState::Archived
+                        | LearningLifecycleState::Superseded
+                ),
+                "status={status:?} should not be terminal"
+            );
+        }
     }
 }
