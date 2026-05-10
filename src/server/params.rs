@@ -651,8 +651,14 @@ mod index_project_param_tests {
         .expect("filter index_project payload should deserialize");
 
         assert_eq!(params.path.as_deref(), Some("/tmp/p"));
-        assert_eq!(params.include_patterns, Some(vec!["src/**/*.rs".to_string()]));
-        assert_eq!(params.exclude_patterns, Some(vec!["**/target/**".to_string()]));
+        assert_eq!(
+            params.include_patterns,
+            Some(vec!["src/**/*.rs".to_string()])
+        );
+        assert_eq!(
+            params.exclude_patterns,
+            Some(vec!["**/target/**".to_string()])
+        );
         assert_eq!(params.force, None);
         assert_eq!(params.confirm_failed_restart, None);
     }
@@ -1043,6 +1049,15 @@ pub struct LearningMemoryMigrateLegacyParams {
     /// Maximum number of records to migrate per call (default: 50).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub limit: Option<usize>,
+    /// Include invalidated legacy records in the migration scan (default: false).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub include_invalidated: Option<bool>,
+    /// In apply mode, invalidate migrated source records with reason migration_replaced (default: false).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub invalidate_source: Option<bool>,
+    /// Explicitly allow RESEARCH: records to be converted into project_lesson candidates.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub extract_research_lessons: Option<bool>,
 }
 
 fn default_dry_run() -> bool {
@@ -1063,8 +1078,8 @@ pub struct LearningMemoryDeleteParams {
 #[cfg(test)]
 mod tests {
     use super::{
-        normalize_project_id, ExportMemoryParams, ImportMemoryParams, ProjectInfoParams,
-        RecallCodeParams, SearchSymbolsParams,
+        ExportMemoryParams, ImportMemoryParams, ProjectInfoParams, RecallCodeParams,
+        SearchSymbolsParams, normalize_project_id,
     };
 
     #[test]

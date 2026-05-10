@@ -3,12 +3,15 @@ use surrealdb::Surreal;
 
 use std::collections::BTreeSet;
 
-use crate::types::{CodeChunk, IndexFileCheckpoint, IndexJobRecord, IndexStatus, ScoredCodeChunk};
+use crate::types::{
+    CodeChunk, IndexFileCheckpoint, IndexJobRecord, IndexStatus, RecordId, ScoredCodeChunk,
+};
 use crate::Result;
 
 use super::helpers::generate_id;
 
-const ACTIVE_GENERATION_FILTER: &str = "($active_generation IS NONE OR generation = $active_generation OR generation IS NONE)";
+const ACTIVE_GENERATION_FILTER: &str =
+    "($active_generation IS NONE OR generation = $active_generation OR generation IS NONE)";
 
 pub(super) async fn create_code_chunk(db: &Surreal<Db>, mut chunk: CodeChunk) -> Result<String> {
     let id = generate_id();
@@ -192,56 +195,12 @@ pub(super) async fn update_index_status(db: &Surreal<Db>, status: IndexStatus) -
     let mut status = status;
     status.refresh_lifecycle_states();
 
-    let sql = r#"
-        UPDATE index_status SET 
-            root_path = $root_path,
-            status = $status,
-            total_files = $total_files,
-            indexed_files = $indexed_files,
-            total_chunks = $total_chunks,
-            total_symbols = $total_symbols,
-            started_at = $started_at,
-            completed_at = $completed_at,
-            error_message = $error_message,
-            failed_files = $failed_files,
-            failed_embeddings = $failed_embeddings,
-            embedding_version = $embedding_version,
-            structural_state = $structural_state,
-            semantic_state = $semantic_state,
-            projection_state = $projection_state,
-            structural_generation = $structural_generation,
-            semantic_generation = $semantic_generation
-        WHERE project_id = $project_id
-    "#;
-
-    let mut response = db
-        .query(sql)
-        .bind(("project_id", status.project_id.clone()))
-        .bind(("root_path", status.root_path.clone()))
-        .bind(("status", status.status.clone()))
-        .bind(("total_files", status.total_files))
-        .bind(("indexed_files", status.indexed_files))
-        .bind(("total_chunks", status.total_chunks))
-        .bind(("total_symbols", status.total_symbols))
-        .bind(("started_at", status.started_at))
-        .bind(("completed_at", status.completed_at))
-        .bind(("error_message", status.error_message.clone()))
-        .bind(("failed_files", status.failed_files.clone()))
-        .bind(("failed_embeddings", status.failed_embeddings))
-        .bind(("embedding_version", status.embedding_version))
-        .bind(("structural_state", status.structural_state.clone()))
-        .bind(("semantic_state", status.semantic_state.clone()))
-        .bind(("projection_state", status.projection_state.clone()))
-        .bind(("structural_generation", status.structural_generation as i64))
-        .bind(("semantic_generation", status.semantic_generation as i64))
+    let record_id = status.project_id.clone();
+    status.id = Some(RecordId::new("index_status", record_id.as_str()));
+    let _: Option<IndexStatus> = db
+        .upsert(("index_status", record_id.as_str()))
+        .content(status)
         .await?;
-
-    let updated: Vec<IndexStatus> = response.take(0).unwrap_or_default();
-
-    if updated.is_empty() {
-        let id = ("index_status", status.project_id.as_str());
-        let _: Option<IndexStatus> = db.create(id).content(status).await?;
-    }
 
     Ok(())
 }
@@ -313,7 +272,10 @@ pub(super) async fn create_or_update_index_job(
         job.reason_code = job.error.as_ref().map(|error| error.code.clone());
     }
     let record_id = index_job_record_id(&job.project_id, &job.job_id);
-    job.id = Some(crate::types::RecordId::new("index_jobs", record_id.as_str()));
+    job.id = Some(crate::types::RecordId::new(
+        "index_jobs",
+        record_id.as_str(),
+    ));
     let _: Option<IndexJobRecord> = db
         .upsert(("index_jobs", record_id.as_str()))
         .content(job)
@@ -439,7 +401,8 @@ pub(super) async fn get_active_generation(
     db: &Surreal<Db>,
     project_id: &str,
 ) -> Result<Option<u64>> {
-    let sql = "SELECT generation FROM index_active_generations WHERE project_id = $project_id LIMIT 1";
+    let sql =
+        "SELECT generation FROM index_active_generations WHERE project_id = $project_id LIMIT 1";
     let mut response = db
         .query(sql)
         .bind(("project_id", project_id.to_string()))
@@ -448,7 +411,10 @@ pub(super) async fn get_active_generation(
     Ok(result
         .first()
         .and_then(|v| v.get("generation"))
-        .and_then(|g| g.as_u64().or_else(|| g.as_i64().and_then(|i| u64::try_from(i).ok()))))
+        .and_then(|g| {
+            g.as_u64()
+                .or_else(|| g.as_i64().and_then(|i| u64::try_from(i).ok()))
+        }))
 }
 
 pub(super) async fn set_active_generation(
@@ -489,10 +455,10 @@ pub(super) async fn list_abandoned_generations(
     for result_index in 0..4 {
         let rows: Vec<serde_json::Value> = response.take(result_index).unwrap_or_default();
         for row in rows {
-            if let Some(generation) = row
-                .get("generation")
-                .and_then(|g| g.as_u64().or_else(|| g.as_i64().and_then(|i| u64::try_from(i).ok())))
-            {
+            if let Some(generation) = row.get("generation").and_then(|g| {
+                g.as_u64()
+                    .or_else(|| g.as_i64().and_then(|i| u64::try_from(i).ok()))
+            }) {
                 if generation != active {
                     generations.insert(generation);
                 }

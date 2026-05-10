@@ -1,4 +1,3 @@
-use num_cpus;
 use std::collections::{BTreeMap, HashSet};
 use std::path::Path;
 use std::sync::Arc;
@@ -26,6 +25,10 @@ use crate::types::symbol::{CodeReference, CodeSymbol};
 
 const PARSE_TIMEOUT_SECS: u64 = 30;
 
+fn effective_parse_workers(config: &crate::config::CodeIndexConfig) -> usize {
+    std::cmp::max(config.parse_workers, 2)
+}
+
 #[derive(Clone, Debug, Default)]
 pub(crate) struct IndexResumeOptions {
     pub resume: bool,
@@ -41,18 +44,18 @@ struct FileCheckpointContext {
 }
 
 #[derive(Default)]
-struct IndexMetrics {
-    file_read_hash_elapsed_ms: u128,
-    parse_chunk_elapsed_ms: u128,
-    chunk_db_write_elapsed_ms: u128,
-    symbol_db_write_elapsed_ms: u128,
-    embedding_enqueue_elapsed_ms: u128,
-    relation_create_elapsed_ms: u128,
-    status_update_elapsed_ms: u128,
-    chunks_written: u64,
-    symbols_written: u64,
-    embeddings_enqueued: u64,
-    files_read: u64,
+pub struct IndexMetrics {
+    pub file_read_hash_elapsed_ms: u128,
+    pub parse_chunk_elapsed_ms: u128,
+    pub chunk_db_write_elapsed_ms: u128,
+    pub symbol_db_write_elapsed_ms: u128,
+    pub embedding_enqueue_elapsed_ms: u128,
+    pub relation_create_elapsed_ms: u128,
+    pub status_update_elapsed_ms: u128,
+    pub chunks_written: u64,
+    pub symbols_written: u64,
+    pub embeddings_enqueued: u64,
+    pub files_read: u64,
 }
 
 struct ParsedFile {
@@ -152,6 +155,22 @@ pub(crate) async fn index_project_after_admission_with_resume_and_filter(
     resume_options: IndexResumeOptions,
     filter_config: IndexFilterConfig,
 ) -> Result<IndexStatus> {
+    let (status, _metrics) = index_project_after_admission_with_resume_and_filter_inner(
+        state,
+        project_path,
+        resume_options,
+        filter_config,
+    )
+    .await?;
+    Ok(status)
+}
+
+async fn index_project_after_admission_with_resume_and_filter_inner(
+    state: Arc<AppState>,
+    project_path: &Path,
+    resume_options: IndexResumeOptions,
+    filter_config: IndexFilterConfig,
+) -> Result<(IndexStatus, IndexMetrics)> {
     let project_id = derive_project_id(project_path)
         .map_err(|error| crate::AppError::InvalidPath(error.to_string()))?;
 
@@ -184,7 +203,7 @@ pub(crate) async fn index_project_after_admission_with_resume_and_filter(
     };
 
     match result {
-        Ok(status) => Ok(status),
+        Ok((status, metrics)) => Ok((status, metrics)),
         Err(e) => {
             tracing::error!(project_id = %project_id, error = %e, "Indexing failed");
             if is_non_destructive_index_error(&e) {
@@ -217,6 +236,28 @@ pub(crate) async fn index_project_after_admission_with_resume_and_filter(
             Err(e)
         }
     }
+}
+
+pub async fn index_project_with_metrics(
+    state: Arc<AppState>,
+    project_path: &Path,
+) -> Result<(IndexStatus, IndexMetrics)> {
+    let project_id = derive_project_id(project_path)
+        .map_err(|error| crate::AppError::InvalidPath(error.to_string()))?;
+    let admission = IndexAdmissionGuard::try_acquire(state.clone(), project_id)?;
+    let filter_config = IndexFilterConfig {
+        include_patterns: state.config.code_index.include_patterns.clone(),
+        exclude_patterns: state.config.code_index.exclude_patterns.clone(),
+    };
+    let result = index_project_after_admission_with_resume_and_filter_inner(
+        state,
+        project_path,
+        IndexResumeOptions::default(),
+        filter_config,
+    )
+    .await;
+    drop(admission);
+    result
 }
 
 struct IndexAdmissionGuard {
@@ -600,7 +641,7 @@ async fn do_index_project(
     project_id: &str,
     resume_options: IndexResumeOptions,
     filter_config: IndexFilterConfig,
-) -> Result<IndexStatus> {
+) -> Result<(IndexStatus, IndexMetrics)> {
     // Compile filter BEFORE any destructive cleanup — invalid patterns fail fast without data loss.
     let compiled_filter = filter_config
         .compile()
@@ -739,8 +780,10 @@ async fn do_index_project(
 
     match state.config.code_index.pipeline_mode {
         CodeIndexPipelineMode::Legacy => {
+            let code_index_config = state.config.code_index.clone();
             run_legacy_index_pipeline(
                 state,
+                &code_index_config,
                 project_path,
                 project_id,
                 status,
@@ -781,6 +824,7 @@ async fn do_index_project(
 #[allow(clippy::too_many_arguments)]
 async fn run_legacy_index_pipeline(
     state: Arc<AppState>,
+    config: &crate::config::CodeIndexConfig,
     _project_path: &Path,
     project_id: &str,
     mut status: IndexStatus,
@@ -799,7 +843,7 @@ async fn run_legacy_index_pipeline(
     mut files_read: u64,
     files: Vec<std::path::PathBuf>,
     checkpoint_context: Option<FileCheckpointContext>,
-) -> Result<IndexStatus> {
+) -> Result<(IndexStatus, IndexMetrics)> {
     let monitor = state.progress.get_or_create(project_id).await;
     let batch_size = 100;
     let mut chunk_buffer = Vec::with_capacity(batch_size);
@@ -817,7 +861,7 @@ async fn run_legacy_index_pipeline(
     // sequential spawn_blocking. Up to max_concurrent_parses files are parsed on
     // the blocking thread pool simultaneously.
     #[allow(clippy::type_complexity)]
-    let max_concurrent_parses = std::cmp::max(4, num_cpus::get() / 2);
+    let max_concurrent_parses = effective_parse_workers(config);
     #[allow(clippy::type_complexity)]
     let mut parse_set: tokio::task::JoinSet<(
         Vec<CodeChunk>,
@@ -1544,7 +1588,20 @@ async fn run_legacy_index_pipeline(
 
     tracing::info!(project_id = %project_id, phase = "final_persistence_completed", status = %status.status, "One-shot code index task completed");
 
-    Ok(status)
+    let metrics = IndexMetrics {
+        file_read_hash_elapsed_ms,
+        parse_chunk_elapsed_ms,
+        chunk_db_write_elapsed_ms,
+        symbol_db_write_elapsed_ms,
+        embedding_enqueue_elapsed_ms,
+        relation_create_elapsed_ms,
+        status_update_elapsed_ms,
+        chunks_written,
+        symbols_written,
+        embeddings_enqueued,
+        files_read,
+    };
+    Ok((status, metrics))
 }
 
 async fn read_file_for_staged(
@@ -1929,8 +1986,8 @@ async fn finish_full_index(
     active_structural_generation: u64,
     total_started: Instant,
     total_relation_stats: RelationStats,
-    metrics: IndexMetrics,
-) -> Result<IndexStatus> {
+    mut metrics: IndexMetrics,
+) -> Result<(IndexStatus, IndexMetrics)> {
     emit_index_timing(
         project_id,
         "embedding_enqueue",
@@ -2065,7 +2122,8 @@ async fn finish_full_index(
 
     tracing::info!(project_id = %project_id, phase = "final_persistence_completed", status = %status.status, "One-shot code index task completed");
 
-    Ok(status)
+    metrics.status_update_elapsed_ms = status_update_elapsed_ms;
+    Ok((status, metrics))
 }
 
 async fn run_staged_index_pipeline(
@@ -2077,7 +2135,7 @@ async fn run_staged_index_pipeline(
     total_started: Instant,
     files: Vec<std::path::PathBuf>,
     checkpoint_context: Option<FileCheckpointContext>,
-) -> Result<IndexStatus> {
+) -> Result<(IndexStatus, IndexMetrics)> {
     let config = state.config.code_index.clone();
     let monitor = state.progress.get_or_create(project_id).await;
     let mut metrics = IndexMetrics::default();
@@ -2532,7 +2590,7 @@ pub async fn incremental_index(
     }
 
     // Issue 4 fix: Bounded-concurrency parsing via JoinSet (same pattern as do_index_project).
-    let max_concurrent_parses = std::cmp::max(4, num_cpus::get() / 2);
+    let max_concurrent_parses = effective_parse_workers(&state.config.code_index);
     // Return type: (chunks, symbols, references, path_str, new_hash)
     type IncrResult = (
         Vec<CodeChunk>,
@@ -3346,6 +3404,17 @@ mod tests {
         }
     }
 
+    #[test]
+    fn effective_parse_workers_uses_config_and_clamps_low_values() {
+        let mut config = CodeIndexConfig::default();
+
+        config.parse_workers = 6;
+        assert_eq!(effective_parse_workers(&config), 6);
+
+        config.parse_workers = 1;
+        assert_eq!(effective_parse_workers(&config), 2);
+    }
+
     fn sorted_chunk_fingerprint(chunks: Vec<CodeChunk>) -> Vec<(String, u32, u32, String)> {
         let mut rows: Vec<_> = chunks
             .into_iter()
@@ -3518,7 +3587,7 @@ mod tests {
         let active_structural_generation = status.structural_generation;
         ctx.state.storage.update_index_status(status.clone()).await.unwrap();
 
-        let status = run_staged_index_pipeline(
+        let (status, _metrics) = run_staged_index_pipeline(
             ctx.state.clone(),
             &project_dir,
             &project_id,
@@ -3655,7 +3724,7 @@ mod tests {
         let active_structural_generation = status.structural_generation;
         ctx.state.storage.update_index_status(status.clone()).await.unwrap();
 
-        let status = run_staged_index_pipeline(
+        let (status, _metrics) = run_staged_index_pipeline(
             ctx.state.clone(),
             &project_dir,
             &project_id,

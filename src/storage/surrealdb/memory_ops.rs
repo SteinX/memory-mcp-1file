@@ -1060,7 +1060,8 @@ fn import_audit_metadata(
     };
 
     if let Some(source_migration) = metadata.remove("migration") {
-        let relocated = if let Some(existing_source_migration) = metadata.remove("source_migration") {
+        let relocated = if let Some(existing_source_migration) = metadata.remove("source_migration")
+        {
             serde_json::json!({
                 "migration": source_migration,
                 "source_migration": existing_source_migration,

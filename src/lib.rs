@@ -10,7 +10,6 @@ pub mod storage;
 pub mod transport;
 pub mod types;
 
-#[cfg(test)]
 pub mod test_utils;
 
 pub use config::{AppConfig, AppState};

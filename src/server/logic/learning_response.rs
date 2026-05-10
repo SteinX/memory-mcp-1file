@@ -1,16 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+use crate::server::logic::learning_lifecycle::LearningLifecycleState;
 use crate::types::learning::{LearningKind, LearningScope, LearningStatus};
-
-// TODO: Replace with `crate::types::learning::LearningLifecycleState` once Task 2 merges.
-/// Operational lifecycle state of a learning record (placeholder — see Task 2).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum LearningLifecycleState {
-    Active,
-    Invalidated,
-    PendingReview,
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LearningResponseSummary {
@@ -195,7 +186,7 @@ mod tests {
     fn test_rule_pending_review_all_false() {
         let (list, search, inject) = compute_default_inclusion(
             &LearningStatus::Rule,
-            &LearningLifecycleState::PendingReview,
+            &LearningLifecycleState::Unknown,
         );
         assert!(!list);
         assert!(!search);

@@ -1,9 +1,9 @@
 use std::collections::HashMap;
 use std::path::Path;
 
-use surrealdb::engine::local::{Db, SurrealKv};
 #[cfg(test)]
 use surrealdb::engine::local::Mem;
+use surrealdb::engine::local::{Db, SurrealKv};
 use surrealdb::Surreal;
 
 use super::StorageBackend;
@@ -1218,7 +1218,44 @@ mod tests {
             .await
             .unwrap()
             .is_empty());
-        assert_eq!(storage.get_active_generation("legacy_project").await.unwrap(), None);
+        assert_eq!(
+            storage
+                .get_active_generation("legacy_project")
+                .await
+                .unwrap(),
+            None
+        );
+    }
+
+    #[tokio::test]
+    async fn update_index_status_repairs_record_with_missing_project_id() {
+        let storage = setup_in_memory_test_db().await;
+        storage
+            .db
+            .query("CREATE index_status:repair_project SET status = 'failed'")
+            .await
+            .unwrap();
+
+        let mut status = IndexStatus::new("repair_project".to_string());
+        status.root_path = Some("/repair/workspace".to_string());
+        status.total_files = 21;
+        status.indexed_files = 3;
+        status.structural_generation = 4;
+        status.semantic_generation = 2;
+
+        storage.update_index_status(status.clone()).await.unwrap();
+
+        let loaded = storage
+            .get_index_status("repair_project")
+            .await
+            .unwrap()
+            .expect("status should be readable by project_id after repair");
+        assert_eq!(loaded.project_id, "repair_project");
+        assert_eq!(loaded.root_path, status.root_path);
+        assert_eq!(loaded.total_files, 21);
+        assert_eq!(loaded.indexed_files, 3);
+        assert_eq!(loaded.structural_generation, 4);
+        assert_eq!(loaded.semantic_generation, 2);
     }
 
     #[tokio::test]
@@ -1244,7 +1281,10 @@ mod tests {
         assert_eq!(job.resume_token, "resume-token-123");
         assert_eq!(job.completed_files_count, 3);
         assert_eq!(job.total_files_count, Some(9));
-        assert_eq!(job.reason_code, Some(IndexJobReasonCode::InterruptedByShutdown));
+        assert_eq!(
+            job.reason_code,
+            Some(IndexJobReasonCode::InterruptedByShutdown)
+        );
     }
 
     #[tokio::test]
@@ -1268,10 +1308,7 @@ mod tests {
             updated_at: Datetime::default(),
         };
 
-        storage
-            .upsert_file_checkpoint(&checkpoint)
-            .await
-            .unwrap();
+        storage.upsert_file_checkpoint(&checkpoint).await.unwrap();
 
         let mut updated = checkpoint;
         updated.content_hash = "hash-b".to_string();
@@ -1307,7 +1344,10 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(
-            storage.get_active_generation("checkpoint_project").await.unwrap(),
+            storage
+                .get_active_generation("checkpoint_project")
+                .await
+                .unwrap(),
             Some(42)
         );
         assert!(storage
@@ -1983,7 +2023,10 @@ mod tests {
         assert_eq!(response.imported_count, 0);
         assert_eq!(response.failed_count, 0);
         assert_eq!(response.skipped_count, 2);
-        assert_eq!(response.imported_count + response.skipped_count + response.failed_count, 2);
+        assert_eq!(
+            response.imported_count + response.skipped_count + response.failed_count,
+            2
+        );
         assert_eq!(response.summary.total_records, 2);
         assert_eq!(response.summary.skipped_records, response.skipped_count);
         assert_eq!(response.id_mappings.len(), 1);
@@ -2010,8 +2053,14 @@ mod tests {
         assert_eq!(applied.imported_count, 2);
         let remapped_id = applied.id_mappings[0].new_id.clone();
         let remapped = storage.get_memory(&remapped_id).await.unwrap().unwrap();
-        let remapped_record_id = remapped.id.as_ref().expect("remapped memory should carry id");
-        assert_eq!(crate::types::record_key_to_string(&remapped_record_id.key), remapped_id);
+        let remapped_record_id = remapped
+            .id
+            .as_ref()
+            .expect("remapped memory should carry id");
+        assert_eq!(
+            crate::types::record_key_to_string(&remapped_record_id.key),
+            remapped_id
+        );
         assert_eq!(remapped.content, "incoming replacement");
         assert_eq!(remapped.namespace.as_deref(), Some("project-a"));
         assert_eq!(remapped.superseded_by.as_deref(), Some("payload-new"));
@@ -2022,10 +2071,18 @@ mod tests {
         assert_eq!(remapped_metadata["migration"]["schema_version"], 1);
         assert_eq!(remapped_metadata["migration"]["source_id"], existing_id);
         assert_eq!(remapped_metadata["migration"]["imported_id"], remapped_id);
-        assert_eq!(remapped_metadata["migration"]["target_project_id"], "project-a");
-        assert_eq!(remapped_metadata["migration"]["source_project_id"], "source-project");
+        assert_eq!(
+            remapped_metadata["migration"]["target_project_id"],
+            "project-a"
+        );
+        assert_eq!(
+            remapped_metadata["migration"]["source_project_id"],
+            "source-project"
+        );
         assert_eq!(remapped_metadata["migration"]["conflict_strategy"], "remap");
-        assert!(remapped_metadata["migration"]["imported_at"].as_str().is_some());
+        assert!(remapped_metadata["migration"]["imported_at"]
+            .as_str()
+            .is_some());
         let imported = storage
             .list_memories(
                 &MemoryQuery {
@@ -2052,7 +2109,10 @@ mod tests {
             )
             .await
             .unwrap();
-        let records = vec![migration_memory_record(&existing_id, "incoming remapped content")];
+        let records = vec![migration_memory_record(
+            &existing_id,
+            "incoming remapped content",
+        )];
 
         let response = storage
             .import_memories(
@@ -2072,8 +2132,14 @@ mod tests {
         let remapped_id = response.id_mappings[0].new_id.clone();
         assert_ne!(remapped_id, existing_id);
         let remapped = storage.get_memory(&remapped_id).await.unwrap().unwrap();
-        let stored_id = remapped.id.as_ref().expect("imported memory should carry id");
-        assert_eq!(crate::types::record_key_to_string(&stored_id.key), remapped_id);
+        let stored_id = remapped
+            .id
+            .as_ref()
+            .expect("imported memory should carry id");
+        assert_eq!(
+            crate::types::record_key_to_string(&stored_id.key),
+            remapped_id
+        );
         assert_eq!(remapped.content, "incoming remapped content");
         assert_eq!(remapped.namespace.as_deref(), Some("project-a"));
     }
@@ -2155,7 +2221,10 @@ mod tests {
         assert_eq!(response.summary.imported_records, 0);
         assert_eq!(response.skipped_count, 2);
         assert_eq!(response.failed_count, 0);
-        assert_eq!(response.imported_count + response.skipped_count + response.failed_count, 2);
+        assert_eq!(
+            response.imported_count + response.skipped_count + response.failed_count,
+            2
+        );
         assert_eq!(response.summary.total_records, 2);
         assert_eq!(response.summary.skipped_records, response.skipped_count);
         assert_eq!(response.summary.failed_records, response.failed_count);
@@ -2204,7 +2273,10 @@ mod tests {
         assert_eq!(response.summary.imported_records, 0);
         assert_eq!(response.failed_count, 1);
         assert_eq!(response.skipped_count, 2);
-        assert_eq!(response.imported_count + response.skipped_count + response.failed_count, 3);
+        assert_eq!(
+            response.imported_count + response.skipped_count + response.failed_count,
+            3
+        );
         assert_eq!(response.summary.total_records, 3);
         assert_eq!(response.summary.skipped_records, response.skipped_count);
         assert_eq!(response.summary.failed_records, response.failed_count);
@@ -2244,7 +2316,10 @@ mod tests {
         assert_eq!(response.imported_count, 0);
         assert_eq!(response.failed_count, 1);
         assert_eq!(response.skipped_count, 1);
-        assert_eq!(response.imported_count + response.skipped_count + response.failed_count, 2);
+        assert_eq!(
+            response.imported_count + response.skipped_count + response.failed_count,
+            2
+        );
         assert_eq!(response.summary.total_records, 2);
         assert_eq!(response.summary.skipped_records, response.skipped_count);
         assert_eq!(response.summary.failed_records, response.failed_count);
@@ -2297,7 +2372,10 @@ mod tests {
         assert_eq!(response.imported_count, 1);
         assert_eq!(response.failed_count, 0);
         assert_eq!(response.skipped_count, 1);
-        assert_eq!(response.imported_count + response.skipped_count + response.failed_count, 2);
+        assert_eq!(
+            response.imported_count + response.skipped_count + response.failed_count,
+            2
+        );
         assert_eq!(response.summary.total_records, 2);
         assert_eq!(response.summary.imported_records, response.imported_count);
         assert_eq!(response.summary.skipped_records, response.skipped_count);
@@ -2779,10 +2857,8 @@ mod tests {
             .get_all_chunks_for_project(project_id, active_generation)
             .await
             .unwrap();
-        let names: std::collections::HashSet<_> = chunks
-            .into_iter()
-            .filter_map(|chunk| chunk.name)
-            .collect();
+        let names: std::collections::HashSet<_> =
+            chunks.into_iter().filter_map(|chunk| chunk.name).collect();
 
         assert!(names.contains("active_only"));
         assert!(names.contains("legacy_only"));
@@ -2795,9 +2871,12 @@ mod tests {
         let project_id = "active_generation_graph_project";
         storage.set_active_generation(project_id, 1).await.unwrap();
 
-        let active_caller = code_symbol_for_generation(project_id, "caller", "src/active.rs", 1, Some(1));
-        let active_callee = code_symbol_for_generation(project_id, "active_callee", "src/active.rs", 10, Some(1));
-        let staged_callee = code_symbol_for_generation(project_id, "staged_callee", "src/staged.rs", 10, Some(2));
+        let active_caller =
+            code_symbol_for_generation(project_id, "caller", "src/active.rs", 1, Some(1));
+        let active_callee =
+            code_symbol_for_generation(project_id, "active_callee", "src/active.rs", 10, Some(1));
+        let staged_callee =
+            code_symbol_for_generation(project_id, "staged_callee", "src/staged.rs", 10, Some(2));
 
         let active_caller_thing = crate::types::safe_thing::symbol_thing(
             project_id,
@@ -3059,7 +3138,10 @@ mod tests {
         assert_eq!(params.project_id, None, "project_id must default to None");
         assert_eq!(params.resume, None, "resume must default to None");
         assert_eq!(params.job_id, None, "job_id must default to None");
-        assert_eq!(params.resume_token, None, "resume_token must default to None");
+        assert_eq!(
+            params.resume_token, None,
+            "resume_token must default to None"
+        );
         assert_eq!(
             params.allow_full_restart_fallback, None,
             "allow_full_restart_fallback must default to None"
@@ -3170,7 +3252,10 @@ mod tests {
             .unwrap();
 
         let active_gen = storage.get_active_generation(project_id).await.unwrap();
-        assert_eq!(active_gen, None, "no active generation pointer for pure legacy project");
+        assert_eq!(
+            active_gen, None,
+            "no active generation pointer for pure legacy project"
+        );
 
         let chunks = storage
             .get_all_chunks_for_project(project_id, active_gen)
@@ -3188,7 +3273,7 @@ mod tests {
 
     #[tokio::test]
     async fn index_status_round_trips_expected_fields() {
-        use crate::types::{IndexState, StructuralState, SemanticState};
+        use crate::types::{IndexState, SemanticState, StructuralState};
 
         let storage = setup_in_memory_test_db().await;
         let project_id = "legacy_compat_status_project";
@@ -3264,7 +3349,12 @@ mod tests {
     // Crash / Resume Integration Tests (Task 12)
     // ─────────────────────────────────────────────────────────────────────────
 
-    fn make_job(job_id: &str, project_id: &str, generation: u64, state: IndexJobState) -> IndexJobRecord {
+    fn make_job(
+        job_id: &str,
+        project_id: &str,
+        generation: u64,
+        state: IndexJobState,
+    ) -> IndexJobRecord {
         IndexJobRecord {
             id: None,
             job_id: job_id.to_string(),
@@ -3337,7 +3427,14 @@ mod tests {
         let files = ["src/a.rs", "src/b.rs", "src/c.rs", "src/d.rs", "src/e.rs"];
         for (i, file) in files.iter().enumerate() {
             let completed = i < 3;
-            let ckpt = make_checkpoint(job_id, project_id, generation, file, IndexJobPhase::Chunk, completed);
+            let ckpt = make_checkpoint(
+                job_id,
+                project_id,
+                generation,
+                file,
+                IndexJobPhase::Chunk,
+                completed,
+            );
             storage.upsert_file_checkpoint(&ckpt).await.unwrap();
         }
 
@@ -3361,7 +3458,10 @@ mod tests {
         assert_eq!(checkpoints.len(), 5, "all 5 checkpoints must be stored");
 
         let completed_count = checkpoints.iter().filter(|c| c.completed).count();
-        assert_eq!(completed_count, 3, "exactly 3 completed checkpoints must be visible for resume");
+        assert_eq!(
+            completed_count, 3,
+            "exactly 3 completed checkpoints must be visible for resume"
+        );
     }
 
     /// Scenario 2: Generation isolation — checkpoints from a different generation
@@ -3377,7 +3477,8 @@ mod tests {
         let job1 = make_job(job_id_gen1, project_id, 1, IndexJobState::Interrupted);
         storage.create_or_update_index_job(&job1).await.unwrap();
         for file in &["src/a.rs", "src/b.rs", "src/c.rs", "src/d.rs"] {
-            let ckpt = make_checkpoint(job_id_gen1, project_id, 1, file, IndexJobPhase::Chunk, true);
+            let ckpt =
+                make_checkpoint(job_id_gen1, project_id, 1, file, IndexJobPhase::Chunk, true);
             storage.upsert_file_checkpoint(&ckpt).await.unwrap();
         }
 
@@ -3385,7 +3486,8 @@ mod tests {
         let job2 = make_job(job_id_gen2, project_id, 2, IndexJobState::Running);
         storage.create_or_update_index_job(&job2).await.unwrap();
         for file in &["src/x.rs", "src/y.rs"] {
-            let ckpt = make_checkpoint(job_id_gen2, project_id, 2, file, IndexJobPhase::Chunk, true);
+            let ckpt =
+                make_checkpoint(job_id_gen2, project_id, 2, file, IndexJobPhase::Chunk, true);
             storage.upsert_file_checkpoint(&ckpt).await.unwrap();
         }
 
@@ -3394,9 +3496,16 @@ mod tests {
             .list_file_checkpoints_for_job(project_id, 2)
             .await
             .unwrap();
-        assert_eq!(gen2_checkpoints.len(), 2, "generation 2 must only see its own 2 checkpoints");
+        assert_eq!(
+            gen2_checkpoints.len(),
+            2,
+            "generation 2 must only see its own 2 checkpoints"
+        );
         for ckpt in &gen2_checkpoints {
-            assert_eq!(ckpt.generation, 2, "all returned checkpoints must belong to generation 2");
+            assert_eq!(
+                ckpt.generation, 2,
+                "all returned checkpoints must belong to generation 2"
+            );
         }
 
         // Querying generation 1 must NOT see generation 2 checkpoints
@@ -3404,7 +3513,11 @@ mod tests {
             .list_file_checkpoints_for_job(project_id, 1)
             .await
             .unwrap();
-        assert_eq!(gen1_checkpoints.len(), 4, "generation 1 must only see its own 4 checkpoints");
+        assert_eq!(
+            gen1_checkpoints.len(),
+            4,
+            "generation 1 must only see its own 4 checkpoints"
+        );
     }
 
     /// Scenario 3: Project isolation — checkpoints from a different project must
@@ -3418,7 +3531,14 @@ mod tests {
         let job_a = make_job("job_a", "project_a", generation, IndexJobState::Running);
         storage.create_or_update_index_job(&job_a).await.unwrap();
         for file in &["src/a.rs", "src/b.rs", "src/c.rs"] {
-            let ckpt = make_checkpoint("job_a", "project_a", generation, file, IndexJobPhase::Chunk, true);
+            let ckpt = make_checkpoint(
+                "job_a",
+                "project_a",
+                generation,
+                file,
+                IndexJobPhase::Chunk,
+                true,
+            );
             storage.upsert_file_checkpoint(&ckpt).await.unwrap();
         }
 
@@ -3426,7 +3546,14 @@ mod tests {
         let job_b = make_job("job_b", "project_b", generation, IndexJobState::Running);
         storage.create_or_update_index_job(&job_b).await.unwrap();
         for file in &["src/x.rs", "src/y.rs"] {
-            let ckpt = make_checkpoint("job_b", "project_b", generation, file, IndexJobPhase::Chunk, true);
+            let ckpt = make_checkpoint(
+                "job_b",
+                "project_b",
+                generation,
+                file,
+                IndexJobPhase::Chunk,
+                true,
+            );
             storage.upsert_file_checkpoint(&ckpt).await.unwrap();
         }
 
@@ -3434,7 +3561,11 @@ mod tests {
             .list_file_checkpoints_for_job("project_a", generation)
             .await
             .unwrap();
-        assert_eq!(a_checkpoints.len(), 3, "project_a must only see its own 3 checkpoints");
+        assert_eq!(
+            a_checkpoints.len(),
+            3,
+            "project_a must only see its own 3 checkpoints"
+        );
         for ckpt in &a_checkpoints {
             assert_eq!(ckpt.project_id, "project_a");
         }
@@ -3443,7 +3574,11 @@ mod tests {
             .list_file_checkpoints_for_job("project_b", generation)
             .await
             .unwrap();
-        assert_eq!(b_checkpoints.len(), 2, "project_b must only see its own 2 checkpoints");
+        assert_eq!(
+            b_checkpoints.len(),
+            2,
+            "project_b must only see its own 2 checkpoints"
+        );
         for ckpt in &b_checkpoints {
             assert_eq!(ckpt.project_id, "project_b");
         }
@@ -3461,7 +3596,14 @@ mod tests {
         let job = make_job(job_id, project_id, generation, IndexJobState::Running);
         storage.create_or_update_index_job(&job).await.unwrap();
 
-        let ckpt = make_checkpoint(job_id, project_id, generation, "src/lib.rs", IndexJobPhase::Chunk, false);
+        let ckpt = make_checkpoint(
+            job_id,
+            project_id,
+            generation,
+            "src/lib.rs",
+            IndexJobPhase::Chunk,
+            false,
+        );
         storage.upsert_file_checkpoint(&ckpt).await.unwrap();
 
         // Upsert again with completed=true (simulating retry that succeeded)
@@ -3475,9 +3617,19 @@ mod tests {
             .list_file_checkpoints_for_job(project_id, generation)
             .await
             .unwrap();
-        assert_eq!(checkpoints.len(), 1, "upsert must not create duplicate checkpoint entries");
-        assert!(checkpoints[0].completed, "checkpoint must reflect the latest completed=true state");
-        assert_eq!(checkpoints[0].chunks_written, 5, "chunks_written must reflect the latest upsert");
+        assert_eq!(
+            checkpoints.len(),
+            1,
+            "upsert must not create duplicate checkpoint entries"
+        );
+        assert!(
+            checkpoints[0].completed,
+            "checkpoint must reflect the latest completed=true state"
+        );
+        assert_eq!(
+            checkpoints[0].chunks_written, 5,
+            "chunks_written must reflect the latest upsert"
+        );
     }
 
     /// Scenario 5: Resume token reflects the last completed phase and file count.
@@ -3497,7 +3649,14 @@ mod tests {
 
         // Write 4 completed checkpoints in Embed phase
         for file in &["src/a.rs", "src/b.rs", "src/c.rs", "src/d.rs"] {
-            let ckpt = make_checkpoint(job_id, project_id, generation, file, IndexJobPhase::Embed, true);
+            let ckpt = make_checkpoint(
+                job_id,
+                project_id,
+                generation,
+                file,
+                IndexJobPhase::Embed,
+                true,
+            );
             storage.upsert_file_checkpoint(&ckpt).await.unwrap();
         }
 
@@ -3533,6 +3692,9 @@ mod tests {
             IndexJobPhase::Discover => "discover",
         };
         let actual_token = format!("ckpt_v1_phase_{phase_str}_file_{files_done}");
-        assert_eq!(actual_token, expected_token, "resume token must encode phase=embed and files_done=4");
+        assert_eq!(
+            actual_token, expected_token,
+            "resume token must encode phase=embed and files_done=4"
+        );
     }
 }

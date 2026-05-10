@@ -392,6 +392,79 @@ Or with Docker:
 
 ---
 
+## 🧬 Learning Memory
+
+Learning Memory is not a separate subsystem — it is the existing `Memory` subsystem with `metadata.learning.schema_version=1` set on each record. Any memory entry carrying this metadata field participates in the learning lifecycle.
+
+### Tools
+
+| Tool | Description |
+|------|-------------|
+| `learning_memory_create` | Create a new learning memory entry (status defaults to `candidate`). |
+| `learning_memory_get` | Retrieve a single learning memory by ID. |
+| `learning_memory_list` | List learning memories. Default filter: `candidate`, `confirmed`, and `rule` statuses. |
+| `learning_memory_search` | Search learning memories. Default filter: `confirmed` and `rule` statuses only. |
+| `learning_memory_update` | Update fields on an existing learning memory entry. |
+| `learning_memory_promote` | Promote a `candidate` to `confirmed`, or a `confirmed` to `rule`. |
+| `learning_memory_reject` | Reject a `candidate` or `confirmed` entry (sets status to `rejected`). |
+| `learning_memory_archive` | Archive a `confirmed` or `rule` entry (sets status to `archived`). |
+| `learning_memory_supersede` | Supersede an existing entry with a new one, linking them via replacement chain. |
+| `learning_memory_migrate_legacy` | Migrate legacy memory records into the learning schema. Defaults to `dry_run=true` — zero writes occur during a dry run. |
+| `learning_memory_delete` | **Soft compatibility shim only.** Default mode archives the entry (`mode=archive`). Passing `mode=reject` rejects it instead. This tool never performs a hard delete. |
+
+### Status Lifecycle
+
+| Status | `lifecycle_state` | Description |
+|--------|-------------------|-------------|
+| `candidate` | `candidate` | Newly created; under evaluation. |
+| `confirmed` | `active` | Validated and trusted. |
+| `rule` | `active` | Elevated to a standing rule. |
+| `rejected` | `rejected` | Explicitly rejected; excluded from default search/list. |
+| `superseded` | `superseded` | Replaced by a newer entry via `learning_memory_supersede`. |
+| `archived` | `archived` | Retired; excluded from default search/list. |
+
+### Default Search and List Inclusion
+
+- **`learning_memory_search`** returns `confirmed` and `rule` entries by default.
+- **`learning_memory_list`** returns `candidate`, `confirmed`, and `rule` entries by default.
+- `rejected`, `superseded`, and `archived` entries are excluded from both defaults; pass explicit `status` filters to include them.
+
+### Migration Safety
+
+`learning_memory_migrate_legacy` defaults to `dry_run=true`. In dry-run mode the tool parses, validates, and reports every record that would be migrated, but writes nothing to the database. Pass `dry_run=false` explicitly to commit the migration.
+
+### Capability Discovery
+
+Check `get_status` for the `capabilities.learning_memory` field:
+
+```json
+{
+  "capabilities": {
+    "learning_memory": {
+      "schema_version": 1,
+      "enabled": true
+    }
+  }
+}
+```
+
+If `capabilities.learning_memory` is absent or `enabled` is `false`, the learning memory tools are not available in this deployment.
+
+### Soft-Delete Semantics
+
+`learning_memory_delete` is a **soft compatibility shim**, not a hard delete:
+
+- Default (`mode=archive`): sets status to `archived` and `lifecycle_state` to `archived`.
+- `mode=reject`: sets status to `rejected` and `lifecycle_state` to `rejected`.
+
+No data is permanently removed. Use `learning_memory_archive` or `learning_memory_reject` directly for clarity.
+
+### Contract Reference
+
+The canonical fixture for integration testing is at `tests/fixtures/learning_memory_contract.json`.
+
+---
+
 ## 🛠️ Tools Available
 
 The server exposes **23 tools** to the AI model, organized into logical categories.

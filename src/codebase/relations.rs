@@ -31,6 +31,12 @@ pub async fn create_symbol_relations(
     let mut stats = RelationStats::default();
     let mut batch: Vec<SymbolRelation> = Vec::with_capacity(references.len());
 
+    let mut db_fallback_count: u32 = 0;
+    tracing::info!(
+        total_references = references.len(),
+        "DIAG: create_symbol_relations starting"
+    );
+
     for reference in references {
         // 1. Build from_symbol Thing using the stored definition line
         let from_thing = safe_thing::symbol_thing(
@@ -47,6 +53,7 @@ pub async fn create_symbol_relations(
             resolved.to_thing(project_id)
         } else {
             // Fallback: DB lookup with file context preference
+            db_fallback_count += 1;
             match storage
                 .find_symbol_by_name_with_context(
                     project_id,
@@ -99,6 +106,13 @@ pub async fn create_symbol_relations(
             project_id.to_string(),
         ));
     }
+
+    tracing::info!(
+        total_references = references.len(),
+        db_fallback_count,
+        batch_size = batch.len(),
+        "DIAG: create_symbol_relations resolved"
+    );
 
     // 4. Flush all relations in a single batch query
     if !batch.is_empty() {

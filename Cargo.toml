@@ -69,6 +69,7 @@ serde_json = "1"
 # Error handling
 anyhow = "1"
 thiserror = "2"
+tempfile = "3"
 
 # CLI
 clap = { version = "4", features = ["derive", "env"] }
@@ -110,7 +111,6 @@ tokio-util = "0.7"
 # `pub fn`. No other changes to the source.
 
 [dev-dependencies]
-tempfile = "3"
 filetime = "0.2"
 uuid = { version = "1", features = ["v4"] }
 

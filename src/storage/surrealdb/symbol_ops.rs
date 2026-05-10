@@ -273,14 +273,16 @@ pub(super) async fn get_symbol_callers(
     } else {
         parse_thing(symbol_id)?
     };
-    let sql = format!(r#"
+    let sql = format!(
+        r#"
         SELECT * FROM code_symbols
         WHERE id IN (
             SELECT VALUE in FROM symbol_relation
             WHERE out = $thing AND relation_type = 'calls' AND {ACTIVE_RELATION_GENERATION_FILTER}
         )
           AND {ACTIVE_SYMBOL_GENERATION_FILTER}
-    "#);
+    "#
+    );
 
     let mut response = db
         .query(&sql)
@@ -302,14 +304,16 @@ pub(super) async fn get_symbol_callees(
     } else {
         parse_thing(symbol_id)?
     };
-    let sql = format!(r#"
+    let sql = format!(
+        r#"
         SELECT * FROM code_symbols
         WHERE id IN (
             SELECT VALUE out FROM symbol_relation
             WHERE in = $thing AND relation_type = 'calls' AND {ACTIVE_RELATION_GENERATION_FILTER}
         )
           AND {ACTIVE_SYMBOL_GENERATION_FILTER}
-    "#);
+    "#
+    );
     let mut response = db
         .query(&sql)
         .bind(("thing", thing))
