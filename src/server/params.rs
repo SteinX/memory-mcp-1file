@@ -1070,7 +1070,7 @@ fn default_dry_run() -> bool {
 pub struct LearningMemoryDeleteParams {
     /// Memory record ID.
     pub id: String,
-    /// Soft-delete mode: soft_reject | soft_archive (default: soft_reject).
+    /// Soft-delete mode: soft_reject | soft_archive (default: soft_archive).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mode: Option<String>,
 }
