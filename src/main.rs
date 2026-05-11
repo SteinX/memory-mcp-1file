@@ -732,76 +732,78 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
     // heavier tool calls experience startup latency, and only once.
     // ──────────────────────────────────────────────────────────────────────
 
-    perform_startup_job_recovery(&state).await;
+    let code_startup_state = state.clone();
+    let code_startup_project_path = cli.project_path.clone();
+    tokio::spawn(async move {
+        perform_startup_job_recovery(&code_startup_state).await;
 
-    let startup_outcome = start_code_intelligence_lifecycle(
-        state.clone(),
-        cli.project_path.as_deref(),
-        std::path::Path::new("/project"),
-    )
-    .await;
+        let startup_outcome = start_code_intelligence_lifecycle(
+            code_startup_state,
+            code_startup_project_path.as_deref(),
+            std::path::Path::new("/project"),
+        )
+        .await;
 
-    match startup_outcome.status {
-        CodeIntelligenceStartupStatus::Started {
-            project_id,
-            project_path,
-            source,
-            diagnostic,
-        } => match source {
-            memory_mcp::codebase::resolver::StartupProjectRootSource::Configured => {
-                tracing::info!(
+        match startup_outcome.status {
+            CodeIntelligenceStartupStatus::Started {
+                project_id,
+                project_path,
+                source,
+                diagnostic,
+            } => match source {
+                memory_mcp::codebase::resolver::StartupProjectRootSource::Configured => {
+                    tracing::info!(
+                        code_intelligence = ?diagnostic.as_json(),
+                        project_id = %project_id,
+                        path = %project_path.display(),
+                        "Using configured code intelligence project root"
+                    );
+                }
+                memory_mcp::codebase::resolver::StartupProjectRootSource::Fallback => {
+                    tracing::info!(
+                        code_intelligence = ?diagnostic.as_json(),
+                        project_id = %project_id,
+                        path = %project_path.display(),
+                        "Using compatibility /project code intelligence root"
+                    );
+                }
+            },
+            CodeIntelligenceStartupStatus::MissingRoot {
+                configured_path,
+                fallback_path,
+                diagnostic,
+            } => {
+                tracing::warn!(
+                    configured_path = %configured_path.display(),
+                    fallback_path = %fallback_path.display(),
                     code_intelligence = ?diagnostic.as_json(),
-                    project_id = %project_id,
-                    path = %project_path.display(),
-                    "Using configured code intelligence project root"
+                    "Configured project root missing; continuing without code intelligence auto-start"
                 );
             }
-            memory_mcp::codebase::resolver::StartupProjectRootSource::Fallback => {
-                tracing::info!(
+            CodeIntelligenceStartupStatus::Disabled {
+                fallback_path,
+                diagnostic,
+            } => {
+                tracing::warn!(
+                    fallback_path = %fallback_path.display(),
                     code_intelligence = ?diagnostic.as_json(),
-                    project_id = %project_id,
-                    path = %project_path.display(),
-                    "Using compatibility /project code intelligence root"
+                    "Code intelligence auto-start disabled; continuing server startup"
                 );
             }
-        },
-        CodeIntelligenceStartupStatus::MissingRoot {
-            configured_path,
-            fallback_path,
-            diagnostic,
-        } => {
-            tracing::warn!(
-                configured_path = %configured_path.display(),
-                fallback_path = %fallback_path.display(),
-                code_intelligence = ?diagnostic.as_json(),
-                "Configured project root missing; continuing without code intelligence auto-start"
-            );
-        }
-        CodeIntelligenceStartupStatus::Disabled {
-            fallback_path,
-            diagnostic,
-        } => {
-            tracing::warn!(
-                fallback_path = %fallback_path.display(),
-                code_intelligence = ?diagnostic.as_json(),
-                "Code intelligence auto-start disabled; continuing server startup"
-            );
-        }
-        CodeIntelligenceStartupStatus::StartupFailed {
-            project_path,
-            diagnostic,
-            fatal,
-        } => {
-            tracing::error!(
-                path = %project_path.display(),
-                code_intelligence = ?diagnostic.as_json(),
-                "Failed to start code intelligence lifecycle"
-            );
-            if fatal {
-                return Ok(());
+            CodeIntelligenceStartupStatus::StartupFailed {
+                project_path,
+                diagnostic,
+                fatal,
+            } => {
+                tracing::error!(
+                    path = %project_path.display(),
+                    fatal,
+                    code_intelligence = ?diagnostic.as_json(),
+                    "Failed to start code intelligence lifecycle"
+                );
             }
         }
-    }
+    });
 
     if cli.stdio {
         run_stdio_mode(server, state, cli.idle_timeout).await?;

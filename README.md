@@ -164,6 +164,8 @@ The server uses a deterministic priority matrix to establish the primary project
 3.  **Default Fallback**: If no path is configured and `/project` exists, the server uses `/project` and preserves the legacy `project_id="project"` for compatibility.
 4.  **Disabled**: If no path is configured and `/project` is missing, code intelligence is disabled (reported in diagnostics), but the server remains functional for other memory tools.
 
+Startup recovery for interrupted code-indexing jobs runs after the HTTP/SSE process has started accepting requests. This keeps MCP initialization and `/health` responsive even when a previous indexing job left a large database state to inspect.
+
 #### Code Intelligence Language Contract
 
 This code intelligence path is static and tree-sitter-based. It does **not** require SourceKit, clangd, Kotlin LSP, Gradle model parsing, Xcode project parsing, or compiler invocation.
@@ -253,6 +255,8 @@ docker run --init -i --rm --memory=3g \
 #### HTTP Health Checks
 
 In HTTP SSE mode, `GET /health` is a liveness probe for the HTTP process and returns `200 OK` when the server is accepting requests. It intentionally does not query the embedded database, so extension heartbeats remain stable while long code-indexing or embedding jobs are using storage heavily. Use the MCP `get_status` tool when you need database or embedding readiness details.
+
+Embedding cache initialization is also kept out of destructive startup work: cache keys are scoped by model, so switching models ignores old entries instead of synchronously deleting a large `cache.redb` table before the server can listen.
 
 ### NPX / Bunx (No Docker required)
 
