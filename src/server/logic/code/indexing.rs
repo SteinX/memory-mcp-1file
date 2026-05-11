@@ -22,8 +22,8 @@ use crate::types::code::{IndexJobError, IndexJobProgress, IndexJobResumeState};
 
 use super::super::contracts::{
     assemble_project_projection, collect_project_projection_inputs, export_contract_meta,
-    shape_project_projection_graph, summary_collection_response, summary_index_status_response,
-    summary_index_status_response_with_reason, with_surface_guidance,
+    project_info_capability_block, shape_project_projection_graph, summary_collection_response,
+    summary_index_status_response, summary_index_status_response_with_reason, with_surface_guidance,
 };
 use super::super::{error_response, success_json};
 
@@ -1334,6 +1334,31 @@ pub async fn get_index_status(
                 }
             };
 
+            let serving_meta = state
+                .storage
+                .get_serving_metadata(&project_id)
+                .await
+                .unwrap_or_default();
+    let explicit_indexing_gen = state
+        .storage
+        .get_indexing_generation(&project_id)
+        .await
+        .ok()
+        .flatten();
+    let abandoned_max = state
+        .storage
+        .list_abandoned_generations(&project_id)
+        .await
+        .ok()
+        .and_then(|gens| gens.into_iter().filter(|gen| Some(*gen) != serving_meta.structural).max());
+    let indexing_gen = explicit_indexing_gen.or(abandoned_max).or(serving_meta.structural);
+            let is_indexing = status.status == crate::types::IndexState::Indexing;
+            let is_interrupted = match (abandoned_max, serving_meta.structural) {
+                (Some(a), Some(s)) => a > s,
+                _ => false,
+            };
+            let capability_block = project_info_capability_block(&serving_meta, indexing_gen, is_indexing, is_interrupted);
+
             Ok(success_json(json!({
                 "project_id": status.project_id,
                 "root_path": status.root_path,
@@ -1434,7 +1459,10 @@ pub async fn get_index_status(
                             && total_chunks > 0))
                 },
                 "error_message": status.error_message,
-                "failed_files": status.failed_files
+                "failed_files": status.failed_files,
+                "serving": capability_block["serving"].clone(),
+                "indexing_generation": capability_block["indexing_generation"].clone(),
+                "capabilities": capability_block["capabilities"].clone()
             })))
         }
         Ok(None) => {
@@ -1798,16 +1826,24 @@ pub async fn get_project_stats(
                 })));
             }
 
+            let early_serving = state.storage.get_serving_metadata(&project_id).await.unwrap_or_default();
+
             let mut status = IndexStatus::new(project_id.clone());
-            status.status = IndexState::Failed;
+            status.status = if early_serving.structural.is_some() {
+                IndexState::Completed
+            } else {
+                IndexState::Failed
+            };
             status.total_files = indexed_files;
             status.indexed_files = indexed_files;
             status.total_chunks = total_chunks as u32;
             status.total_symbols = total_symbols as u32;
-            status.error_message = Some(
-                "Index status metadata is missing while code intelligence rows exist; re-run index_project with force=true and confirm_failed_restart=true to rebuild metadata."
-                    .to_string(),
-            );
+            if early_serving.structural.is_none() {
+                status.error_message = Some(
+                    "Index status metadata is missing while code intelligence rows exist; re-run index_project with force=true and confirm_failed_restart=true to rebuild metadata."
+                        .to_string(),
+                );
+            }
             status
         }
     };
@@ -1877,6 +1913,31 @@ pub async fn get_project_stats(
             }
         }
     };
+
+    let serving_meta = state
+        .storage
+        .get_serving_metadata(&project_id)
+        .await
+        .unwrap_or_default();
+    let explicit_indexing_gen = state
+        .storage
+        .get_indexing_generation(&project_id)
+        .await
+        .ok()
+        .flatten();
+    let abandoned_max = state
+        .storage
+        .list_abandoned_generations(&project_id)
+        .await
+        .ok()
+        .and_then(|gens| gens.into_iter().filter(|gen| Some(*gen) != serving_meta.structural).max());
+    let indexing_gen = explicit_indexing_gen.or(abandoned_max).or(serving_meta.structural);
+    let is_indexing_stats = status.status == IndexState::Indexing;
+    let is_interrupted_stats = match (abandoned_max, serving_meta.structural) {
+        (Some(a), Some(s)) => a > s,
+        _ => false,
+    };
+    let capability_block = project_info_capability_block(&serving_meta, indexing_gen, is_indexing_stats, is_interrupted_stats);
 
     Ok(success_json(json!({
         "project_id": project_id,
@@ -1953,7 +2014,16 @@ pub async fn get_project_stats(
         },
         "started_at": status.started_at,
         "completed_at": status.completed_at,
-        "failed_files": status.failed_files
+        "failed_files": status.failed_files,
+        "serving": capability_block["serving"].clone(),
+        "serving_generation": serving_meta.structural.or(serving_meta.bm25).or(serving_meta.vector),
+        "indexing_generation": capability_block["indexing_generation"].clone(),
+        "capabilities": capability_block["capabilities"].clone(),
+        "capability_readiness": {
+            "serving_generation": serving_meta.structural.or(serving_meta.bm25).or(serving_meta.vector),
+            "indexing_generation": capability_block["indexing_generation"].clone(),
+            "capabilities": capability_block["capabilities"].clone(),
+        }
     })))
 }
 
@@ -3725,5 +3795,110 @@ mod tests {
         assert_eq!(status.structural_generation, 1);
         assert_eq!(status.semantic_generation, 1);
         assert_eq!(status.semantic_state, crate::types::SemanticState::Ready);
+    }
+
+    #[tokio::test]
+    async fn project_info_capability_status_contract() {
+        let ctx = TestContext::new().await;
+        let project_id = "capability-status-project";
+
+        ctx.state
+            .storage
+            .set_serving_generation(project_id, crate::types::code::CapabilityKind::Bm25, 5)
+            .await
+            .unwrap();
+        ctx.state
+            .storage
+            .set_serving_generation(project_id, crate::types::code::CapabilityKind::Vector, 5)
+            .await
+            .unwrap();
+        ctx.state
+            .storage
+            .set_indexing_generation(project_id, Some(6))
+            .await
+            .unwrap();
+
+        let mut status = IndexStatus::new(project_id.to_string());
+        status.status = IndexState::Indexing;
+        status.structural_generation = 5;
+        status.refresh_lifecycle_states();
+        ctx.state.storage.update_index_status(status).await.unwrap();
+
+        ctx.state
+            .indexing_projects
+            .lock()
+            .unwrap()
+            .insert(project_id.to_string());
+
+        let result = get_index_status(
+            &ctx.state,
+            GetIndexStatusParams {
+                project_id: project_id.to_string(),
+            },
+        )
+        .await
+        .unwrap();
+
+        let json = call_result_json(&result);
+        assert_eq!(json["status"], "indexing");
+        assert!(json["capabilities"].is_array(), "capabilities must be an array");
+        assert!(json["serving"].is_object(), "serving must be an object");
+        assert_eq!(json["indexing_generation"], 6);
+        assert_eq!(json["serving"]["indexing"], 6);
+
+        let caps = json["capabilities"].as_array().unwrap();
+        let bm25_cap = caps.iter().find(|c| c["capability"] == "bm25").unwrap();
+        assert_eq!(bm25_cap["freshness"], "stale");
+        assert_eq!(bm25_cap["serving_generation"], 5);
+        assert_eq!(bm25_cap["reason_code"], "indexing_in_progress");
+
+        let project_info_cap = caps.iter().find(|c| c["capability"] == "project_info").unwrap();
+        assert_eq!(project_info_cap["freshness"], "missing");
+        assert_eq!(project_info_cap["reason_code"], "no_serving_generation");
+    }
+
+    #[tokio::test]
+    async fn project_info_interrupted_generation_contract() {
+        let ctx = TestContext::new().await;
+        let project_id = "interrupted-gen-project";
+
+        ctx.state
+            .storage
+            .set_serving_generation(project_id, crate::types::code::CapabilityKind::Bm25, 3)
+            .await
+            .unwrap();
+        ctx.state
+            .storage
+            .set_serving_generation(project_id, crate::types::code::CapabilityKind::Vector, 3)
+            .await
+            .unwrap();
+
+        let mut status = IndexStatus::new(project_id.to_string());
+        status.status = IndexState::Failed;
+        status.structural_generation = 3;
+        status.refresh_lifecycle_states();
+        ctx.state.storage.update_index_status(status).await.unwrap();
+
+        let result = get_index_status(
+            &ctx.state,
+            GetIndexStatusParams {
+                project_id: project_id.to_string(),
+            },
+        )
+        .await
+        .unwrap();
+
+        let json = call_result_json(&result);
+        assert_eq!(json["status"], "failed");
+        assert_eq!(json["indexing_generation"], serde_json::Value::Null);
+        assert_eq!(json["serving"]["bm25"], 3);
+        assert_eq!(json["serving"]["vector"], 3);
+        assert_eq!(json["serving"]["indexing"], serde_json::Value::Null);
+
+        let caps = json["capabilities"].as_array().unwrap();
+        let bm25_cap = caps.iter().find(|c| c["capability"] == "bm25").unwrap();
+        assert_eq!(bm25_cap["freshness"], "fresh");
+        assert_eq!(bm25_cap["serving_generation"], 3);
+        assert_eq!(bm25_cap["reason_code"], serde_json::Value::Null);
     }
 }

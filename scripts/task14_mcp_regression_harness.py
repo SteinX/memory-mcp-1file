@@ -42,6 +42,7 @@ FORBIDDEN_TOOL_NAMES = {"search", "search_code"}
 SCRIPTED_PUBLIC_TOOL_NAMES = {"project_info", "recall_code"}
 DEFAULT_SCENARIO = "default"
 STALE_INDEXING_AFTER_RETRY_SCENARIO = "stale-indexing-after-retry"
+CODE_INTELLIGENCE_INDEXING_AVAILABILITY_SCENARIO = "code-intelligence-indexing-availability"
 
 STALE_SCENARIO_TEST_STAGES: list[tuple[str, list[str], str]] = [
     (
@@ -63,6 +64,29 @@ STALE_SCENARIO_TEST_STAGES: list[tuple[str, list[str], str]] = [
         "confirmed retry",
         ["cargo", "test", "explicit_retry_after_lost_one_shot_starts_new_operation", "--", "--nocapture"],
         "explicit_retry_after_lost_one_shot_starts_new_operation",
+    ),
+]
+
+CODE_INTELLIGENCE_INDEXING_AVAILABILITY_STAGES: list[tuple[str, list[str], str]] = [
+    (
+        "project_info available during indexing",
+        ["cargo", "test", "project_info_capability_status_contract", "--", "--nocapture"],
+        "project_info_capability_status_contract",
+    ),
+    (
+        "recall_code serves stale generation during indexing",
+        ["cargo", "test", "recall_code_serves_stale_generation_during_indexing", "--", "--nocapture"],
+        "recall_code_serves_stale_generation_during_indexing",
+    ),
+    (
+        "search_symbols serves stale symbol generation during indexing",
+        ["cargo", "test", "search_symbols_serves_stale_symbol_generation", "--", "--nocapture"],
+        "search_symbols_serves_stale_symbol_generation",
+    ),
+    (
+        "symbol_graph serves stale graph generation during indexing",
+        ["cargo", "test", "symbol_graph_serves_stale_graph_generation", "--", "--nocapture"],
+        "symbol_graph_serves_stale_graph_generation",
     ),
 ]
 
@@ -317,13 +341,53 @@ def run_stale_indexing_after_retry_scenario(timeout_seconds: float) -> tuple[int
     return (0 if not failed else 2), payload
 
 
+def run_code_intelligence_indexing_availability_scenario(timeout_seconds: float) -> tuple[int, dict[str, Any]]:
+    started = time.time()
+    stages: list[StageResult] = []
+
+    stage_timeout = max(120.0, timeout_seconds * 4)
+    for stage_label, command, test_name in CODE_INTELLIGENCE_INDEXING_AVAILABILITY_STAGES:
+        stages.append(
+            stage_call(
+                f"real {stage_label}",
+                lambda stage_label=stage_label, command=command, test_name=test_name: _run_rust_test_stage(
+                    stage_label=stage_label,
+                    command=command,
+                    test_name=test_name,
+                    timeout_seconds=stage_timeout,
+                ),
+            )
+        )
+
+    failed = [s.name for s in stages if not s.ok]
+    payload = {
+        "scenario": CODE_INTELLIGENCE_INDEXING_AVAILABILITY_SCENARIO,
+        "timestamp_utc": now_iso(),
+        "contract_path": "rust_test_subprocess",
+        "stage_timeout_seconds": stage_timeout,
+        "harness_status": "ok" if not failed else "failed",
+        "duration_seconds": round(time.time() - started, 3),
+        "critical_failures": failed,
+        "stages": [
+            {
+                "name": s.name,
+                "ok": s.ok,
+                "duration_ms": s.duration_ms,
+                "detail": s.detail,
+            }
+            for s in stages
+        ],
+    }
+    return (0 if not failed else 2), payload
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Task 14 MCP regression harness")
     parser.add_argument("--command", help="Explicit server command, e.g. 'target/release/memory-mcp --stdio'")
     parser.add_argument("--timeout", type=float, default=30.0, help="Per-stage timeout in seconds")
     parser.add_argument(
         "--scenario",
-        choices=[DEFAULT_SCENARIO, STALE_INDEXING_AFTER_RETRY_SCENARIO],
+        choices=[DEFAULT_SCENARIO, STALE_INDEXING_AFTER_RETRY_SCENARIO, CODE_INTELLIGENCE_INDEXING_AVAILABILITY_SCENARIO],
         default=DEFAULT_SCENARIO,
         help="Harness scenario to run",
     )
@@ -333,6 +397,33 @@ def main() -> int:
 
     if args.scenario == STALE_INDEXING_AFTER_RETRY_SCENARIO:
         exit_code, scenario_payload = run_stale_indexing_after_retry_scenario(args.timeout)
+        print(json.dumps(scenario_payload, indent=2, sort_keys=True))
+        return exit_code
+
+    if args.scenario == CODE_INTELLIGENCE_INDEXING_AVAILABILITY_SCENARIO:
+        exit_code, scenario_payload = run_code_intelligence_indexing_availability_scenario(args.timeout)
+        json_path = EVIDENCE_DIR / "task-10-code-intelligence-indexing-availability.json"
+        json_path.write_text(json.dumps(scenario_payload, indent=2, sort_keys=True))
+        md_lines = [
+            "# Code Intelligence Indexing Availability",
+            "",
+            f"**Scenario:** `{CODE_INTELLIGENCE_INDEXING_AVAILABILITY_SCENARIO}`",
+            f"**Status:** {'PASS' if scenario_payload['harness_status'] == 'ok' else 'FAIL'}",
+            f"**Timestamp:** {scenario_payload['timestamp_utc']}",
+            f"**Duration:** {scenario_payload['duration_seconds']}s",
+            "",
+            "## Stages",
+            "",
+        ]
+        for s in scenario_payload["stages"]:
+            icon = "✅" if s["ok"] else "❌"
+            md_lines.append(f"- {icon} `{s['name']}` ({s['duration_ms']:.0f}ms)")
+        if scenario_payload["critical_failures"]:
+            md_lines += ["", "## Critical Failures", ""]
+            for f in scenario_payload["critical_failures"]:
+                md_lines.append(f"- {f}")
+        md_path = EVIDENCE_DIR / "task-10-code-intelligence-indexing-availability.md"
+        md_path.write_text("\n".join(md_lines) + "\n")
         print(json.dumps(scenario_payload, indent=2, sort_keys=True))
         return exit_code
 

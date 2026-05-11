@@ -7,6 +7,7 @@ use crate::types::{
     ProjectionMaterializationEnvelope, Relation, SemanticLifecycleView, StructuralLifecycleView,
     SurfaceGuidance, SymbolRelation, TraversalDefaults, TraversalSummary,
 };
+use crate::types::code::{CapabilityFreshness, CapabilityKind, CapabilityReadiness, ServingGenerationMetadata};
 
 fn projection_partial_reason_code(status: &IndexStatus) -> Option<ContractReasonCode> {
     match status.projection_state {
@@ -1723,4 +1724,134 @@ pub fn build_project_projection(
     );
     let shaped = shape_project_projection_graph(inputs);
     assemble_project_projection(shaped)
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Capability status helpers (Task 5: project_info capability readiness)
+// ─────────────────────────────────────────────────────────────────────────────
+
+fn capability_freshness(serving_gen: Option<u64>, is_indexing: bool) -> CapabilityFreshness {
+    match serving_gen {
+        None => CapabilityFreshness::Missing,
+        Some(_) if is_indexing => CapabilityFreshness::Stale,
+        Some(_) => CapabilityFreshness::Fresh,
+    }
+}
+
+pub fn build_capability_readiness(
+    meta: &ServingGenerationMetadata,
+    indexing_gen: Option<u64>,
+    is_indexing: bool,
+    is_interrupted: bool,
+) -> Vec<CapabilityReadiness> {
+    let structural_serving = meta.structural;
+    let is_stale = is_indexing || match (indexing_gen, structural_serving) {
+        (Some(i), Some(s)) => i > s,
+        _ => false,
+    };
+
+    let caps: &[(CapabilityKind, Option<u64>)] = &[
+        (CapabilityKind::ProjectInfo, meta.structural),
+        (CapabilityKind::Bm25, meta.bm25),
+        (CapabilityKind::Vector, meta.vector),
+        (CapabilityKind::Symbols, meta.symbols),
+        (CapabilityKind::Graph, meta.graph),
+        (CapabilityKind::Semantic, meta.semantic),
+    ];
+
+    let mut result: Vec<CapabilityReadiness> = caps.iter()
+        .map(|(kind, gen)| {
+            let freshness = match gen {
+                None => CapabilityFreshness::Missing,
+                Some(_) if is_stale => CapabilityFreshness::Stale,
+                Some(_) => CapabilityFreshness::Fresh,
+            };
+            let reason_code = match &freshness {
+                CapabilityFreshness::Missing => Some("no_serving_generation".to_string()),
+                CapabilityFreshness::Stale if is_indexing => Some("indexing_in_progress".to_string()),
+                CapabilityFreshness::Stale => Some("stale".to_string()),
+                CapabilityFreshness::Fresh => None,
+                CapabilityFreshness::Partial => Some("partial".to_string()),
+                CapabilityFreshness::Degraded => Some("degraded".to_string()),
+                CapabilityFreshness::Unavailable => Some("unavailable".to_string()),
+            };
+            CapabilityReadiness {
+                capability: kind.clone(),
+                freshness,
+                serving_generation: *gen,
+                reason: None,
+                reason_code,
+            }
+        })
+        .collect();
+
+    if is_stale {
+        result.push(CapabilityReadiness {
+            capability: CapabilityKind::ProjectInfo,
+            freshness: CapabilityFreshness::Partial,
+            serving_generation: structural_serving,
+            reason: None,
+            reason_code: Some("partial".to_string()),
+        });
+    }
+
+    if is_interrupted && is_stale {
+        result.push(CapabilityReadiness {
+            capability: CapabilityKind::Graph,
+            freshness: CapabilityFreshness::Degraded,
+            serving_generation: meta.graph,
+            reason: None,
+            reason_code: Some("degraded".to_string()),
+        });
+        result.push(CapabilityReadiness {
+            capability: CapabilityKind::Vector,
+            freshness: CapabilityFreshness::Degraded,
+            serving_generation: meta.vector,
+            reason: None,
+            reason_code: Some("degraded".to_string()),
+        });
+    }
+
+    result
+}
+
+pub fn serving_envelope_json(
+    meta: &ServingGenerationMetadata,
+    indexing_generation: Option<u64>,
+) -> serde_json::Value {
+    serde_json::json!({
+        "structural": meta.structural,
+        "bm25": meta.bm25,
+        "vector": meta.vector,
+        "symbols": meta.symbols,
+        "graph": meta.graph,
+        "semantic": meta.semantic,
+        "indexing": indexing_generation,
+    })
+}
+
+pub fn project_info_capability_block(
+    meta: &ServingGenerationMetadata,
+    indexing_generation: Option<u64>,
+    is_indexing: bool,
+    is_interrupted: bool,
+) -> serde_json::Value {
+    let capabilities = build_capability_readiness(meta, indexing_generation, is_indexing, is_interrupted);
+    let caps_json: Vec<serde_json::Value> = capabilities
+        .iter()
+        .map(|c| {
+            serde_json::json!({
+                "capability": serde_json::to_value(&c.capability).unwrap_or_default(),
+                "freshness": serde_json::to_value(&c.freshness).unwrap_or_default(),
+                "serving_generation": c.serving_generation,
+                "reason_code": c.reason_code,
+            })
+        })
+        .collect();
+
+    serde_json::json!({
+        "serving": serving_envelope_json(meta, indexing_generation),
+        "indexing_generation": indexing_generation,
+        "capabilities": caps_json,
+    })
 }

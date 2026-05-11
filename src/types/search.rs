@@ -1,7 +1,7 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-use super::code::{ChunkType, Language};
+use super::code::{CapabilityFreshness, ChunkType, Language};
 use super::memory::MemoryType;
 use super::Datetime;
 use super::SurrealValue;
@@ -211,5 +211,9 @@ pub struct ScoredCodeChunk {
     /// Hierarchical breadcrumb path from AST (e.g. "impl:AuthService > fn:login")
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub context_path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub freshness: Option<CapabilityFreshness>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub generation: Option<u64>,
     pub score: f32,
 }

@@ -7,7 +7,7 @@ use tokio::fs;
 
 use crate::config::{AppState, CodeIndexPipelineMode};
 use crate::storage::StorageBackend;
-use crate::types::{derive_project_id, IndexState, IndexStatus};
+use crate::types::{derive_project_id, CapabilityKind, IndexState, IndexStatus};
 use crate::Result;
 
 use super::chunker::chunk_file_for_generation;
@@ -469,6 +469,19 @@ async fn promote_index_generation_and_cleanup(
         .storage
         .set_active_generation(project_id, target_generation)
         .await?;
+    state
+        .storage
+        .set_serving_generation(project_id, CapabilityKind::Bm25, target_generation)
+        .await?;
+    state
+        .storage
+        .set_serving_generation(project_id, CapabilityKind::Symbols, target_generation)
+        .await?;
+    state
+        .storage
+        .set_serving_generation(project_id, CapabilityKind::Graph, target_generation)
+        .await?;
+    state.storage.set_indexing_generation(project_id, None).await?;
     emit_index_timing(
         project_id,
         "promote",
@@ -480,6 +493,15 @@ async fn promote_index_generation_and_cleanup(
         0,
     );
 
+    let serving_metadata = state.storage.get_serving_metadata(project_id).await?;
+    let protected_serving_generations = [
+        serving_metadata.structural,
+        serving_metadata.bm25,
+        serving_metadata.symbols,
+        serving_metadata.graph,
+        serving_metadata.vector,
+        serving_metadata.semantic,
+    ];
     let abandoned_generations = state.storage.list_abandoned_generations(project_id).await?;
     if abandoned_generations.is_empty() {
         return Ok(());
@@ -487,7 +509,11 @@ async fn promote_index_generation_and_cleanup(
 
     let cleanup_started = Instant::now();
     for generation in abandoned_generations {
-        if generation >= target_generation {
+        if generation >= target_generation
+            || protected_serving_generations
+                .iter()
+                .any(|serving_generation| *serving_generation == Some(generation))
+        {
             continue;
         }
         let generation_cleanup_started = Instant::now();
@@ -717,6 +743,10 @@ async fn do_index_project(
     tracing::info!(project_id = %project_id, phase = "task_spawned", "One-shot code index task spawned");
     let status_started = Instant::now();
     state.storage.update_index_status(status.clone()).await?;
+    state
+        .storage
+        .set_indexing_generation(project_id, Some(active_structural_generation))
+        .await?;
     status_update_elapsed_ms += status_started.elapsed().as_millis();
     emit_index_timing(
         project_id,

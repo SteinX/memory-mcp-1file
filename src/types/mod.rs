@@ -100,9 +100,10 @@ pub fn record_key_to_string(key: &RecordIdKey) -> String {
 }
 
 pub use code::{
-    ChunkType, CodeChunk, IndexFileCheckpoint, IndexJobPhase, IndexJobReasonCode,
-    IndexJobRecord, IndexJobState, IndexState, IndexStatus, Language, ManifestEntry,
-    ProjectionState, SemanticState, StructuralState,
+    CapabilityFreshness, CapabilityKind, CapabilityReadiness, ChunkType, CodeChunk,
+    IndexFileCheckpoint, IndexJobPhase, IndexJobReasonCode, IndexJobRecord, IndexJobState,
+    IndexState, IndexStatus, Language, ManifestEntry, ProjectionState, SemanticState,
+    ServingGenerationMetadata, StructuralState,
 };
 pub use code_intelligence::{CodeIntelligenceDiagnostic, CodeIntelligenceDiagnosticCode};
 pub use embedding_state::{EmbedResult, EmbedTarget, EmbeddingState};

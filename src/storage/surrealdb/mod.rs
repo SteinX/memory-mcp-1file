@@ -10,9 +10,10 @@ use super::StorageBackend;
 use crate::graph::{GraphTraversalStorage, SymbolGraphTraversalStorage};
 use crate::storage::traits::{MemoryExportOptions, MemoryImportOptions};
 use crate::types::{
-    CodeChunk, CodeSymbol, Direction, Entity, ExportMemoryResponse, ImportMemoryResponse,
-    IndexFileCheckpoint, IndexJobRecord, IndexStatus, ManifestEntry, Memory, MemoryQuery,
-    MemoryUpdate, MigrationMemoryRecord, Relation, ScoredCodeChunk, SearchResult, SymbolRelation,
+    CapabilityKind, CodeChunk, CodeSymbol, Direction, Entity, ExportMemoryResponse,
+    ImportMemoryResponse, IndexFileCheckpoint, IndexJobRecord, IndexStatus, ManifestEntry, Memory,
+    MemoryQuery, MemoryUpdate, MigrationMemoryRecord, Relation, ScoredCodeChunk, SearchResult,
+    ServingGenerationMetadata, SymbolRelation,
 };
 use crate::Result;
 
@@ -701,6 +702,39 @@ impl StorageBackend for SurrealStorage {
         code_ops::set_active_generation(&self.db, project_id, generation).await
     }
 
+    async fn get_serving_generation(
+        &self,
+        project_id: &str,
+        capability: CapabilityKind,
+    ) -> Result<Option<u64>> {
+        code_ops::get_serving_generation(&self.db, project_id, capability).await
+    }
+
+    async fn set_serving_generation(
+        &self,
+        project_id: &str,
+        capability: CapabilityKind,
+        generation: u64,
+    ) -> Result<()> {
+        code_ops::set_serving_generation(&self.db, project_id, capability, generation).await
+    }
+
+    async fn get_indexing_generation(&self, project_id: &str) -> Result<Option<u64>> {
+        code_ops::get_indexing_generation(&self.db, project_id).await
+    }
+
+    async fn set_indexing_generation(
+        &self,
+        project_id: &str,
+        generation: Option<u64>,
+    ) -> Result<()> {
+        code_ops::set_indexing_generation(&self.db, project_id, generation).await
+    }
+
+    async fn get_serving_metadata(&self, project_id: &str) -> Result<ServingGenerationMetadata> {
+        code_ops::get_serving_metadata(&self.db, project_id).await
+    }
+
     async fn list_abandoned_generations(&self, project_id: &str) -> Result<Vec<u64>> {
         code_ops::list_abandoned_generations(&self.db, project_id).await
     }
@@ -923,6 +957,10 @@ impl StorageBackend for SurrealStorage {
         prefer_file: Option<&str>,
     ) -> Result<Option<CodeSymbol>> {
         symbol_ops::find_symbol_by_name_with_context(&self.db, project_id, name, prefer_file).await
+    }
+
+    async fn get_symbol_project_id(&self, symbol_id: &str) -> Result<Option<String>> {
+        symbol_ops::get_symbol_project_id(&self.db, symbol_id).await
     }
 
     async fn health_check(&self) -> Result<bool> {
@@ -3695,6 +3733,126 @@ mod tests {
         assert_eq!(
             actual_token, expected_token,
             "resume token must encode phase=embed and files_done=4"
+        );
+    }
+
+    #[tokio::test]
+    async fn serving_generation_storage_roundtrip() {
+        let storage = setup_in_memory_test_db().await;
+        let project_id = "sg_roundtrip_project";
+
+        storage
+            .set_serving_generation(project_id, CapabilityKind::Bm25, 10)
+            .await
+            .unwrap();
+        storage
+            .set_serving_generation(project_id, CapabilityKind::Symbols, 20)
+            .await
+            .unwrap();
+        storage
+            .set_serving_generation(project_id, CapabilityKind::Graph, 30)
+            .await
+            .unwrap();
+        storage
+            .set_serving_generation(project_id, CapabilityKind::Vector, 40)
+            .await
+            .unwrap();
+        storage
+            .set_serving_generation(project_id, CapabilityKind::Semantic, 50)
+            .await
+            .unwrap();
+        storage
+            .set_indexing_generation(project_id, Some(99))
+            .await
+            .unwrap();
+
+        assert_eq!(
+            storage
+                .get_serving_generation(project_id, CapabilityKind::Bm25)
+                .await
+                .unwrap(),
+            Some(10)
+        );
+        assert_eq!(
+            storage
+                .get_serving_generation(project_id, CapabilityKind::Symbols)
+                .await
+                .unwrap(),
+            Some(20)
+        );
+        assert_eq!(
+            storage
+                .get_serving_generation(project_id, CapabilityKind::Graph)
+                .await
+                .unwrap(),
+            Some(30)
+        );
+        assert_eq!(
+            storage
+                .get_serving_generation(project_id, CapabilityKind::Vector)
+                .await
+                .unwrap(),
+            Some(40)
+        );
+        assert_eq!(
+            storage
+                .get_serving_generation(project_id, CapabilityKind::Semantic)
+                .await
+                .unwrap(),
+            Some(50)
+        );
+        assert_eq!(
+            storage
+                .get_indexing_generation(project_id)
+                .await
+                .unwrap(),
+            Some(99)
+        );
+
+        let meta = storage.get_serving_metadata(project_id).await.unwrap();
+        assert_eq!(meta.bm25, Some(10));
+        assert_eq!(meta.symbols, Some(20));
+        assert_eq!(meta.graph, Some(30));
+        assert_eq!(meta.vector, Some(40));
+        assert_eq!(meta.semantic, Some(50));
+        assert_eq!(meta.indexing, Some(99));
+
+        storage
+            .set_indexing_generation(project_id, None)
+            .await
+            .unwrap();
+        assert_eq!(
+            storage.get_indexing_generation(project_id).await.unwrap(),
+            None
+        );
+    }
+
+    #[tokio::test]
+    async fn active_generation_compatibility() {
+        let storage = setup_in_memory_test_db().await;
+        let project_id = "compat_project";
+
+        storage.set_active_generation(project_id, 42).await.unwrap();
+
+        assert_eq!(
+            storage.get_active_generation(project_id).await.unwrap(),
+            Some(42)
+        );
+
+        assert_eq!(
+            storage
+                .get_serving_generation(project_id, CapabilityKind::ProjectInfo)
+                .await
+                .unwrap(),
+            Some(42),
+            "get_serving_generation(ProjectInfo) must be a compat alias for get_active_generation"
+        );
+
+        let meta = storage.get_serving_metadata(project_id).await.unwrap();
+        assert_eq!(
+            meta.structural,
+            Some(42),
+            "get_serving_metadata().structural must reflect active generation"
         );
     }
 }

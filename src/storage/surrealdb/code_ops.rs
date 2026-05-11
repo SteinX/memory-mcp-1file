@@ -4,7 +4,8 @@ use surrealdb::Surreal;
 use std::collections::BTreeSet;
 
 use crate::types::{
-    CodeChunk, IndexFileCheckpoint, IndexJobRecord, IndexStatus, RecordId, ScoredCodeChunk,
+    CapabilityKind, CodeChunk, IndexFileCheckpoint, IndexJobRecord, IndexStatus, RecordId,
+    ScoredCodeChunk, ServingGenerationMetadata,
 };
 use crate::Result;
 
@@ -627,6 +628,7 @@ pub(super) async fn bm25_search_code(
             chunk_type,
             name,
             context_path,
+            generation,
             1.0f AS score
         FROM code_chunks
         WHERE string::lowercase(content) CONTAINS string::lowercase($query)
@@ -807,4 +809,135 @@ pub(super) async fn clear_project_embeddings(db: &Surreal<Db>, project_id: &str)
     // Each UPDATE returns affected rows; sum both statements
     let chunks_cleared = response.num_statements();
     Ok(chunks_cleared as u64)
+}
+
+fn capability_column(capability: &CapabilityKind) -> &'static str {
+    match capability {
+        CapabilityKind::ProjectInfo | CapabilityKind::Projection => "serving_gen_structural",
+        CapabilityKind::Bm25 => "serving_gen_bm25",
+        CapabilityKind::Vector => "serving_gen_vector",
+        CapabilityKind::Symbols => "serving_gen_symbols",
+        CapabilityKind::Graph => "serving_gen_graph",
+        CapabilityKind::Semantic => "serving_gen_semantic",
+    }
+}
+
+fn is_structural(capability: &CapabilityKind) -> bool {
+    matches!(capability, CapabilityKind::ProjectInfo | CapabilityKind::Projection)
+}
+
+pub(super) async fn get_serving_generation(
+    db: &Surreal<Db>,
+    project_id: &str,
+    capability: CapabilityKind,
+) -> Result<Option<u64>> {
+    if is_structural(&capability) {
+        return get_active_generation(db, project_id).await;
+    }
+    let col = capability_column(&capability);
+    let sql = format!(
+        "SELECT {col} FROM capability_serving_gen WHERE project_id = $project_id LIMIT 1"
+    );
+    let mut response = db
+        .query(&sql)
+        .bind(("project_id", project_id.to_string()))
+        .await?;
+    let result: Vec<serde_json::Value> = response.take(0).unwrap_or_default();
+    Ok(result.first().and_then(|v| v.get(col)).and_then(|g| {
+        g.as_u64()
+            .or_else(|| g.as_i64().and_then(|i| u64::try_from(i).ok()))
+    }))
+}
+
+pub(super) async fn set_serving_generation(
+    db: &Surreal<Db>,
+    project_id: &str,
+    capability: CapabilityKind,
+    generation: u64,
+) -> Result<()> {
+    if is_structural(&capability) {
+        return set_active_generation(db, project_id, generation).await;
+    }
+    let col = capability_column(&capability);
+    let sql = format!(
+        r#"UPSERT capability_serving_gen SET
+            project_id = $project_id,
+            {col} = $generation,
+            updated_at = time::now()
+        WHERE project_id = $project_id"#
+    );
+    db.query(&sql)
+        .bind(("project_id", project_id.to_string()))
+        .bind(("generation", generation as i64))
+        .await?;
+    Ok(())
+}
+
+pub(super) async fn get_indexing_generation(
+    db: &Surreal<Db>,
+    project_id: &str,
+) -> Result<Option<u64>> {
+    let sql =
+        "SELECT indexing_gen FROM capability_serving_gen WHERE project_id = $project_id LIMIT 1";
+    let mut response = db
+        .query(sql)
+        .bind(("project_id", project_id.to_string()))
+        .await?;
+    let result: Vec<serde_json::Value> = response.take(0).unwrap_or_default();
+    Ok(result
+        .first()
+        .and_then(|v| v.get("indexing_gen"))
+        .and_then(|g| {
+            g.as_u64()
+                .or_else(|| g.as_i64().and_then(|i| u64::try_from(i).ok()))
+        }))
+}
+
+pub(super) async fn set_indexing_generation(
+    db: &Surreal<Db>,
+    project_id: &str,
+    generation: Option<u64>,
+) -> Result<()> {
+    let sql = r#"UPSERT capability_serving_gen SET
+        project_id = $project_id,
+        indexing_gen = $generation,
+        updated_at = time::now()
+    WHERE project_id = $project_id"#;
+    db.query(sql)
+        .bind(("project_id", project_id.to_string()))
+        .bind(("generation", generation.map(|g| g as i64)))
+        .await?;
+    Ok(())
+}
+
+pub(super) async fn get_serving_metadata(
+    db: &Surreal<Db>,
+    project_id: &str,
+) -> Result<ServingGenerationMetadata> {
+    let structural = get_active_generation(db, project_id).await?;
+
+    let sql = "SELECT * FROM capability_serving_gen WHERE project_id = $project_id LIMIT 1";
+    let mut response = db
+        .query(sql)
+        .bind(("project_id", project_id.to_string()))
+        .await?;
+    let result: Vec<serde_json::Value> = response.take(0).unwrap_or_default();
+    let row = result.into_iter().next().unwrap_or_default();
+
+    let pick = |key: &str| -> Option<u64> {
+        row.get(key).and_then(|g| {
+            g.as_u64()
+                .or_else(|| g.as_i64().and_then(|i| u64::try_from(i).ok()))
+        })
+    };
+
+    Ok(ServingGenerationMetadata {
+        structural,
+        bm25: pick("serving_gen_bm25"),
+        symbols: pick("serving_gen_symbols"),
+        graph: pick("serving_gen_graph"),
+        vector: pick("serving_gen_vector"),
+        semantic: pick("serving_gen_semantic"),
+        indexing: pick("indexing_gen"),
+    })
 }

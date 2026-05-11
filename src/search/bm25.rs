@@ -428,6 +428,7 @@ pub struct ChunkMeta {
     /// Hierarchical breadcrumb path from AST (e.g. "impl:AuthService > fn:login")
     pub context_path: Option<String>,
     pub project_id: String,
+    pub generation: Option<u64>,
 }
 
 impl ChunkMeta {
@@ -454,6 +455,7 @@ impl ChunkMeta {
             name: chunk.name.clone(),
             context_path: chunk.context_path.clone(),
             project_id,
+            generation: chunk.generation,
         };
         Some((meta, chunk.content.clone()))
     }
@@ -677,12 +679,12 @@ impl CodeSearchEngine {
         };
 
         // Build a content lookup by chunk ID
-        let content_map: HashMap<String, String> = fetched
+        let chunk_map: HashMap<String, crate::types::CodeChunk> = fetched
             .into_iter()
             .filter_map(|c| {
                 c.id.as_ref()
                     .map(|t| crate::types::record_key_to_string(&t.key))
-                    .map(|id| (id, c.content))
+                    .map(|id| (id, c))
             })
             .collect();
 
@@ -690,7 +692,8 @@ impl CodeSearchEngine {
         scored_metas
             .into_iter()
             .map(|(score, meta)| {
-                let content = content_map.get(&meta.id).cloned().unwrap_or_default();
+                let chunk = chunk_map.get(&meta.id);
+                let content = chunk.map(|chunk| chunk.content.clone()).unwrap_or_default();
                 ScoredCodeChunk {
                     id: meta.id,
                     file_path: meta.file_path,
@@ -701,6 +704,8 @@ impl CodeSearchEngine {
                     chunk_type: meta.chunk_type,
                     name: meta.name,
                     context_path: meta.context_path,
+                    freshness: None,
+                    generation: chunk.and_then(|chunk| chunk.generation).or(meta.generation),
                     score,
                 }
             })
@@ -1282,6 +1287,45 @@ mod tests {
         async fn set_active_generation(&self, _: &str, _: u64) -> crate::Result<()> {
             unreachable!()
         }
+        async fn get_serving_generation(
+            &self,
+            _: &str,
+            _: crate::types::CapabilityKind,
+        ) -> crate::Result<Option<u64>> {
+            Ok(None)
+        }
+        async fn set_serving_generation(
+            &self,
+            _: &str,
+            _: crate::types::CapabilityKind,
+            _: u64,
+        ) -> crate::Result<()> {
+            unreachable!()
+        }
+        async fn get_indexing_generation(&self, _: &str) -> crate::Result<Option<u64>> {
+            Ok(None)
+        }
+        async fn set_indexing_generation(
+            &self,
+            _: &str,
+            _: Option<u64>,
+        ) -> crate::Result<()> {
+            unreachable!()
+        }
+        async fn get_serving_metadata(
+            &self,
+            _: &str,
+        ) -> crate::Result<crate::types::ServingGenerationMetadata> {
+            Ok(crate::types::ServingGenerationMetadata {
+                structural: None,
+                bm25: None,
+                symbols: None,
+                graph: None,
+                vector: None,
+                semantic: None,
+                indexing: None,
+            })
+        }
         async fn list_abandoned_generations(&self, _: &str) -> crate::Result<Vec<u64>> {
             unreachable!()
         }
@@ -1472,6 +1516,9 @@ mod tests {
         ) -> crate::Result<Option<crate::types::CodeSymbol>> {
             unreachable!()
         }
+        async fn get_symbol_project_id(&self, _: &str) -> crate::Result<Option<String>> {
+            unreachable!()
+        }
         async fn health_check(&self) -> crate::Result<bool> {
             unreachable!()
         }
@@ -1524,6 +1571,7 @@ mod tests {
                 name: name.map(|s| s.to_string()),
                 context_path: None,
                 project_id: project_id.to_string(),
+                generation: None,
             },
             content.to_string(),
         )
@@ -1761,6 +1809,7 @@ mod tests {
             name: Some("MyModule::my_fn".to_string()),
             context_path: None,
             project_id: "p".to_string(),
+            generation: None,
         };
         let content = "some content here";
         let text = make_document_text(&chunk, content);

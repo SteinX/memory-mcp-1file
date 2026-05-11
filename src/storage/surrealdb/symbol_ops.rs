@@ -538,7 +538,7 @@ pub(super) async fn search_symbols(
 
     let limit = limit.clamp(1, 100);
 
-    let mut conditions = vec!["(string::lowercase(name) CONTAINS string::lowercase($query) OR string::lowercase(signature) CONTAINS string::lowercase($query))".to_string()];
+    let mut conditions = vec!["(name IS NOT NONE AND (string::lowercase(name) CONTAINS string::lowercase($query) OR string::lowercase(signature ?? '') CONTAINS string::lowercase($query)))".to_string()];
 
     if project_id.is_some() {
         conditions.push("project_id = $project_id".to_string());
@@ -911,6 +911,7 @@ pub(super) async fn vector_search_code(
             chunk_type,
             name,
             context_path,
+            generation,
             vector::similarity::cosine(embedding, $vec) AS score
         FROM code_chunks
         WHERE embedding <|{knn_k},{ef}|> $vec
@@ -971,4 +972,17 @@ pub(super) async fn vector_search_symbols(
         .await?;
     let results: Vec<CodeSymbol> = response.take(0)?;
     Ok(results)
+}
+
+pub(super) async fn get_symbol_project_id(
+    db: &Surreal<Db>,
+    symbol_id: &str,
+) -> Result<Option<String>> {
+    let sql = "SELECT project_id FROM code_symbols WHERE id = type::record('code_symbols', $id) LIMIT 1";
+    let key = symbol_id.strip_prefix("code_symbols:").unwrap_or(symbol_id);
+    let mut result = db.query(sql).bind(("id", key.to_string())).await?;
+    let rows: Vec<serde_json::Value> = result.take(0)?;
+    Ok(rows.into_iter().next().and_then(|v| {
+        v.get("project_id").and_then(|p| p.as_str()).map(String::from)
+    }))
 }

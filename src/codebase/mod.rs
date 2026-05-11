@@ -1,4 +1,5 @@
 pub mod chunker;
+pub mod freshness;
 pub mod index_worker;
 pub mod indexer;
 pub mod manager;

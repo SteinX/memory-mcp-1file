@@ -960,6 +960,43 @@ The indexing pipeline has been partially concurrent since its initial implementa
 | `CODE_INDEX_INCLUDE_PATTERNS` | *(None)* | comma-delimited glob patterns | Optional whitelist of project-relative glob patterns. If specified, only files matching at least one include pattern are indexed. |
 | `CODE_INDEX_EXCLUDE_PATTERNS` | *(None)* | comma-delimited glob patterns | Optional blacklist of project-relative glob patterns. Files matching any exclude pattern are skipped, even if they match an include pattern. |
 
+## Code Intelligence During Indexing
+
+For large projects, indexing is a continuous background process. Memory MCP keeps all code intelligence tools usable during active indexing by serving the last successfully promoted generation while a new one builds.
+
+### Tool Behavior During Indexing
+
+| Tool | Indexing-time behavior | Fallback | No serving generation |
+|------|----------------------|----------|-----------------------|
+| `project_info` | Always available; reports both `serving_generation` and `indexing_generation` | N/A | Returns status with `reason_code=missing` |
+| `recall_code` | Serves stale generation; falls back to BM25 if vector unavailable | BM25 / symbol-derived | Returns `reason_code=missing`, zero results |
+| `search_symbols` | Serves stale symbol table from last promoted generation | N/A | Returns `reason_code=missing`, zero results |
+| `symbol_graph` | Serves stale graph; falls back to symbol frontier if graph missing | Symbol frontier | Returns partial metadata |
+
+### Reading Degradation Metadata
+
+Every response includes a `summary.partial` object clients can branch on:
+
+- `is_partial: bool` — `true` when serving stale or missing data
+- `reason_code: string` — machine-readable: `"stale"` | `"partial"` | `"missing"` | `"degraded"`
+- `reason: string` — human-readable description (e.g. `"no_serving_generation"`)
+
+The `capability_readiness.capabilities[]` array shows per-capability freshness. Structural/BM25/Symbols can serve new data while Semantic/Vector embeddings are still computing.
+
+### Item-Level Freshness
+
+Each returned symbol or code chunk may include a `freshness.state` field:
+
+- `"fresh"` — file unchanged since last index (checkpoint matches serving generation)
+- `"stale"` — file changed since serving generation
+- `"unknown"` — no checkpoint data available
+
+> **Important**: A project-level `is_partial=true` does **not** mean every result item is stale. Inspect `freshness.state` on individual result items to determine per-symbol/chunk freshness.
+
+### First-Ever Indexing
+
+When no serving generation exists (first indexing not yet complete), all code intelligence tools return structured partial responses with `reason_code="missing"` and zero results. They do not return transport-level errors or panics.
+
 #### Rollout and rollback
 
 To try the staged pipeline:

@@ -172,11 +172,14 @@ pub(crate) fn apply_project_resolution(response: &mut Value, resolution: &Projec
         response["reason_code"] = json!(ContractReasonCode::Stale);
         let partial = &mut response["summary"]["partial"];
         partial["is_partial"] = json!(true);
-        partial["reason_code"] = json!(ContractReasonCode::Stale);
-        partial["reason"] = json!("stale_binding");
-        partial["message"] = json!(
-            "Session-bound project is no longer registered or indexed; refusing cross-project fallback."
-        );
+        let existing_reason = partial["reason_code"].as_str().unwrap_or("");
+        if existing_reason != "missing" && existing_reason != "no_serving_generation" {
+            partial["reason_code"] = json!(ContractReasonCode::Stale);
+            partial["reason"] = json!("stale_binding");
+            partial["message"] = json!(
+                "Session-bound project is no longer registered or indexed; refusing cross-project fallback."
+            );
+        }
     }
 }
 
@@ -260,11 +263,16 @@ mod tests {
     use super::CodeToolContext;
     use crate::server::params::{
         GetIndexStatusParams, GetProjectProjectionParams, GetProjectionByLocatorParams,
-        IndexProjectParams, RecallCodeParams, SearchCodeParams, SearchSymbolsParams,
-        SymbolGraphParams,
+        GetProjectStatsParams, IndexProjectParams, RecallCodeParams, SearchCodeParams,
+        SearchSymbolsParams, SymbolGraphParams,
     };
     use crate::storage::StorageBackend;
     use crate::test_utils::TestContext;
+    use crate::types::{
+        CapabilityKind, CodeChunk, CodeRelationType, CodeSymbol, ConfidenceClass, Datetime,
+        IndexFileCheckpoint, IndexJobPhase, IndexState, IndexStatus, RelationClass,
+        RelationProvenance, StalenessState, SymbolRelation, SymbolType,
+    };
     use std::fs;
 
     #[tokio::test]
@@ -2098,5 +2106,817 @@ mod tests {
         assert_eq!(json["locator"]["lookup"]["reason_code"], "invalid_locator");
         assert_eq!(json["locator"]["lifecycle"]["same_process_only"], true);
         assert_eq!(json["locator"]["lifecycle"]["client_persistable"], false);
+    }
+
+    fn tool_result_json(result: &rmcp::model::CallToolResult) -> serde_json::Value {
+        let rmcp::model::RawContent::Text(text) = &result.content[0].raw else {
+            panic!("Expected text content");
+        };
+        serde_json::from_str(&text.text).expect("tool response should be valid json")
+    }
+
+    fn recall_params(project_id: &str, query: &str) -> RecallCodeParams {
+        RecallCodeParams {
+            query: query.to_string(),
+            project_id: Some(project_id.to_string()),
+            limit: Some(10),
+            mode: None,
+            vector_weight: None,
+            bm25_weight: None,
+            ppr_weight: None,
+            path_prefix: None,
+            language: None,
+            chunk_type: None,
+        }
+    }
+
+    fn symbol_params(project_id: &str, query: &str) -> SearchSymbolsParams {
+        SearchSymbolsParams {
+            query: query.to_string(),
+            project_id: Some(project_id.to_string()),
+            limit: Some(10),
+            offset: Some(0),
+            symbol_type: None,
+            path_prefix: None,
+        }
+    }
+
+    fn symbol_graph_params(symbol_id: &str) -> SymbolGraphParams {
+        SymbolGraphParams {
+            symbol_id: symbol_id.to_string(),
+            action: "related".to_string(),
+            depth: Some(1),
+            direction: Some("both".to_string()),
+        }
+    }
+
+    #[allow(dead_code)]
+    fn completed_status(project_id: &str, generation: u64) -> IndexStatus {
+        let mut status = IndexStatus::new(project_id.to_string());
+        status.status = IndexState::Completed;
+        status.total_files = 1;
+        status.indexed_files = 1;
+        status.total_chunks = 1;
+        status.total_symbols = 1;
+        status.structural_generation = generation;
+        status.semantic_generation = generation;
+        status.refresh_lifecycle_states();
+        status
+    }
+
+    #[allow(dead_code)]
+    fn indexing_status_with_serving(project_id: &str, serving: u64, indexing: u64) -> IndexStatus {
+        let mut status = IndexStatus::new(project_id.to_string());
+        status.status = IndexState::Indexing;
+        status.total_files = 2;
+        status.indexed_files = 1;
+        status.total_chunks = 1;
+        status.total_symbols = 1;
+        status.structural_generation = indexing;
+        status.semantic_generation = serving;
+        status.error_message = Some(format!(
+            "serving_generation={serving}; indexing_generation={indexing}; capability freshness is stale while active indexing is running"
+        ));
+        status.refresh_lifecycle_states();
+        status
+    }
+
+    #[allow(dead_code)]
+    fn indexing_status_without_serving(project_id: &str, indexing: u64) -> IndexStatus {
+        let mut status = IndexStatus::new(project_id.to_string());
+        status.status = IndexState::Indexing;
+        status.total_files = 2;
+        status.indexed_files = 0;
+        status.structural_generation = indexing;
+        status.error_message = Some(format!(
+            "serving_generation missing; indexing_generation={indexing}; reason_code=missing; reason=no_serving_generation"
+        ));
+        status.refresh_lifecycle_states();
+        status
+    }
+
+    #[allow(dead_code)]
+    fn interrupted_status_with_prior_serving(project_id: &str, serving: u64, interrupted: u64) -> IndexStatus {
+        let mut status = indexing_status_with_serving(project_id, serving, interrupted);
+        status.status = IndexState::Failed;
+        status.error_message = Some("interrupted_generation_not_promoted".to_string());
+        status.refresh_lifecycle_states();
+        status
+    }
+
+    async fn persist_generation_fixture(ctx: &TestContext, project_id: &str, generation: u64, marker: &str) -> String {
+        let chunk = CodeChunk {
+            id: None,
+            file_path: format!("src/{marker}.rs"),
+            content: format!("pub fn {marker}() {{ /* {marker} searchable marker */ }}"),
+            language: crate::types::Language::Rust,
+            start_line: 1,
+            end_line: 1,
+            chunk_type: crate::types::ChunkType::Function,
+            name: Some(marker.to_string()),
+            context_path: None,
+            embedding: Some(vec![0.1; 768]),
+            content_hash: format!("hash-{marker}-{generation}"),
+            project_id: Some(project_id.to_string()),
+            generation: Some(generation),
+            indexed_at: crate::types::Datetime::default(),
+        };
+        ctx.state.storage.create_code_chunk(chunk).await.unwrap();
+
+        let mut symbol = CodeSymbol::new(
+            marker.to_string(),
+            SymbolType::Function,
+            format!("src/{marker}.rs"),
+            1,
+            1,
+            project_id.to_string(),
+        );
+        symbol.embedding = Some(vec![0.2; 768]);
+        symbol.generation = Some(generation);
+        ctx.state.storage.create_code_symbol(symbol).await.unwrap()
+    }
+
+    fn checkpoint(project_id: &str, generation: u64, file_path: &str) -> IndexFileCheckpoint {
+        IndexFileCheckpoint {
+            id: None,
+            job_id: format!("job-{project_id}-{generation}"),
+            project_id: project_id.to_string(),
+            generation,
+            relative_file_path: file_path.to_string(),
+            file_path: file_path.to_string(),
+            content_hash: format!("hash-{project_id}-{generation}-{file_path}"),
+            checkpoint_generation: generation,
+            phase: IndexJobPhase::Promote,
+            completed: true,
+            completed_at: Datetime::default(),
+            chunks_written: 1,
+            symbols_written: 1,
+            updated_at: Datetime::default(),
+        }
+    }
+
+    async fn persist_call_relation_fixture(
+        ctx: &TestContext,
+        project_id: &str,
+        generation: u64,
+        caller: &str,
+        callee: &str,
+    ) -> (String, String) {
+        let caller_id = persist_generation_fixture(ctx, project_id, generation, caller).await;
+        let callee_id = persist_generation_fixture(ctx, project_id, generation, callee).await;
+        ctx.state
+            .storage
+            .upsert_file_checkpoint(&checkpoint(project_id, generation, &format!("src/{caller}.rs")))
+            .await
+            .unwrap();
+        ctx.state
+            .storage
+            .upsert_file_checkpoint(&checkpoint(project_id, generation, &format!("src/{callee}.rs")))
+            .await
+            .unwrap();
+        let caller_thing = crate::types::safe_thing::symbol_thing(
+            project_id,
+            &format!("src/{caller}.rs"),
+            caller,
+            1,
+        );
+        let callee_thing = crate::types::safe_thing::symbol_thing(
+            project_id,
+            &format!("src/{callee}.rs"),
+            callee,
+            1,
+        );
+        ctx.state
+            .storage
+            .create_symbol_relation(SymbolRelation::new(
+                caller_thing,
+                callee_thing,
+                CodeRelationType::Calls,
+                RelationClass::Observed,
+                RelationProvenance::ParserExtracted,
+                ConfidenceClass::Extracted,
+                generation,
+                StalenessState::Current,
+                format!("src/{caller}.rs"),
+                1,
+                project_id.to_string(),
+            ))
+            .await
+            .unwrap();
+        (caller_id, callee_id)
+    }
+
+    async fn assert_capability_contract_fields(
+        ctx: &TestContext,
+        project_id: &str,
+        json: &serde_json::Value,
+        expected_serving: Option<u64>,
+        expected_indexing: u64,
+        expected_reason_codes: &[&str],
+    ) {
+        assert_eq!(
+            json["capability_readiness"]["serving_generation"],
+            serde_json::to_value(expected_serving).unwrap()
+        );
+        assert_eq!(json["capability_readiness"]["indexing_generation"], expected_indexing);
+        assert!(json["capability_readiness"]["capabilities"].is_array());
+        assert_eq!(
+            json["serving_generation"],
+            serde_json::to_value(expected_serving).unwrap()
+        );
+        assert_eq!(json["indexing_generation"], expected_indexing);
+        for expected_reason_code in expected_reason_codes {
+            assert!(
+                json["capability_readiness"]["capabilities"]
+                    .as_array()
+                    .expect("capabilities should be an array")
+                    .iter()
+                    .any(|capability| capability["reason_code"].as_str() == Some(*expected_reason_code)),
+                "missing response capability reason_code={expected_reason_code:?}: {json}"
+            );
+        }
+    }
+
+    fn assert_item_freshness(json: &serde_json::Value, expected_generation: u64, expected_freshness: &str) {
+        let items = json["results"].as_array().expect("results should be an array");
+        assert!(!items.is_empty(), "expected at least one result item");
+        for item in items {
+            assert_eq!(item["freshness"]["generation"], expected_generation);
+            assert_eq!(item["freshness"]["serving_generation"], expected_generation);
+            assert_eq!(item["freshness"]["state"], expected_freshness);
+        }
+    }
+
+    async fn four_tool_contract_responses(
+        ctx: &TestContext,
+        project_id: &str,
+        symbol_id: &str,
+        query: &str,
+    ) -> Vec<(&'static str, serde_json::Value)> {
+        vec![
+            (
+                "recall_code",
+                tool_result_json(&super::recall_code(&ctx.state, recall_params(project_id, query)).await.unwrap()),
+            ),
+            (
+                "search_symbols",
+                tool_result_json(&super::search_symbols(&ctx.state, symbol_params(project_id, query)).await.unwrap()),
+            ),
+            (
+                "symbol_graph",
+                tool_result_json(&super::symbol_graph(&ctx.state, symbol_graph_params(symbol_id)).await.unwrap()),
+            ),
+            (
+                "project_info_stats",
+                tool_result_json(
+                    &super::get_project_stats(&ctx.state, GetProjectStatsParams { project_id: project_id.to_string() })
+                        .await
+                        .unwrap(),
+                ),
+            ),
+        ]
+    }
+
+    #[tokio::test]
+    async fn capability_readiness_contract_fresh() {
+        let ctx = TestContext::new().await;
+        let project_id = "capability-readiness-fresh";
+        let symbol_id = persist_generation_fixture(&ctx, project_id, 1, "fresh_contract_marker").await;
+        ctx.state.storage.set_active_generation(project_id, 1).await.unwrap();
+
+        for (tool, json) in four_tool_contract_responses(&ctx, project_id, &symbol_id, "fresh_contract_marker").await {
+            assert_eq!(json["summary"]["partial"]["is_partial"], false, "{tool}");
+            assert!(
+                json["summary"]["partial"]["reason_code"].is_null()
+                    || json["summary"]["partial"]["reason_code"] == "fresh",
+                "{tool} should not report degraded reason_code: {json}"
+            );
+            assert_capability_contract_fields(&ctx, project_id, &json, Some(1), 1, &[]).await;
+            if tool != "project_info_stats" && tool != "symbol_graph" {
+                assert_item_freshness(&json, 1, "fresh");
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn capability_readiness_contract_stale_serving_generation() {
+        let ctx = TestContext::new().await;
+        let project_id = "capability-readiness-stale";
+        let other_project_id = "capability-readiness-stale-other";
+        let symbol_id = persist_generation_fixture(&ctx, project_id, 1, "stale_contract_marker").await;
+        persist_generation_fixture(&ctx, other_project_id, 1, "other_project_marker").await;
+        ctx.state.storage.set_active_generation(project_id, 1).await.unwrap();
+        ctx.state.storage.set_indexing_generation(project_id, Some(2)).await.unwrap();
+
+        for (tool, json) in four_tool_contract_responses(&ctx, project_id, &symbol_id, "stale_contract_marker").await {
+            if tool != "project_info_stats" {
+                assert!(json["summary"]["partial"]["is_partial"].as_bool().unwrap_or(false), "{tool}");
+                assert!(
+                    matches!(json["summary"]["partial"]["reason_code"].as_str(), Some("stale") | Some("partial")),
+                    "{tool} must expose stale/partial reason_code: {json}"
+                );
+            }
+            assert_capability_contract_fields(&ctx, project_id, &json, Some(1), 2, &["stale", "partial"]).await;
+            if tool != "project_info_stats" && tool != "symbol_graph" {
+                assert_item_freshness(&json, 1, "stale");
+                assert!(!json.to_string().contains("other_project_marker"));
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn capability_readiness_contract_no_serving_generation() {
+        let ctx = TestContext::new().await;
+        let project_id = "capability-readiness-no-serving";
+        let other_project_id = "capability-readiness-no-serving-other";
+        let other_symbol_id = persist_generation_fixture(&ctx, other_project_id, 1, "no_serving_other_marker").await;
+        ctx.state.storage.set_active_generation(other_project_id, 1).await.unwrap();
+        ctx.state.storage.set_indexing_generation(project_id, Some(1)).await.unwrap();
+        let session_id = "capability-readiness-no-serving-session";
+        ctx.state.session_bindings.bind(session_id.to_string(), project_id.to_string()).await;
+        let context = Some(CodeToolContext::from_session_id(Some(session_id.to_string())));
+
+        let recall = tool_result_json(
+            &super::recall_code_with_context(
+                &ctx.state,
+                RecallCodeParams { project_id: None, ..recall_params(project_id, "no_serving_other_marker") },
+                context.clone(),
+            )
+            .await
+            .unwrap(),
+        );
+        let symbols = tool_result_json(
+            &super::search_symbols_with_context(
+                &ctx.state,
+                SearchSymbolsParams { project_id: None, ..symbol_params(project_id, "no_serving_other_marker") },
+                context,
+            )
+            .await
+            .unwrap(),
+        );
+        let graph = tool_result_json(&super::symbol_graph(&ctx.state, symbol_graph_params(&other_symbol_id)).await.unwrap());
+        let stats = tool_result_json(
+            &super::get_project_stats(&ctx.state, GetProjectStatsParams { project_id: project_id.to_string() })
+                .await
+                .unwrap(),
+        );
+
+        for (tool, json) in [
+            ("recall_code", recall),
+            ("search_symbols", symbols),
+            ("symbol_graph", graph),
+            ("project_info_stats", stats),
+        ] {
+            if tool != "symbol_graph" && tool != "project_info_stats" {
+                assert_eq!(json["summary"]["partial"]["is_partial"], true, "{tool}");
+                assert!(
+                    matches!(json["summary"]["partial"]["reason_code"].as_str(), Some("missing") | Some("no_serving_generation")),
+                    "{tool} must expose missing/no_serving_generation reason_code: {json}"
+                );
+                assert_eq!(json["count"].as_u64().or_else(|| json["symbol_count"].as_u64()), Some(0), "{tool}");
+            }
+            if tool != "symbol_graph" && tool != "project_info_stats" {
+                assert_capability_contract_fields(&ctx, project_id, &json, None, 1, &["missing"]).await;
+                assert!(!json.to_string().contains("no_serving_other_marker"));
+            }
+            if let Some(project_resolution) = json.get("project_resolution") {
+                assert_ne!(project_resolution["source"], "cross_project", "{tool}");
+                assert_eq!(project_resolution["project_id"], project_id, "{tool}");
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn capability_readiness_contract_interrupted_generation() {
+        let ctx = TestContext::new().await;
+        let project_id = "capability-readiness-interrupted";
+        let symbol_id = persist_generation_fixture(&ctx, project_id, 1, "prior_serving_marker").await;
+        persist_generation_fixture(&ctx, project_id, 2, "interrupted_generation_marker").await;
+        ctx.state.storage.set_active_generation(project_id, 1).await.unwrap();
+
+        for (tool, json) in four_tool_contract_responses(&ctx, project_id, &symbol_id, "prior_serving_marker").await {
+            if tool != "project_info_stats" {
+                assert_eq!(json["summary"]["partial"]["is_partial"], true, "{tool}");
+                assert!(
+                    matches!(json["summary"]["partial"]["reason_code"].as_str(), Some("stale") | Some("partial") | Some("degraded")),
+                    "{tool} must expose interrupted/degraded capability reason_code: {json}"
+                );
+            }
+            assert_capability_contract_fields(&ctx, project_id, &json, Some(1), 2, &["stale", "partial", "degraded"]).await;
+            assert!(!json.to_string().contains("interrupted_generation_marker"));
+            if tool != "project_info_stats" && tool != "symbol_graph" {
+                assert_item_freshness(&json, 1, "stale");
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn symbol_graph_serves_stale_graph_generation() {
+        let ctx = TestContext::new().await;
+        let (_caller_id, _callee_id) = persist_call_relation_fixture(
+            &ctx,
+            "project",
+            1,
+            "stale_graph_caller",
+            "stale_graph_callee",
+        )
+        .await;
+        persist_generation_fixture(&ctx, "project", 2, "indexing_only_symbol").await;
+        ctx.state
+            .storage
+            .set_serving_generation("project", CapabilityKind::Symbols, 1)
+            .await
+            .unwrap();
+        ctx.state
+            .storage
+            .set_serving_generation("project", CapabilityKind::Graph, 1)
+            .await
+            .unwrap();
+        ctx.state
+            .storage
+            .set_indexing_generation("project", Some(2))
+            .await
+            .unwrap();
+        assert_eq!(ctx.state.storage.get_serving_metadata("project").await.unwrap().graph, Some(1));
+
+        let response = tool_result_json(
+            &super::symbol_graph(
+                &ctx.state,
+                SymbolGraphParams {
+                    symbol_id: format!("code_symbols:{}", crate::types::safe_thing::symbol_hash(
+                        "project",
+                        "src/stale_graph_caller.rs",
+                        "stale_graph_caller",
+                        1,
+                    )),
+                    action: "related".to_string(),
+                    depth: Some(1),
+                    direction: Some("outgoing".to_string()),
+                },
+            )
+            .await
+            .unwrap(),
+        );
+        eprintln!("symbol_graph stale response: {response}");
+        assert_eq!(response["serving_generation"], 1);
+        assert_eq!(response["summary"]["serving_generation"]["graph"], 1);
+        assert_eq!(response["indexing_generation"], 2);
+        assert_eq!(response["symbol_count"], 1);
+        assert_eq!(response["relation_count"], 1);
+        assert!(response.to_string().contains("stale_graph_callee"));
+        assert!(!response.to_string().contains("indexing_only_symbol"));
+        assert_eq!(response["nodes"][0]["freshness"]["state"], "fresh");
+        assert_eq!(response["nodes"][0]["freshness"]["serving_generation"], 1);
+        assert_eq!(response["edges"][0]["freshness"]["state"], "fresh");
+    }
+
+    #[tokio::test]
+    async fn symbol_graph_falls_back_to_symbol_frontier_when_graph_missing() {
+        let ctx = TestContext::new().await;
+        let project_id = "symbol-graph-frontier-missing";
+        let symbol_id = persist_generation_fixture(&ctx, project_id, 7, "frontier_symbol").await;
+        ctx.state
+            .storage
+            .upsert_file_checkpoint(&checkpoint(project_id, 7, "src/frontier_symbol.rs"))
+            .await
+            .unwrap();
+        ctx.state
+            .storage
+            .set_serving_generation(project_id, CapabilityKind::Symbols, 7)
+            .await
+            .unwrap();
+
+        let response = tool_result_json(
+            &super::symbol_graph(
+                &ctx.state,
+                SymbolGraphParams {
+                    symbol_id: symbol_id.clone(),
+                    action: "related".to_string(),
+                    depth: Some(1),
+                    direction: Some("both".to_string()),
+                },
+            )
+            .await
+            .unwrap(),
+        );
+
+        assert_eq!(response["summary"]["partial"]["is_partial"], true);
+        assert_eq!(response["summary"]["partial"]["reason"], "missing_graph");
+        assert_eq!(response["fallback_path"], "symbol_frontier");
+        assert_eq!(response["serving_generation"], serde_json::Value::Null);
+        assert_eq!(response["symbol_serving_generation"], 7);
+        assert_eq!(response["relation_count"], 0);
+        assert_eq!(response["frontier"][0], symbol_id);
+        assert_eq!(response["nodes"][0]["freshness"]["state"], "fresh");
+        assert_eq!(response["nodes"][0]["freshness"]["serving_generation"], 7);
+        assert_eq!(response["relation_count"], 0);
+        assert_eq!(response["frontier"][0], symbol_id);
+        assert_eq!(response["nodes"][0]["freshness"]["state"], "fresh");
+        assert_eq!(response["nodes"][0]["freshness"]["serving_generation"], 7);
+    }
+
+    #[tokio::test]
+    async fn search_symbols_serves_stale_symbol_generation() {
+        let ctx = TestContext::new().await;
+        let project_id = "search-symbols-stale-gen";
+        persist_generation_fixture(&ctx, project_id, 1, "stale_sym_marker").await;
+        persist_generation_fixture(&ctx, project_id, 2, "indexing_only_sym_marker").await;
+        ctx.state
+            .storage
+            .set_serving_generation(project_id, CapabilityKind::Symbols, 1)
+            .await
+            .unwrap();
+        ctx.state
+            .storage
+            .set_indexing_generation(project_id, Some(2))
+            .await
+            .unwrap();
+
+        let response = tool_result_json(
+            &super::search_symbols(
+                &ctx.state,
+                SearchSymbolsParams {
+                    query: "stale_sym_marker".to_string(),
+                    project_id: Some(project_id.to_string()),
+                    limit: None,
+                    offset: None,
+                    symbol_type: None,
+                    path_prefix: None,
+                },
+            )
+            .await
+            .unwrap(),
+        );
+
+        assert_eq!(response["summary"]["partial"]["is_partial"], true);
+        assert!(
+            matches!(
+                response["summary"]["partial"]["reason_code"].as_str(),
+                Some("stale") | Some("partial") | Some("degraded")
+            ),
+            "expected stale/partial/degraded reason_code, got: {}",
+            response
+        );
+        assert_eq!(response["serving_generation"], 1);
+        assert_eq!(response["indexing_generation"], 2);
+        assert!(response.to_string().contains("stale_sym_marker"));
+        assert!(!response.to_string().contains("indexing_only_sym_marker"));
+        let results = response["results"].as_array().expect("results array");
+        for item in results {
+            assert!(item.get("embedding").is_none() || item["embedding"].is_null());
+        }
+    }
+
+    #[tokio::test]
+    async fn search_symbols_marks_unchanged_symbols_fresh_during_indexing() {
+        let ctx = TestContext::new().await;
+        let project_id = "search-symbols-freshness-mix";
+        persist_generation_fixture(&ctx, project_id, 1, "fresh_sym_a").await;
+        ctx.state
+            .storage
+            .upsert_file_checkpoint(&checkpoint(project_id, 1, "src/fresh_sym_a.rs"))
+            .await
+            .unwrap();
+        persist_generation_fixture(&ctx, project_id, 1, "stale_sym_b").await;
+
+        ctx.state
+            .storage
+            .set_serving_generation(project_id, CapabilityKind::Symbols, 1)
+            .await
+            .unwrap();
+        ctx.state
+            .storage
+            .set_indexing_generation(project_id, Some(2))
+            .await
+            .unwrap();
+
+        let response = tool_result_json(
+            &super::search_symbols(
+                &ctx.state,
+                SearchSymbolsParams {
+                    query: "sym".to_string(),
+                    project_id: Some(project_id.to_string()),
+                    limit: Some(10),
+                    offset: None,
+                    symbol_type: None,
+                    path_prefix: None,
+                },
+            )
+            .await
+            .unwrap(),
+        );
+
+        let results = response["results"].as_array().expect("results array");
+        assert!(!results.is_empty(), "expected results");
+
+        let fresh_item = results
+            .iter()
+            .find(|item| item["name"].as_str() == Some("fresh_sym_a"))
+            .expect("fresh_sym_a not found in results");
+        let stale_item = results
+            .iter()
+            .find(|item| item["name"].as_str() == Some("stale_sym_b"))
+            .expect("stale_sym_b not found in results");
+
+        assert_eq!(
+            fresh_item["freshness"]["state"], "fresh",
+            "fresh_sym_a should be fresh (has checkpoint): {}",
+            fresh_item
+        );
+        assert!(
+            matches!(
+                stale_item["freshness"]["state"].as_str(),
+                Some("stale") | Some("unknown")
+            ),
+            "stale_sym_b should be stale or unknown (no checkpoint): {}",
+            stale_item
+        );
+    }
+
+    #[tokio::test]
+    async fn search_symbols_no_serving_generation_partial_contract() {
+        let ctx = TestContext::new().await;
+        let project_id = "search-symbols-no-serving";
+        persist_generation_fixture(&ctx, project_id, 1, "no_serving_sym_marker").await;
+
+        let response = tool_result_json(
+            &super::search_symbols(
+                &ctx.state,
+                SearchSymbolsParams {
+                    query: "no_serving_sym_marker".to_string(),
+                    project_id: Some(project_id.to_string()),
+                    limit: None,
+                    offset: None,
+                    symbol_type: None,
+                    path_prefix: None,
+                },
+            )
+            .await
+            .unwrap(),
+        );
+
+        assert_eq!(response["results"], serde_json::Value::Array(vec![]));        assert_eq!(response["count"], 0);
+        assert_eq!(response["summary"]["partial"]["is_partial"], true);
+        assert_eq!(response["summary"]["partial"]["reason_code"], "missing");
+        assert_eq!(response["summary"]["partial"]["reason"], "no_serving_generation");
+    }
+
+    #[tokio::test]
+    async fn indexing_does_not_replace_serving_generation_until_promote() {
+        let ctx = TestContext::new().await;
+        let project_id = "atomic-promote-waits";
+
+        persist_generation_fixture(&ctx, project_id, 1, "prior").await;
+        ctx.state
+            .storage
+            .set_serving_generation(project_id, CapabilityKind::ProjectInfo, 1)
+            .await
+            .unwrap();
+        ctx.state
+            .storage
+            .set_indexing_generation(project_id, Some(2))
+            .await
+            .unwrap();
+        persist_generation_fixture(&ctx, project_id, 2, "building").await;
+
+        let serving_generation = ctx
+            .state
+            .storage
+            .get_serving_generation(project_id, CapabilityKind::ProjectInfo)
+            .await
+            .unwrap();
+
+        assert_eq!(serving_generation, Some(1));
+    }
+
+    #[tokio::test]
+    async fn interrupted_generation_is_never_served() {
+        let ctx = TestContext::new().await;
+        let project_id = "interrupted-generation-never-served";
+
+        persist_generation_fixture(&ctx, project_id, 1, "serving_interrupt_marker").await;
+        persist_generation_fixture(&ctx, project_id, 2, "interrupted_interrupt_marker").await;
+        ctx.state
+            .storage
+            .set_serving_generation(project_id, CapabilityKind::ProjectInfo, 1)
+            .await
+            .unwrap();
+        ctx.state
+            .storage
+            .set_serving_generation(project_id, CapabilityKind::Bm25, 1)
+            .await
+            .unwrap();
+        ctx.state
+            .storage
+            .set_serving_generation(project_id, CapabilityKind::Symbols, 1)
+            .await
+            .unwrap();
+        ctx.state
+            .storage
+            .set_indexing_generation(project_id, Some(2))
+            .await
+            .unwrap();
+
+        let symbols = tool_result_json(
+            &super::search_symbols_with_context(
+                &ctx.state,
+                symbol_params(project_id, "interrupt_marker"),
+                None,
+            )
+            .await
+            .unwrap(),
+        );
+        let recall = tool_result_json(
+            &super::recall_code_with_context(
+                &ctx.state,
+                recall_params(project_id, "interrupt_marker"),
+                None,
+            )
+            .await
+            .unwrap(),
+        );
+
+        for (tool, response) in [("search_symbols", symbols), ("recall_code", recall)] {
+            let response_text = response.to_string();
+            assert!(
+                response_text.contains("serving_interrupt_marker"),
+                "{tool} should serve prior generation: {response}"
+            );
+            assert!(
+                !response_text.contains("interrupted_interrupt_marker"),
+                "{tool} must not serve interrupted generation: {response}"
+            );
+            assert!(
+                matches!(
+                    response["summary"]["partial"]["reason_code"].as_str(),
+                    Some("stale") | Some("partial") | Some("degraded")
+                ),
+                "{tool} should expose stale/interrupted partial state: {response}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn capability_promotion_is_independent() {
+        let ctx = TestContext::new().await;
+        let project_id = "capability-promotion-independent";
+
+        persist_generation_fixture(&ctx, project_id, 1, "semantic_gap_prior").await;
+        persist_generation_fixture(&ctx, project_id, 2, "semantic_gap_current").await;
+        ctx.state
+            .storage
+            .set_serving_generation(project_id, CapabilityKind::ProjectInfo, 2)
+            .await
+            .unwrap();
+        ctx.state
+            .storage
+            .set_serving_generation(project_id, CapabilityKind::Bm25, 2)
+            .await
+            .unwrap();
+        ctx.state
+            .storage
+            .set_serving_generation(project_id, CapabilityKind::Symbols, 2)
+            .await
+            .unwrap();
+        ctx.state
+            .storage
+            .set_serving_generation(project_id, CapabilityKind::Semantic, 1)
+            .await
+            .unwrap();
+
+        let symbols = tool_result_json(
+            &super::search_symbols_with_context(
+                &ctx.state,
+                symbol_params(project_id, "semantic_gap_current"),
+                None,
+            )
+            .await
+            .unwrap(),
+        );
+        assert!(
+            symbols.to_string().contains("semantic_gap_current"),
+            "symbols should serve independently promoted generation: {symbols}"
+        );
+        assert_eq!(symbols["serving_generation"], 2);
+
+        let recall = tool_result_json(
+            &super::recall_code_with_context(
+                &ctx.state,
+                recall_params(project_id, "semantic_gap_current"),
+                None,
+            )
+            .await
+            .unwrap(),
+        );
+        assert!(
+            recall.to_string().contains("semantic_gap_current"),
+            "recall_code should fall back to BM25/structural serving generation: {recall}"
+        );
+        assert_eq!(recall["summary"]["serving_generation"]["bm25"], 2);
+        assert_eq!(recall["summary"]["serving_generation"]["symbols"], 2);
+        assert_eq!(recall["summary"]["serving_generation"]["semantic"], 1);
+        assert_eq!(recall["summary"]["partial"]["is_partial"], true);
+        assert_eq!(recall["summary"]["partial"]["reason_code"], "degraded");
+        assert_eq!(recall["summary"]["fallback_path"], "bm25_lexical_symbol_hydration");
     }
 }

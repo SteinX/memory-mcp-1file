@@ -10,10 +10,10 @@ use std::pin::Pin;
 use chrono::{DateTime, Utc};
 
 use crate::types::{
-    CodeChunk, CodeSymbol, Direction, Entity, ExportMemoryResponse, ImportConflictStrategy,
-    ImportMemoryResponse, IndexFileCheckpoint, IndexJobRecord, IndexStatus, ManifestEntry,
-    Memory, MemoryQuery, MemoryType, MemoryUpdate, MigrationMemoryRecord, Relation,
-    ScoredCodeChunk, SearchResult, SymbolRelation,
+    CapabilityKind, CodeChunk, CodeSymbol, Direction, Entity, ExportMemoryResponse,
+    ImportConflictStrategy, ImportMemoryResponse, IndexFileCheckpoint, IndexJobRecord, IndexStatus,
+    ManifestEntry, Memory, MemoryQuery, MemoryType, MemoryUpdate, MigrationMemoryRecord, Relation,
+    ScoredCodeChunk, SearchResult, ServingGenerationMetadata, SymbolRelation,
 };
 use crate::Result;
 
@@ -448,6 +448,46 @@ pub trait StorageBackend: Send + Sync {
     /// Set the active generation for a project.
     async fn set_active_generation(&self, project_id: &str, generation: u64) -> Result<()>;
 
+    // ─────────────────────────────────────────────────────────────────────────
+    // Per-capability serving generation accessors
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /// Get the serving (active) generation for a specific capability.
+    ///
+    /// `get_active_generation` / `set_active_generation` are compatibility aliases
+    /// that map to `CapabilityKind::Structural` (or equivalent structural-capability
+    /// serving generation) and must not be removed.
+    async fn get_serving_generation(
+        &self,
+        project_id: &str,
+        capability: CapabilityKind,
+    ) -> Result<Option<u64>>;
+
+    /// Set the serving (active) generation for a specific capability.
+    async fn set_serving_generation(
+        &self,
+        project_id: &str,
+        capability: CapabilityKind,
+        generation: u64,
+    ) -> Result<()>;
+
+    /// Get the currently-building (indexing) generation for a project, if any.
+    async fn get_indexing_generation(&self, project_id: &str) -> Result<Option<u64>>;
+
+    /// Set or clear the currently-building (indexing) generation for a project.
+    /// Pass `None` to clear (indexing finished or was cancelled).
+    async fn set_indexing_generation(
+        &self,
+        project_id: &str,
+        generation: Option<u64>,
+    ) -> Result<()>;
+
+    /// Return all per-capability serving generations plus the active indexing generation.
+    async fn get_serving_metadata(
+        &self,
+        project_id: &str,
+    ) -> Result<ServingGenerationMetadata>;
+
     /// List generations that have rows/checkpoints but are not the active generation.
     async fn list_abandoned_generations(&self, project_id: &str) -> Result<Vec<u64>>;
 
@@ -632,6 +672,9 @@ pub trait StorageBackend: Send + Sync {
         name: &str,
         prefer_file: Option<&str>,
     ) -> Result<Option<CodeSymbol>>;
+
+    /// Look up the project_id for a given symbol_id directly from the DB.
+    async fn get_symbol_project_id(&self, symbol_id: &str) -> Result<Option<String>>;
 
     // ─────────────────────────────────────────────────────────────────────────
     // System

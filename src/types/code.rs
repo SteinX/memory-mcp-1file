@@ -147,6 +147,14 @@ pub struct IndexStatus {
     #[serde(default)]
     pub semantic_generation: u64,
 
+    /// Capability-level readiness summaries for degraded serving.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub capabilities: Option<Vec<CapabilityReadiness>>,
+
+    /// Serving generations for the different code-intelligence pipelines.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub serving: Option<ServingGenerationMetadata>,
+
     /// Active include glob patterns for this index generation. Empty = no whitelist.
     #[serde(default)]
     pub include_patterns: Vec<String>,
@@ -154,6 +162,71 @@ pub struct IndexStatus {
     /// Active exclude glob patterns for this index generation. Empty = no extra excludes.
     #[serde(default)]
     pub exclude_patterns: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, SurrealValue, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum CapabilityKind {
+    ProjectInfo,
+    Bm25,
+    Vector,
+    Symbols,
+    Graph,
+    Semantic,
+    Projection,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, SurrealValue, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum CapabilityFreshness {
+    Fresh,
+    Stale,
+    Partial,
+    Missing,
+    Degraded,
+    Unavailable,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, SurrealValue, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub struct CapabilityReadiness {
+    pub capability: CapabilityKind,
+
+    pub freshness: CapabilityFreshness,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub serving_generation: Option<u64>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason_code: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, SurrealValue, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub struct ServingGenerationMetadata {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub structural: Option<u64>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bm25: Option<u64>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub symbols: Option<u64>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub graph: Option<u64>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vector: Option<u64>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub semantic: Option<u64>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub indexing: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -392,7 +465,8 @@ pub struct IndexFileCheckpoint {
 #[cfg(test)]
 mod tests {
     use super::{
-        validate_index_job_transition, validate_job_transition, IndexJobReasonCode, IndexJobState,
+        validate_index_job_transition, validate_job_transition, CapabilityFreshness,
+        CapabilityKind, CapabilityReadiness, IndexJobReasonCode, IndexJobState, IndexStatus,
     };
 
     #[test]
@@ -447,9 +521,45 @@ mod tests {
             "structural_generation": 3,
             "semantic_generation": 3
         }"#;
-        let status: super::IndexStatus = serde_json::from_str(json).expect("deserialize");
+        let status: IndexStatus = serde_json::from_str(json).expect("deserialize");
         assert!(status.include_patterns.is_empty());
         assert!(status.exclude_patterns.is_empty());
+    }
+
+    #[test]
+    fn capability_readiness_model_defaults() {
+        let json = r#"{
+            "project_id": "proj-abc",
+            "status": "completed",
+            "structural_state": "pending",
+            "semantic_state": "pending",
+            "projection_state": "stale",
+            "structural_generation": 3,
+            "semantic_generation": 3,
+            "include_patterns": [],
+            "exclude_patterns": []
+        }"#;
+
+        let status: IndexStatus = serde_json::from_str(json).expect("deserialize legacy status");
+
+        assert!(status.capabilities.is_none());
+        assert!(status.serving.is_none());
+    }
+
+    #[test]
+    fn capability_readiness_model_serializes_contract_values() {
+        let readiness = CapabilityReadiness {
+            capability: CapabilityKind::ProjectInfo,
+            freshness: CapabilityFreshness::Stale,
+            serving_generation: Some(7),
+            reason: Some("waiting for refresh".to_string()),
+            reason_code: Some("stale".to_string()),
+        };
+
+        let json = serde_json::to_string(&readiness).expect("serialize readiness");
+
+        assert!(json.contains(r#""freshness":"stale""#));
+        assert!(json.contains(r#""capability":"project_info""#));
     }
 }
 
@@ -541,6 +651,8 @@ impl IndexStatus {
             projection_state: ProjectionState::Stale,
             structural_generation: 0,
             semantic_generation: 0,
+            capabilities: None,
+            serving: None,
             include_patterns: Vec::new(),
             exclude_patterns: Vec::new(),
         };
