@@ -871,27 +871,20 @@ impl MemoryMcpServer {
 
 impl ServerHandler for MemoryMcpServer {
     fn get_info(&self) -> InitializeResult {
-        InitializeResult {
-            protocol_version: ProtocolVersion::default(),
-            capabilities: ServerCapabilities {
-                tools: Some(ToolsCapability {
-                    list_changed: Some(false),
-                }),
-                ..ServerCapabilities::default()
-            },
-            server_info: Implementation {
-                name: "memory-mcp".into(),
-                version: env!("CARGO_PKG_VERSION").into(),
-                description: None,
-                title: None,
-                icons: None,
-                website_url: None,
-            },
-            instructions: Some(
-                "AI agent memory server with semantic search, knowledge graph, and code search."
-                    .into(),
-            ),
-        }
+        let mut server_info = Implementation::from_build_env();
+        server_info.name = "memory-mcp".into();
+        server_info.version = env!("CARGO_PKG_VERSION").into();
+
+        let mut capabilities = ServerCapabilities::default();
+        capabilities.tools = Some(ToolsCapability {
+            list_changed: Some(false),
+        });
+
+        InitializeResult::new(capabilities)
+            .with_server_info(server_info)
+            .with_instructions(
+                "AI agent memory server with semantic search, knowledge graph, and code search.",
+            )
     }
 
     async fn list_tools(

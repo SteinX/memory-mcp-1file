@@ -30,7 +30,7 @@ tokenizers = "0.22.2"
 hf-hub = { version = "0.4", default-features = false, features = ["ureq"] }
 
 # MCP Protocol
-rmcp = { version = "0.16.0", features = [
+rmcp = { version = "1.6.0", features = [
     "server",
     "client",
     "transport-io",

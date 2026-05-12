@@ -54,11 +54,10 @@ where
 {
     let session_manager = Arc::new(LocalSessionManager::default());
 
-    let mcp_config = StreamableHttpServerConfig {
-        stateful_mode: true,
-        cancellation_token: ct.child_token(),
-        ..Default::default()
-    };
+    let mcp_config = StreamableHttpServerConfig::default()
+        .with_stateful_mode(true)
+        .with_cancellation_token(ct.child_token())
+        .disable_allowed_hosts();
 
     let mcp_service = StreamableHttpService::new(service_factory, session_manager, mcp_config);
 
@@ -236,6 +235,7 @@ mod tests {
         let mut request = Request::builder()
             .method("POST")
             .uri("/mcp")
+            .header("host", "127.0.0.1")
             .header("content-type", "application/json")
             .header("accept", "application/json, text/event-stream");
 
