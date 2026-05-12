@@ -68,6 +68,16 @@ pub struct CapacityMemoryCandidate {
     pub importance_score: f32,
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ProjectStats {
+    pub files: u32,
+    pub chunks: u32,
+    pub symbols: u32,
+    pub embedded_chunks: u32,
+    pub embedded_symbols: u32,
+    pub memories: u32,
+}
+
 /// Object-safe storage surface used by fire-and-forget access tracking.
 pub trait MemoryStorage: Send + Sync {
     fn record_memory_access(
@@ -167,6 +177,9 @@ pub trait StorageBackend: Send + Sync {
         limit: usize,
         offset: usize,
     ) -> Result<Vec<Memory>>;
+
+    /// List only memory IDs matching the given filters (no full record fetch)
+    async fn list_memory_ids(&self, filters: &MemoryQuery) -> Result<Vec<String>>;
 
     /// Count total number of memories
     async fn count_memories(&self) -> Result<usize>;
@@ -641,6 +654,9 @@ pub trait StorageBackend: Send + Sync {
         project_id: &str,
         active_generation: Option<u64>,
     ) -> Result<u32>;
+
+    /// Get per-project aggregate counts in batch for project listing surfaces.
+    async fn get_all_project_stats(&self) -> Result<HashMap<String, ProjectStats>>;
 
     /// Get chunks that have no embedding yet (for resume after interruption)
     async fn get_unembedded_chunks(&self, project_id: &str) -> Result<Vec<(String, String)>>;

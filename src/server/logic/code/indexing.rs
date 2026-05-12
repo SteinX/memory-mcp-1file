@@ -1636,6 +1636,7 @@ pub async fn list_projects(
 ) -> anyhow::Result<CallToolResult> {
     match state.storage.list_projects().await {
         Ok(projects) => {
+            let project_stats = state.storage.get_all_project_stats().await.unwrap_or_default();
             let mut enriched = Vec::with_capacity(projects.len());
             let mut has_ready = false;
             let mut has_indexing = false;
@@ -1651,18 +1652,11 @@ pub async fn list_projects(
                 if let Some(status) = status.as_mut() {
                     status.refresh_lifecycle_states();
                 }
-                let chunks = state.storage.count_chunks(project_id, None).await.unwrap_or(0);
-                let symbols = state.storage.count_symbols(project_id, None).await.unwrap_or(0);
-                let embedded_chunks = state
-                    .storage
-                    .count_embedded_chunks(project_id, None)
-                    .await
-                    .unwrap_or(0);
-                let embedded_symbols = state
-                    .storage
-                    .count_embedded_symbols(project_id, None)
-                    .await
-                    .unwrap_or(0);
+                let stats = project_stats.get(project_id).cloned().unwrap_or_default();
+                let chunks = stats.chunks;
+                let symbols = stats.symbols;
+                let embedded_chunks = stats.embedded_chunks;
+                let embedded_symbols = stats.embedded_symbols;
 
                 let status_str = status
                     .as_ref()

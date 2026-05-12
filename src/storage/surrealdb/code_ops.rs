@@ -1,8 +1,9 @@
 use surrealdb::engine::local::Db;
 use surrealdb::Surreal;
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 
+use crate::storage::traits::ProjectStats;
 use crate::types::{
     CapabilityKind, CodeChunk, IndexFileCheckpoint, IndexJobRecord, IndexStatus, RecordId,
     ScoredCodeChunk, ServingGenerationMetadata,
@@ -13,6 +14,13 @@ use super::helpers::generate_id;
 
 const ACTIVE_GENERATION_FILTER: &str =
     "($active_generation IS NONE OR generation = $active_generation OR generation IS NONE)";
+
+fn merge_project_stats(
+    stats: &mut HashMap<String, ProjectStats>,
+    project_id: Option<String>,
+) -> Option<&mut ProjectStats> {
+    project_id.map(|project_id| stats.entry(project_id).or_default())
+}
 
 pub(super) async fn create_code_chunk(db: &Surreal<Db>, mut chunk: CodeChunk) -> Result<String> {
     let id = generate_id();
@@ -235,6 +243,76 @@ pub(super) async fn list_projects(db: &Surreal<Db>) -> Result<Vec<String>> {
     }
 
     Ok(projects.into_iter().collect())
+}
+
+pub(super) async fn get_all_project_stats(
+    db: &Surreal<Db>,
+) -> Result<HashMap<String, ProjectStats>> {
+    use surrealdb_types::SurrealValue;
+
+    let sql = r#"
+        SELECT project_id, count() AS files FROM file_manifest GROUP BY project_id;
+        SELECT project_id, count() AS chunks, count(embedding IS NOT NONE OR string::len(content) < 50) AS embedded_chunks FROM code_chunks WHERE project_id IS NOT NONE GROUP BY project_id;
+        SELECT project_id, count() AS symbols, count(embedding IS NOT NONE) AS embedded_symbols FROM code_symbols GROUP BY project_id;
+        SELECT namespace AS project_id, count() AS memories FROM memories WHERE namespace IS NOT NONE GROUP BY namespace;
+    "#;
+
+    let mut response = db.query(sql).await?;
+    let mut stats = HashMap::new();
+
+    #[derive(serde::Deserialize, SurrealValue)]
+    struct FileCountRow {
+        project_id: Option<String>,
+        files: u32,
+    }
+
+    #[derive(serde::Deserialize, SurrealValue)]
+    struct ChunkCountRow {
+        project_id: Option<String>,
+        chunks: u32,
+        embedded_chunks: u32,
+    }
+
+    #[derive(serde::Deserialize, SurrealValue)]
+    struct SymbolCountRow {
+        project_id: Option<String>,
+        symbols: u32,
+        embedded_symbols: u32,
+    }
+
+    #[derive(serde::Deserialize, SurrealValue)]
+    struct MemoryCountRow {
+        project_id: Option<String>,
+        memories: u32,
+    }
+
+    for row in response.take::<Vec<FileCountRow>>(0)? {
+        if let Some(project_stats) = merge_project_stats(&mut stats, row.project_id) {
+            project_stats.files = row.files;
+        }
+    }
+
+    for row in response.take::<Vec<ChunkCountRow>>(1)? {
+        if let Some(project_stats) = merge_project_stats(&mut stats, row.project_id) {
+            project_stats.chunks = row.chunks;
+            project_stats.embedded_chunks = row.embedded_chunks;
+        }
+    }
+
+    for row in response.take::<Vec<SymbolCountRow>>(2)? {
+        if let Some(project_stats) = merge_project_stats(&mut stats, row.project_id) {
+            project_stats.symbols = row.symbols;
+            project_stats.embedded_symbols = row.embedded_symbols;
+        }
+    }
+
+    for row in response.take::<Vec<MemoryCountRow>>(3)? {
+        if let Some(project_stats) = merge_project_stats(&mut stats, row.project_id) {
+            project_stats.memories = row.memories;
+        }
+    }
+
+    Ok(stats)
 }
 
 fn index_job_record_id(project_id: &str, job_id: &str) -> String {

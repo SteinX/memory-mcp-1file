@@ -384,6 +384,7 @@ mod tests {
         fn record_memory_access(&self, _: &str, _: chrono::DateTime<chrono::Utc>) -> impl Future<Output = crate::Result<()>> + Send { async { unreachable!() } }
         async fn delete_memory(&self, _: &str) -> crate::Result<bool> { unreachable!() }
         async fn list_memories(&self, _: &crate::types::MemoryQuery, _: usize, _: usize) -> crate::Result<Vec<crate::types::Memory>> { unreachable!() }
+        async fn list_memory_ids(&self, _: &crate::types::MemoryQuery) -> crate::Result<Vec<String>> { unreachable!() }
         async fn count_memories(&self) -> crate::Result<usize> { unreachable!() }
         async fn count_memories_filtered(&self, _: &crate::types::MemoryQuery) -> crate::Result<usize> { unreachable!() }
         fn count_valid_memories(&self) -> impl Future<Output = crate::Result<usize>> + Send { async { unreachable!() } }
@@ -461,6 +462,7 @@ mod tests {
         async fn count_chunks(&self, _: &str, _: Option<u64>) -> crate::Result<u32> { unreachable!() }
         async fn count_embedded_symbols(&self, _: &str, _: Option<u64>) -> crate::Result<u32> { unreachable!() }
         async fn count_embedded_chunks(&self, _: &str, _: Option<u64>) -> crate::Result<u32> { unreachable!() }
+        async fn get_all_project_stats(&self) -> crate::Result<std::collections::HashMap<String, crate::storage::traits::ProjectStats>> { unreachable!() }
         async fn get_unembedded_chunks(&self, _: &str) -> crate::Result<Vec<(String, String)>> { unreachable!() }
         async fn get_unembedded_symbols(&self, _: &str) -> crate::Result<Vec<(String, String)>> { unreachable!() }
         async fn count_symbol_relations(&self, _: &str) -> crate::Result<u32> { unreachable!() }

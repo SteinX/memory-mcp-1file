@@ -8,7 +8,7 @@ use surrealdb::Surreal;
 
 use super::StorageBackend;
 use crate::graph::{GraphTraversalStorage, SymbolGraphTraversalStorage};
-use crate::storage::traits::{MemoryExportOptions, MemoryImportOptions};
+use crate::storage::traits::{MemoryExportOptions, MemoryImportOptions, ProjectStats};
 use crate::types::{
     CapabilityKind, CodeChunk, CodeSymbol, Direction, Entity, ExportMemoryResponse,
     ImportMemoryResponse, IndexFileCheckpoint, IndexJobRecord, IndexStatus, ManifestEntry, Memory,
@@ -421,6 +421,10 @@ impl StorageBackend for SurrealStorage {
 
     async fn count_memories(&self) -> Result<usize> {
         memory_ops::count_memories(&self.db).await
+    }
+
+    async fn list_memory_ids(&self, filters: &MemoryQuery) -> Result<Vec<String>> {
+        memory_ops::list_memory_ids(&self.db, filters).await
     }
 
     async fn count_memories_filtered(&self, filters: &MemoryQuery) -> Result<usize> {
@@ -920,6 +924,10 @@ impl StorageBackend for SurrealStorage {
         active_generation: Option<u64>,
     ) -> Result<u32> {
         code_ops::count_embedded_chunks(&self.db, project_id, active_generation).await
+    }
+
+    async fn get_all_project_stats(&self) -> Result<HashMap<String, ProjectStats>> {
+        code_ops::get_all_project_stats(&self.db).await
     }
 
     async fn get_unembedded_chunks(&self, project_id: &str) -> Result<Vec<(String, String)>> {

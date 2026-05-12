@@ -17,7 +17,7 @@ use crate::graph::{
 use crate::server::params::{RecallParams, SearchParams};
 use crate::storage::StorageBackend;
 use crate::types::{
-    record_key_to_string, ExportIdentity, MemoryQuery, MemoryType, ScoredMemory, SearchResult,
+    ExportIdentity, MemoryQuery, MemoryType, ScoredMemory, SearchResult,
 };
 
 use super::contracts::{export_contract_meta, summary_collection_response, with_surface_guidance};
@@ -361,14 +361,14 @@ async fn lexical_memory_search(
     let mut prefilter_filters = filters.clone();
     prefilter_filters.metadata_filter = None;
 
-    let memories = state
+    let ids = state
         .storage
-        .list_memories(&prefilter_filters, overfetch_limit(limit, filters), 0)
+        .list_memory_ids(&prefilter_filters)
         .await
         .unwrap_or_default();
 
-    let retrieved_candidates = memories.len();
-    if memories.is_empty() {
+    let retrieved_candidates = ids.len();
+    if ids.is_empty() {
         return ChannelResults {
             retrieved_candidates,
             post_filter_hits: 0,
@@ -376,15 +376,9 @@ async fn lexical_memory_search(
         };
     }
 
-    let mut allowed_ids = HashSet::with_capacity(memories.len());
-    for memory in memories {
-        if let Some(id) = memory
-            .id
-            .as_ref()
-            .map(|record| record_key_to_string(&record.key))
-        {
-            allowed_ids.insert(id);
-        }
+    let mut allowed_ids = HashSet::with_capacity(ids.len());
+    for id in ids {
+        allowed_ids.insert(id);
     }
 
     let scored = state

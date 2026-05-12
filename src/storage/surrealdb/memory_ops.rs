@@ -246,6 +246,30 @@ pub(super) async fn count_memories(db: &Surreal<Db>) -> Result<usize> {
     Ok(count)
 }
 
+pub(super) async fn list_memory_ids(
+    db: &Surreal<Db>,
+    filters: &MemoryQuery,
+) -> Result<Vec<String>> {
+    use surrealdb_types::SurrealValue;
+
+    let sql = format!(
+        "SELECT id FROM memories WHERE {}",
+        base_filter_clause("time::now()")
+    );
+    let mut response = bind_memory_query(db.query(&sql), filters).await?;
+
+    #[derive(serde::Deserialize, SurrealValue)]
+    struct IdRow {
+        id: crate::types::RecordId,
+    }
+
+    let rows: Vec<IdRow> = response.take(0)?;
+    Ok(rows
+        .into_iter()
+        .map(|r| record_key_to_string(&r.id.key))
+        .collect())
+}
+
 pub(super) async fn count_memories_filtered(
     db: &Surreal<Db>,
     filters: &MemoryQuery,

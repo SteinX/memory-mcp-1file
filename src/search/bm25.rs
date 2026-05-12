@@ -1042,6 +1042,12 @@ mod tests {
         ) -> crate::Result<Vec<crate::types::Memory>> {
             unreachable!()
         }
+        async fn list_memory_ids(
+            &self,
+            _: &crate::types::MemoryQuery,
+        ) -> crate::Result<Vec<String>> {
+            unreachable!()
+        }
         async fn count_memories(&self) -> crate::Result<usize> {
             unreachable!()
         }
@@ -1477,6 +1483,13 @@ mod tests {
             unreachable!()
         }
         async fn count_embedded_chunks(&self, _: &str, _: Option<u64>) -> crate::Result<u32> {
+            unreachable!()
+        }
+        async fn get_all_project_stats(
+            &self,
+        ) -> crate::Result<
+            std::collections::HashMap<String, crate::storage::traits::ProjectStats>,
+        > {
             unreachable!()
         }
         async fn get_unembedded_chunks(
