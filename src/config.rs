@@ -193,8 +193,54 @@ pub struct AppConfig {
     /// Maximum number of managed projects in the in-memory lifecycle registry.
     /// Default: 5.
     pub max_managed_projects: usize,
+    /// Permits for concurrent DB operations.
+    /// Default: 24. Range: [4, 128].
+    pub db_semaphore_size: usize,
     /// Conservative code-index pipeline defaults and rollout switches.
     pub code_index: CodeIndexConfig,
+}
+
+impl AppConfig {
+    fn parse_env<T, F>(lookup: &F, key: &str) -> Option<T>
+    where
+        T: FromStr,
+        F: Fn(&str) -> Option<String>,
+    {
+        lookup(key)?.parse().ok()
+    }
+
+    fn parse_env_clamped_usize<F>(lookup: &F, key: &str, min: usize, max: usize, default: usize) -> usize
+    where
+        F: Fn(&str) -> Option<String>,
+    {
+        Self::parse_env::<usize, F>(lookup, key)
+            .map(|value| {
+                let clamped = value.clamp(min, max);
+                if clamped != value {
+                    tracing::warn!(
+                        env = key,
+                        requested = value,
+                        clamped,
+                        min,
+                        max,
+                        "DB semaphore env var out of range; clamping"
+                    );
+                }
+                clamped
+            })
+            .unwrap_or(default)
+    }
+
+    pub fn db_semaphore_size_from_env() -> usize {
+        Self::db_semaphore_size_from_env_with(|key| std::env::var(key).ok())
+    }
+
+    pub fn db_semaphore_size_from_env_with<F>(lookup: F) -> usize
+    where
+        F: Fn(&str) -> Option<String>,
+    {
+        Self::parse_env_clamped_usize(&lookup, "MEMORY_MCP_DB_SEMAPHORE", 4, 128, Self::default().db_semaphore_size)
+    }
 }
 
 impl Default for AppConfig {
@@ -216,6 +262,7 @@ impl Default for AppConfig {
             manifest_diff_interval_mins: 10,
             allowed_project_roots: None,
             max_managed_projects: 5,
+            db_semaphore_size: 24,
             code_index: CodeIndexConfig::default(),
         }
     }
@@ -332,6 +379,10 @@ pub struct AppState {
     /// non-persistent and may disappear on restart or be replaced after later
     /// rebuilds.
     pub projection_registry: Arc<RwLock<HashMap<String, crate::types::ExportedProjectProjection>>>,
+    /// Short-lived cache for community detection results.
+    /// Keyed by `()` (single slot), TTL = 5 minutes, capacity = 1.
+    /// Errors and empty results are never inserted.
+    pub community_cache: moka::future::Cache<(), Vec<Vec<String>>>,
 }
 
 impl AppState {
@@ -431,5 +482,26 @@ mod tests {
         assert!(empty.exclude_patterns.is_empty());
         assert!(missing.include_patterns.is_empty());
         assert!(missing.exclude_patterns.is_empty());
+    }
+
+    #[test]
+    fn app_config_db_semaphore_env_parsing_respects_default_custom_and_clamp() {
+        assert_eq!(AppConfig::db_semaphore_size_from_env_with(|_| None), 24);
+
+        assert_eq!(
+            AppConfig::db_semaphore_size_from_env_with(|key| match key {
+                "MEMORY_MCP_DB_SEMAPHORE" => Some("48".to_string()),
+                _ => None,
+            }),
+            48
+        );
+
+        assert_eq!(
+            AppConfig::db_semaphore_size_from_env_with(|key| match key {
+                "MEMORY_MCP_DB_SEMAPHORE" => Some("200".to_string()),
+                _ => None,
+            }),
+            128
+        );
     }
 }

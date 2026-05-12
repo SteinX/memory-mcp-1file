@@ -536,20 +536,26 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
         max_projects: max_managed_projects,
     };
 
+    let db_semaphore_size = AppConfig::db_semaphore_size_from_env();
+    tracing::info!("DB semaphore permits: {}", db_semaphore_size);
+
+    let app_config = AppConfig {
+        data_dir: cli.data_dir,
+        model: cli.model,
+        cache_size: cli.cache_size,
+        batch_size: cli.batch_size,
+        timeout_ms: cli.timeout,
+        log_level: cli.log_level,
+        model_load_timeout_ms: cli.model_load_timeout_secs * 1000,
+        // New fields: use compile-time defaults (values are documented in AppConfig::default)
+        allowed_project_roots,
+        max_managed_projects,
+        db_semaphore_size,
+        ..AppConfig::default()
+    };
+
     let state = Arc::new(AppState {
-        config: AppConfig {
-            data_dir: cli.data_dir,
-            model: cli.model,
-            cache_size: cli.cache_size,
-            batch_size: cli.batch_size,
-            timeout_ms: cli.timeout,
-            log_level: cli.log_level,
-            model_load_timeout_ms: cli.model_load_timeout_secs * 1000,
-            // New fields: use compile-time defaults (values are documented in AppConfig::default)
-            allowed_project_roots,
-            max_managed_projects,
-            ..AppConfig::default()
-        },
+        config: app_config.clone(),
         forgetting_config: forgetting_config.clone(),
         access_tracker,
         storage: storage.clone(),
@@ -557,7 +563,7 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
         embedding_store: embedding_store.clone(),
         embedding_queue: adaptive_queue,
         progress: memory_mcp::config::IndexProgressTracker::new(),
-        db_semaphore: Arc::new(tokio::sync::Semaphore::new(10)),
+        db_semaphore: Arc::new(tokio::sync::Semaphore::new(app_config.db_semaphore_size)),
         code_search: Arc::new(CodeSearchEngine::new()),
         memory_search: Arc::new(MemorySearchEngine::new()),
         indexing_projects: Arc::new(std::sync::Mutex::new(std::collections::HashSet::new())),
@@ -568,6 +574,10 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
         )),
         session_bindings: Arc::new(memory_mcp::codebase::SessionBindingStore::new(1024)),
         projection_registry: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
+        community_cache: moka::future::Cache::builder()
+            .max_capacity(1)
+            .time_to_live(std::time::Duration::from_secs(300))
+            .build(),
     });
 
     spawn_heartbeat(

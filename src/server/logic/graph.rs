@@ -182,54 +182,94 @@ pub async fn detect_communities(
     use petgraph::graph::DiGraph;
     use std::collections::HashMap;
 
-    let entities = match state.storage.get_all_entities().await {
-        Ok(e) => e,
-        Err(e) => return Ok(error_response(e)),
-    };
+    let cache_hit = state.community_cache.get(&()).await.is_some();
 
-    let relations = match state.storage.get_all_relations().await {
-        Ok(r) => r,
-        Err(e) => return Ok(error_response(e)),
-    };
+    let result = state
+        .community_cache
+        .try_get_with((), async {
+            let entities = state
+                .storage
+                .get_all_entities()
+                .await
+                .map_err(|e| anyhow::anyhow!("{}", e))?;
 
-    let mut graph: DiGraph<String, f32> = DiGraph::new();
-    let mut node_map = HashMap::new();
+            let relations = state
+                .storage
+                .get_all_relations()
+                .await
+                .map_err(|e| anyhow::anyhow!("{}", e))?;
 
-    for entity in &entities {
-        if let Some(ref id) = entity.id {
-            let id_str = crate::types::record_key_to_string(&id.key);
-            let idx = graph.add_node(id_str.clone());
-            node_map.insert(id_str, idx);
-        }
-    }
+            let mut graph: DiGraph<String, f32> = DiGraph::new();
+            let mut node_map = HashMap::new();
 
-    for relation in &relations {
-        let from_str = crate::types::record_key_to_string(&relation.from_entity.key);
-        let to_str = crate::types::record_key_to_string(&relation.to_entity.key);
-        if let (Some(&from_idx), Some(&to_idx)) = (node_map.get(&from_str), node_map.get(&to_str)) {
-            graph.add_edge(from_idx, to_idx, relation.weight);
-        }
-    }
+            for entity in &entities {
+                if let Some(ref id) = entity.id {
+                    let id_str = crate::types::record_key_to_string(&id.key);
+                    let idx = graph.add_node(id_str.clone());
+                    node_map.insert(id_str, idx);
+                }
+            }
 
-    let communities = detect_communities_algo(&graph);
+            for relation in &relations {
+                let from_str = crate::types::record_key_to_string(&relation.from_entity.key);
+                let to_str = crate::types::record_key_to_string(&relation.to_entity.key);
+                if let (Some(&from_idx), Some(&to_idx)) =
+                    (node_map.get(&from_str), node_map.get(&to_str))
+                {
+                    graph.add_edge(from_idx, to_idx, relation.weight);
+                }
+            }
 
-    let reverse_map: HashMap<petgraph::graph::NodeIndex, String> =
-        node_map.into_iter().map(|(id, idx)| (idx, id)).collect();
+            let start = std::time::Instant::now();
+            let communities = detect_communities_algo(&graph);
+            let elapsed = start.elapsed().as_millis();
 
-    let result_communities: Vec<Vec<String>> = communities
-        .into_iter()
-        .map(|comm| {
-            comm.into_iter()
-                .filter_map(|idx| reverse_map.get(&idx).cloned())
-                .collect()
+            let reverse_map: HashMap<petgraph::graph::NodeIndex, String> =
+                node_map.into_iter().map(|(id, idx)| (idx, id)).collect();
+
+            let result_communities: Vec<Vec<String>> = communities
+                .into_iter()
+                .map(|comm| {
+                    comm.into_iter()
+                        .filter_map(|idx| reverse_map.get(&idx).cloned())
+                        .collect()
+                })
+                .collect();
+
+            if result_communities.is_empty() {
+                return Err(anyhow::anyhow!("empty_graph"));
+            }
+
+            tracing::debug!("Community detection: computed in {}ms", elapsed);
+            Ok(result_communities)
         })
-        .collect();
+        .await;
 
-    Ok(success_json(json!({
-        "communities": result_communities,
-        "community_count": result_communities.len(),
-        "entity_count": entities.len()
-    })))
+    match result {
+        Ok(result_communities) => {
+            if cache_hit {
+                tracing::debug!("Community detection: cache hit");
+            }
+            let entity_count = result_communities.iter().map(|c| c.len()).sum::<usize>();
+            Ok(success_json(json!({
+                "communities": result_communities,
+                "community_count": result_communities.len(),
+                "entity_count": entity_count
+            })))
+        }
+        Err(e) => {
+            let msg = e.to_string();
+            if msg == "empty_graph" {
+                Ok(success_json(json!({
+                    "communities": [],
+                    "community_count": 0,
+                    "entity_count": 0
+                })))
+            } else {
+                Ok(error_response(anyhow::anyhow!("{}", msg)))
+            }
+        }
+    }
 }
 
 #[cfg(test)]

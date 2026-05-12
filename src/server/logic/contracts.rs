@@ -1730,14 +1730,6 @@ pub fn build_project_projection(
 // Capability status helpers (Task 5: project_info capability readiness)
 // ─────────────────────────────────────────────────────────────────────────────
 
-fn capability_freshness(serving_gen: Option<u64>, is_indexing: bool) -> CapabilityFreshness {
-    match serving_gen {
-        None => CapabilityFreshness::Missing,
-        Some(_) if is_indexing => CapabilityFreshness::Stale,
-        Some(_) => CapabilityFreshness::Fresh,
-    }
-}
-
 pub fn build_capability_readiness(
     meta: &ServingGenerationMetadata,
     indexing_gen: Option<u64>,

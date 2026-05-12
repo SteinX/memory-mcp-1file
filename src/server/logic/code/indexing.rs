@@ -3741,6 +3741,125 @@ mod tests {
         assert_eq!(project["summary"]["partial"]["is_partial"], false);
     }
 
+    fn assert_list_projects_shape(project: &serde_json::Value) {
+        for field in [
+            "id",
+            "project_id",
+            "root_path",
+            "status",
+            "lifecycle",
+            "contract",
+            "summary",
+            "chunks",
+            "symbols",
+            "embedded_chunks",
+            "embedded_symbols",
+            "diagnostics",
+        ] {
+            assert!(project.get(field).is_some(), "missing field {field}");
+        }
+
+        assert!(project["id"].is_string());
+        assert!(project["project_id"].is_string());
+        assert!(project["root_path"].is_string());
+        assert!(project["status"].is_string());
+        assert!(project["lifecycle"].is_object());
+        assert!(project["contract"].is_object());
+        assert!(project["summary"].is_object());
+        assert!(project["diagnostics"].is_object());
+
+        for field in ["chunks", "symbols", "embedded_chunks", "embedded_symbols"] {
+            assert!(project[field].is_u64() || project[field].is_i64(), "{field} must be numeric");
+        }
+    }
+
+    #[tokio::test]
+    async fn list_projects_snapshot_includes_full_shape_and_zero_counts() {
+        let ctx = TestContext::new().await;
+
+        let data_project_id = "list-projects-data";
+        let empty_project_id = "list-projects-empty";
+
+        ctx.state
+            .storage
+            .create_code_chunk(crate::types::CodeChunk {
+                id: None,
+                file_path: "src/data.rs".to_string(),
+                content: "fn data_project() {}".to_string(),
+                language: crate::types::Language::Rust,
+                start_line: 1,
+                end_line: 1,
+                chunk_type: crate::types::ChunkType::Function,
+                name: Some("data_project".to_string()),
+                context_path: None,
+                embedding: None,
+                content_hash: "hash-data-project".to_string(),
+                project_id: Some(data_project_id.to_string()),
+                generation: None,
+                indexed_at: crate::types::Datetime::default(),
+            })
+            .await
+            .unwrap();
+
+        ctx.state
+            .storage
+            .create_code_symbol(crate::types::CodeSymbol::new(
+                "data_project_symbol".to_string(),
+                crate::types::SymbolType::Function,
+                "src/data.rs".to_string(),
+                1,
+                3,
+                data_project_id.to_string(),
+            ))
+            .await
+            .unwrap();
+
+        let mut data_status = IndexStatus::new(data_project_id.to_string());
+        data_status.status = IndexState::Completed;
+        data_status.root_path = Some("/workspace/list-projects-data".to_string());
+        data_status.mark_structural_generation_advanced();
+        data_status.mark_semantic_generation_caught_up();
+        data_status.mark_projection_current();
+        ctx.state.storage.update_index_status(data_status).await.unwrap();
+
+        let mut empty_status = IndexStatus::new(empty_project_id.to_string());
+        empty_status.root_path = Some("/workspace/list-projects-empty".to_string());
+        ctx.state.storage.update_index_status(empty_status).await.unwrap();
+
+        let result = list_projects(&ctx.state, ListProjectsParams { _placeholder: true })
+            .await
+            .unwrap();
+
+        let value = serde_json::to_value(&result).unwrap();
+        let text = value["content"][0]["text"].as_str().unwrap();
+        let json: serde_json::Value = serde_json::from_str(text).unwrap();
+
+        let projects = json["projects"].as_array().unwrap();
+        assert_eq!(projects.len(), 2);
+
+        let data_project = projects
+            .iter()
+            .find(|project| project["project_id"] == data_project_id)
+            .cloned()
+            .expect("data project should be listed");
+        let empty_project = projects
+            .iter()
+            .find(|project| project["project_id"] == empty_project_id)
+            .cloned()
+            .expect("empty project should be listed");
+
+        assert_list_projects_shape(&data_project);
+        assert_list_projects_shape(&empty_project);
+
+        for field in ["chunks", "symbols", "embedded_chunks", "embedded_symbols"] {
+            assert_eq!(
+                empty_project[field].as_u64().or_else(|| empty_project[field].as_i64().map(|n| n as u64)),
+                Some(0),
+                "{field} must be 0 for empty project"
+            );
+        }
+    }
+
     #[test]
     fn completed_status_preserves_projection_current_on_refresh() {
         let mut status = IndexStatus::new("projection-current".to_string());

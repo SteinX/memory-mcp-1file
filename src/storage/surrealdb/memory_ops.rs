@@ -250,12 +250,32 @@ pub(super) async fn count_memories_filtered(
     db: &Surreal<Db>,
     filters: &MemoryQuery,
 ) -> Result<usize> {
+    use surrealdb_types::SurrealValue;
+
     let sql = format!(
-        "SELECT {MEMORY_SELECT} FROM memories WHERE {}",
+        "SELECT count() FROM memories WHERE {} GROUP ALL",
         base_filter_clause("time::now()")
     );
     let mut response = bind_memory_query(db.query(&sql), filters).await?;
-    let mut memories: Vec<Memory> = response.take(0)?;
+
+    #[derive(serde::Deserialize, SurrealValue)]
+    struct CountResult {
+        count: u32,
+    }
+
+    let result: Option<CountResult> = response.take(0)?;
+    let count = result.map(|r| r.count).unwrap_or(0) as usize;
+
+    if filters.metadata_filter.is_none() {
+        return Ok(count);
+    }
+
+    let metadata_sql = format!(
+        "SELECT {MEMORY_SELECT} FROM memories WHERE {}",
+        base_filter_clause("time::now()")
+    );
+    let mut metadata_response = bind_memory_query(db.query(&metadata_sql), filters).await?;
+    let mut memories: Vec<Memory> = metadata_response.take(0)?;
     memories.retain(|m| metadata_matches(m.metadata.as_ref(), filters.metadata_filter.as_ref()));
     Ok(memories.len())
 }

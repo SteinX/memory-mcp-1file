@@ -119,8 +119,14 @@ impl EmbeddingService {
                             state.progress_percent = None;
                             drop(state);
 
-                            if let Err(e) = engine.embed("warmup") {
-                                tracing::warn!("Warmup failed (non-fatal): {}", e);
+                            let warmup_started_at = Instant::now();
+                            if let Err(err) = engine.embed("warmup") {
+                                tracing::warn!("Embedding warmup failed: {}", err);
+                            } else {
+                                tracing::info!(
+                                    "Embedding warmup completed in {}ms",
+                                    warmup_started_at.elapsed().as_millis()
+                                );
                             }
 
                             let mut guard = engine_state.write().await;

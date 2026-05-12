@@ -95,10 +95,12 @@ impl TestContext {
             manifest_diff_interval_mins: 10,
             allowed_project_roots: None,
             max_managed_projects: 5,
+            db_semaphore_size: 24,
             code_index,
         };
 
         let (shutdown_tx, _) = tokio::sync::watch::channel(false);
+        let db_semaphore_size = config.db_semaphore_size;
 
         let state = Arc::new(AppState {
             config,
@@ -107,7 +109,7 @@ impl TestContext {
             embedding_store,
             embedding_queue: adaptive_queue,
             progress: crate::config::IndexProgressTracker::new(),
-            db_semaphore: Arc::new(tokio::sync::Semaphore::new(10)),
+            db_semaphore: Arc::new(tokio::sync::Semaphore::new(db_semaphore_size)),
             code_search: Arc::new(CodeSearchEngine::new()),
             memory_search: Arc::new(MemorySearchEngine::new()),
             indexing_projects: Arc::new(std::sync::Mutex::new(std::collections::HashSet::new())),
@@ -125,6 +127,10 @@ impl TestContext {
                 let (tracker, _writer) = create_access_channel(ForgettingConfig::default());
                 tracker
             },
+            community_cache: moka::future::Cache::builder()
+                .max_capacity(1)
+                .time_to_live(std::time::Duration::from_secs(300))
+                .build(),
         });
 
         Self {

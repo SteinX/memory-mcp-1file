@@ -395,6 +395,7 @@ mod tests {
             crate::forgetting::access::create_access_channel(forgetting_config.clone());
 
         let (shutdown_tx, _) = tokio::sync::watch::channel(false);
+        let db_semaphore_size = crate::config::AppConfig::default().db_semaphore_size;
         let _worker = EmbeddingWorker::new(
             rx,
             tx,
@@ -409,7 +410,7 @@ mod tests {
                 embedding_store: store,
                 embedding_queue: adaptive_queue,
                 progress: crate::config::IndexProgressTracker::new(),
-                db_semaphore: Arc::new(tokio::sync::Semaphore::new(10)),
+                db_semaphore: Arc::new(tokio::sync::Semaphore::new(db_semaphore_size)),
                 code_search: Arc::new(crate::search::CodeSearchEngine::new()),
                 memory_search: Arc::new(crate::search::MemorySearchEngine::new()),
                 indexing_projects: Arc::new(
@@ -422,6 +423,10 @@ mod tests {
                 projection_registry: Arc::new(tokio::sync::RwLock::new(
                     std::collections::HashMap::new(),
                 )),
+                community_cache: moka::future::Cache::builder()
+                    .max_capacity(1)
+                    .time_to_live(std::time::Duration::from_secs(300))
+                    .build(),
             }),
         );
     }
