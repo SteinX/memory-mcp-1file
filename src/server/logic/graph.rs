@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::time::Instant;
 
 use rmcp::model::CallToolResult;
 use serde_json::json;
@@ -182,6 +183,7 @@ pub async fn detect_communities(
     use petgraph::graph::DiGraph;
     use std::collections::HashMap;
 
+    let total_start = Instant::now();
     let cache_hit = state.community_cache.get(&()).await.is_some();
 
     let result = state
@@ -251,6 +253,15 @@ pub async fn detect_communities(
                 tracing::debug!("Community detection: cache hit");
             }
             let entity_count = result_communities.iter().map(|c| c.len()).sum::<usize>();
+            state.metrics.record_duration(
+                "query.graph_detect_communities",
+                total_start.elapsed(),
+                json!({
+                    "cache_hit": cache_hit,
+                    "community_count": result_communities.len(),
+                    "entity_count": entity_count,
+                }),
+            );
             Ok(success_json(json!({
                 "communities": result_communities,
                 "community_count": result_communities.len(),
@@ -260,12 +271,22 @@ pub async fn detect_communities(
         Err(e) => {
             let msg = e.to_string();
             if msg == "empty_graph" {
+                state.metrics.record_duration(
+                    "query.graph_detect_communities",
+                    total_start.elapsed(),
+                    json!({"cache_hit": cache_hit, "community_count": 0, "entity_count": 0, "empty": true}),
+                );
                 Ok(success_json(json!({
                     "communities": [],
                     "community_count": 0,
                     "entity_count": 0
                 })))
             } else {
+                state.metrics.record_duration(
+                    "query.graph_detect_communities",
+                    total_start.elapsed(),
+                    json!({"cache_hit": cache_hit, "ok": false, "error": msg}),
+                );
                 Ok(error_response(anyhow::anyhow!("{}", msg)))
             }
         }

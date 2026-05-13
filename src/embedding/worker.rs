@@ -427,6 +427,7 @@ mod tests {
                     .max_capacity(1)
                     .time_to_live(std::time::Duration::from_secs(300))
                     .build(),
+                metrics: crate::metrics::MetricsRecorder::disabled(),
             }),
         );
     }

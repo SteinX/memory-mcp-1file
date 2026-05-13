@@ -28,22 +28,41 @@ pub struct SurrealStorage {
     pub(super) db: Surreal<Db>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DimensionCheck {
+    Match { actual: usize },
+    Mismatch { actual: usize, expected: usize },
+    Unknown,
+}
+
 impl SurrealStorage {
     pub async fn new(data_dir: &Path, model_dim: usize) -> Result<Self> {
         let db_path = data_dir.join("db");
+        let existing_db = db_path.exists();
         std::fs::create_dir_all(&db_path)?;
 
         let db: Surreal<Db> = Surreal::new::<SurrealKv>(db_path).await?;
         db.use_ns("memory").use_db("main").await?;
 
+        if !existing_db {
+            Self::initialize_schema_for_db(&db, model_dim).await?;
+        }
+
+        Ok(Self { db })
+    }
+
+    pub async fn initialize_schema(&self, model_dim: usize) -> Result<()> {
+        Self::initialize_schema_for_db(&self.db, model_dim).await
+    }
+
+    async fn initialize_schema_for_db(db: &Surreal<Db>, model_dim: usize) -> Result<()> {
         // Drop old fulltext index on code_chunks that caused startup errors on existing databases
         db.query("REMOVE INDEX IF EXISTS idx_chunks_fts ON code_chunks;")
             .await?;
 
         let schema = include_str!("../schema.surql").replace("{dim}", &model_dim.to_string());
         db.query(&schema).await?;
-
-        Ok(Self { db })
+        Ok(())
     }
 
     #[cfg(test)]
@@ -61,38 +80,59 @@ impl SurrealStorage {
     }
 
     pub async fn check_dimension(&self, expected: usize) -> Result<()> {
+        match self.inspect_dimension(expected).await? {
+            DimensionCheck::Match { actual } => {
+                tracing::info!(model = expected, db = actual, "Dimension check passed");
+            }
+            DimensionCheck::Mismatch { actual, expected } => {
+                tracing::warn!(
+                    old = actual,
+                    new = expected,
+                    "Dimension mismatch detected, rebuilding vector indices"
+                );
+                self.rebuild_vector_indices(expected).await?;
+                self.mark_embeddings_stale().await?;
+                tracing::info!("Indices rebuilt, old embeddings marked stale");
+            }
+            DimensionCheck::Unknown => {}
+        }
+
+        Ok(())
+    }
+
+    pub async fn inspect_dimension(&self, expected: usize) -> Result<DimensionCheck> {
         let mut response = self.db.query("INFO FOR TABLE memories").await?;
         let result: Option<serde_json::Value> = response.take(0)?;
 
-        if let Some(info) = result {
-            if let Some(indexes) = info.get("indexes").and_then(|i| i.as_object()) {
-                if let Some(idx_def) = indexes.get("idx_memories_vec").and_then(|v| v.as_str()) {
-                    if let Some(dim) = self.extract_dimension(idx_def) {
-                        if dim != expected {
-                            tracing::warn!(
-                                old = dim,
-                                new = expected,
-                                "Dimension mismatch detected, rebuilding vector indices"
-                            );
-                            self.rebuild_vector_indices(expected).await?;
-                            self.db
-                                .query(
-                                    "UPDATE memories SET embedding_state = 'stale', embedding = NONE;
-                                     UPDATE entities SET embedding = NONE;
-                                     UPDATE code_chunks SET embedding = NONE;
-                                     UPDATE code_symbols SET embedding = NONE;",
-                                )
-                                .await?;
-                            tracing::info!("Indices rebuilt, old embeddings marked stale");
-                            return Ok(());
-                        }
-                        tracing::info!(model = expected, db = dim, "Dimension check passed");
-                        return Ok(());
-                    }
-                }
-            }
-        }
+        let Some(info) = result else {
+            return Ok(DimensionCheck::Unknown);
+        };
+        let Some(indexes) = info.get("indexes").and_then(|i| i.as_object()) else {
+            return Ok(DimensionCheck::Unknown);
+        };
+        let Some(idx_def) = indexes.get("idx_memories_vec").and_then(|v| v.as_str()) else {
+            return Ok(DimensionCheck::Unknown);
+        };
+        let Some(actual) = self.extract_dimension(idx_def) else {
+            return Ok(DimensionCheck::Unknown);
+        };
 
+        if actual == expected {
+            Ok(DimensionCheck::Match { actual })
+        } else {
+            Ok(DimensionCheck::Mismatch { actual, expected })
+        }
+    }
+
+    pub async fn mark_embeddings_stale(&self) -> Result<()> {
+        self.db
+            .query(
+                "UPDATE memories SET embedding_state = 'stale', embedding = NONE;
+                 UPDATE entities SET embedding = NONE;
+                 UPDATE code_chunks SET embedding = NONE;
+                 UPDATE code_symbols SET embedding = NONE;",
+            )
+            .await?;
         Ok(())
     }
 
@@ -647,6 +687,10 @@ impl StorageBackend for SurrealStorage {
 
     async fn list_projects(&self) -> Result<Vec<String>> {
         code_ops::list_projects(&self.db).await
+    }
+
+    async fn list_index_statuses(&self) -> Result<Vec<IndexStatus>> {
+        code_ops::list_index_statuses(&self.db).await
     }
 
     async fn create_or_update_index_job(&self, job: &IndexJobRecord) -> Result<()> {

@@ -1,5 +1,6 @@
 use std::collections::HashSet;
 use std::sync::Arc;
+use std::time::Instant;
 
 use rmcp::model::CallToolResult;
 use serde_json::json;
@@ -423,18 +424,23 @@ async fn search_impl(
     params: SearchParams,
     access_tracker: Option<&AccessTracker>,
 ) -> anyhow::Result<CallToolResult> {
+    let total_start = Instant::now();
+    let query_len = params.query.len();
     crate::ensure_embedding_ready!(state);
     let filters = match params.to_memory_query() {
         Ok(filters) => filters,
         Err(e) => return Ok(error_response(e)),
     };
 
+    let embed_start = Instant::now();
     let query_embedding = state.embedding.embed(&params.query).await?;
+    let embed_elapsed = embed_start.elapsed();
 
     let limit = normalize_limit(params.limit);
     let fetch_limit = overfetch_limit(limit, &filters);
     let mut prefilter_filters = filters.clone();
     prefilter_filters.metadata_filter = None;
+    let vector_start = Instant::now();
     let vector_raw = match state
         .storage
         .vector_search(&query_embedding, &prefilter_filters, fetch_limit)
@@ -443,6 +449,7 @@ async fn search_impl(
         Ok(r) => r,
         Err(e) => return Ok(error_response(e)),
     };
+    let vector_elapsed = vector_start.elapsed();
     let vector_channel = apply_metadata_post_filter(vector_raw, &filters);
     let results = apply_min_score_scored(
         score_single_mode_results(
@@ -453,6 +460,21 @@ async fn search_impl(
         params.min_score,
     );
     emit_access_events(access_tracker, &results);
+    state.metrics.record_duration(
+        "query.memory_vector",
+        total_start.elapsed(),
+        json!({
+            "query_len": query_len,
+            "limit": limit,
+            "fetch_limit": fetch_limit,
+            "result_count": results.len(),
+            "vector_retrieved_candidates": vector_channel.retrieved_candidates,
+            "vector_post_filter_hits": vector_channel.post_filter_hits,
+            "metadata_filter": filters.uses_metadata_post_filter(),
+            "embedding_ms": embed_elapsed.as_secs_f64() * 1000.0,
+            "vector_search_ms": vector_elapsed.as_secs_f64() * 1000.0,
+        }),
+    );
 
     Ok(success_json(json!({
         "results": results,
@@ -489,13 +511,17 @@ async fn search_text_impl(
     params: SearchParams,
     access_tracker: Option<&AccessTracker>,
 ) -> anyhow::Result<CallToolResult> {
+    let total_start = Instant::now();
+    let query_len = params.query.len();
     let limit = normalize_limit(params.limit);
     let filters = match params.to_memory_query() {
         Ok(filters) => filters,
         Err(e) => return Ok(error_response(e)),
     };
     let fetch_limit = overfetch_limit(limit, &filters);
+    let bm25_start = Instant::now();
     let bm25_channel = lexical_memory_search(state, &params.query, &filters, fetch_limit).await;
+    let bm25_elapsed = bm25_start.elapsed();
     let results = apply_min_score_scored(
         score_single_mode_results(
             enrich_results_truth(dedup_memory_results(bm25_channel.results, fetch_limit)),
@@ -505,6 +531,20 @@ async fn search_text_impl(
         params.min_score,
     );
     emit_access_events(access_tracker, &results);
+    state.metrics.record_duration(
+        "query.memory_bm25",
+        total_start.elapsed(),
+        json!({
+            "query_len": query_len,
+            "limit": limit,
+            "fetch_limit": fetch_limit,
+            "result_count": results.len(),
+            "bm25_retrieved_candidates": bm25_channel.retrieved_candidates,
+            "bm25_post_filter_hits": bm25_channel.post_filter_hits,
+            "metadata_filter": filters.uses_metadata_post_filter(),
+            "bm25_search_ms": bm25_elapsed.as_secs_f64() * 1000.0,
+        }),
+    );
 
     Ok(success_json(json!({
         "results": results,
@@ -547,13 +587,12 @@ async fn recall_impl(
     use petgraph::graph::{DiGraph, NodeIndex};
     use std::collections::HashMap;
 
-    crate::ensure_embedding_ready!(state);
+    let total_start = Instant::now();
+    let query_len = params.query.len();
     let filters = match params.to_memory_query() {
         Ok(filters) => filters,
         Err(e) => return Ok(error_response(e)),
     };
-
-    let query_embedding = state.embedding.embed(&params.query).await?;
 
     let limit = normalize_limit(params.limit);
     let fetch_limit = overfetch_limit(limit, &filters);
@@ -564,16 +603,32 @@ async fn recall_impl(
     let bm25_weight = params.bm25_weight.unwrap_or(DEFAULT_BM25_WEIGHT);
     let ppr_weight = params.ppr_weight.unwrap_or(DEFAULT_PPR_WEIGHT);
 
-    let vector_results_raw = state
-        .storage
-        .vector_search(&query_embedding, &prefilter_filters, fetch_limit)
-        .await
-        .unwrap_or_default();
+    let embedding_ready = state.embedding.is_ready();
+    let embed_start = Instant::now();
+    let query_embedding = if embedding_ready {
+        Some(state.embedding.embed(&params.query).await?)
+    } else {
+        None
+    };
+    let embed_elapsed = embed_start.elapsed();
+
+    let vector_start = Instant::now();
+    let vector_results_raw = match query_embedding.as_ref() {
+        Some(query_embedding) => state
+            .storage
+            .vector_search(query_embedding, &prefilter_filters, fetch_limit)
+            .await
+            .unwrap_or_default(),
+        None => Vec::new(),
+    };
+    let vector_elapsed = vector_start.elapsed();
     let vector_channel = apply_metadata_post_filter(vector_results_raw, &filters);
     let vector_results =
         enrich_results_truth(dedup_memory_results(vector_channel.results, fetch_limit));
 
+    let bm25_start = Instant::now();
     let bm25_channel = lexical_memory_search(state, &params.query, &filters, fetch_limit).await;
+    let bm25_elapsed = bm25_start.elapsed();
     let bm25_results =
         enrich_results_truth(dedup_memory_results(bm25_channel.results, fetch_limit));
 
@@ -601,6 +656,7 @@ async fn recall_impl(
         }
     }
 
+    let ppr_start = Instant::now();
     let ppr_tuples: Vec<(String, f32)> = if !all_ids.is_empty() {
         match state.storage.get_subgraph(&all_ids).await {
             Ok((entities, relations)) if !entities.is_empty() => {
@@ -646,6 +702,7 @@ async fn recall_impl(
     } else {
         vec![]
     };
+    let ppr_elapsed = ppr_start.elapsed();
 
     let merged = rrf_merge(
         &vector_tuples,
@@ -747,6 +804,30 @@ async fn recall_impl(
     let fused_candidates = scored_memories.len();
     let scored_memories = apply_min_score_scored(scored_memories, params.min_score);
     emit_access_events(access_tracker, &scored_memories);
+    state.metrics.record_duration(
+        "query.memory_recall",
+        total_start.elapsed(),
+        json!({
+            "query_len": query_len,
+            "limit": limit,
+            "fetch_limit": fetch_limit,
+            "result_count": scored_memories.len(),
+            "vector_hits": vector_results.len(),
+            "bm25_hits": bm25_results.len(),
+            "ppr_hits": ppr_tuples.len(),
+            "fused_candidates": fused_candidates,
+            "vector_retrieved_candidates": vector_channel.retrieved_candidates,
+            "vector_post_filter_hits": vector_channel.post_filter_hits,
+            "bm25_retrieved_candidates": bm25_channel.retrieved_candidates,
+            "bm25_post_filter_hits": bm25_channel.post_filter_hits,
+            "metadata_filter": filters.uses_metadata_post_filter(),
+            "embedding_ready": embedding_ready,
+            "embedding_ms": embed_elapsed.as_secs_f64() * 1000.0,
+            "vector_search_ms": vector_elapsed.as_secs_f64() * 1000.0,
+            "bm25_search_ms": bm25_elapsed.as_secs_f64() * 1000.0,
+            "ppr_ms": ppr_elapsed.as_secs_f64() * 1000.0,
+        }),
+    );
 
     Ok(success_json(json!({
         "memories": scored_memories,
@@ -756,6 +837,8 @@ async fn recall_impl(
         "query": params.query,
         "filters": filters.describe(),
         "diagnostics": {
+            "embedding_ready": embedding_ready,
+            "degraded_reason": if embedding_ready { serde_json::Value::Null } else { json!("embedding_model_loading_bm25_only") },
             "vector_hits": vector_results.len(),
             "bm25_hits": bm25_results.len(),
             "ppr_hits": ppr_tuples.len(),

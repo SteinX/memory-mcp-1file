@@ -2,7 +2,7 @@ use clap::Parser;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 
@@ -27,6 +27,7 @@ use memory_mcp::lifecycle::{
 };
 use memory_mcp::search::{CodeSearchEngine, MemorySearchEngine};
 use memory_mcp::server::MemoryMcpServer;
+use memory_mcp::storage::surrealdb::DimensionCheck;
 use memory_mcp::storage::{StorageBackend, SurrealStorage};
 use memory_mcp::transport::{serve_http_sse, HttpServerConfig};
 use memory_mcp::types::EmbeddingState;
@@ -339,15 +340,19 @@ fn configure_block_cache(cli_cache_mb: Option<u64>) {
     #[cfg(target_os = "macos")]
     {
         if let Some(available_mb) = get_available_memory_mb_macos() {
-            // Use 20% of available RAM, max 512 MB
-            let cache_mb = std::cmp::min((available_mb as f64 * 0.2) as u64, 512);
+            // Use 20% of available RAM, capped at 512 MB, but keep a practical
+            // lower bound. macOS can report very low free-page counts under
+            // normal memory pressure; a tiny 10-12 MB SurrealKV block cache
+            // makes large data-dir startup and query paths much slower.
+            let detected_mb = std::cmp::min((available_mb as f64 * 0.2) as u64, 512);
+            let cache_mb = detected_mb.clamp(128, 512);
             let cache_bytes = cache_mb * 1024 * 1024;
             unsafe {
                 std::env::set_var(ENV_VAR, cache_bytes.to_string());
             }
             eprintln!(
-                "[memory-mcp] Auto-configured block cache: {} MB (available RAM: {} MB)",
-                cache_mb, available_mb
+                "[memory-mcp] Auto-configured block cache: {} MB (available RAM: {} MB, detected: {} MB)",
+                cache_mb, available_mb, detected_mb
             );
         }
     }
@@ -404,6 +409,7 @@ fn main() -> anyhow::Result<()> {
 }
 
 async fn async_main(cli: Cli) -> anyhow::Result<()> {
+    let process_start = Instant::now();
     if cli.list_models {
         println!("Available models:");
         println!("  qwen3     - 1024 dim, ~1.2 GB          [Apache 2.0] Top open-source 2026, MRL, 32K ctx");
@@ -434,6 +440,19 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
     )?;
 
     let runtime_mode = if cli.stdio { "stdio" } else { "http_sse" };
+    let metrics_recorder = memory_mcp::metrics::MetricsRecorder::from_env();
+    if let Some(path) = metrics_recorder.output_path() {
+        tracing::info!(path = %path.display(), "metrics output enabled");
+    }
+    metrics_recorder.record_event(
+        "process_start",
+        serde_json::json!({
+            "mode": runtime_mode,
+            "version": env!("CARGO_PKG_VERSION"),
+            "model": cli.model,
+            "project_path": cli.project_path.as_ref().map(|path| path.display().to_string()),
+        }),
+    );
     install_panic_hook(cli.data_dir.clone(), runtime_mode.to_string());
     record_runtime_event_with_details(
         &cli.data_dir,
@@ -482,11 +501,79 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
         .validate()
         .map_err(|e| anyhow::anyhow!("Invalid embedding configuration: {}", e))?;
 
+    let storage_start = Instant::now();
     let storage =
         Arc::new(SurrealStorage::new(&cli.data_dir, embedding_config.output_dim()).await?);
+    metrics_recorder.record_duration(
+        "startup.storage_open",
+        storage_start.elapsed(),
+        serde_json::json!({
+            "data_dir": cli.data_dir.display().to_string(),
+            "embedding_dim": embedding_config.output_dim(),
+        }),
+    );
 
-    if let Err(e) = storage.check_dimension(embedding_config.output_dim()).await {
-        tracing::warn!("Dimension check: {}", e);
+    let dimension_check_start = Instant::now();
+    match storage.inspect_dimension(embedding_config.output_dim()).await {
+        Ok(DimensionCheck::Match { actual }) => {
+            tracing::info!(model = embedding_config.output_dim(), db = actual, "Dimension check passed");
+            metrics_recorder.record_duration(
+                "startup.dimension_check",
+                dimension_check_start.elapsed(),
+                serde_json::json!({"ok": true, "status": "match", "actual": actual}),
+            );
+        }
+        Ok(DimensionCheck::Mismatch { actual, expected }) => {
+            tracing::warn!(old = actual, new = expected, "Dimension mismatch detected; rebuilding vector indices in background");
+            metrics_recorder.record_duration(
+                "startup.dimension_check",
+                dimension_check_start.elapsed(),
+                serde_json::json!({"ok": true, "status": "mismatch_background", "actual": actual, "expected": expected}),
+            );
+            let repair_storage = storage.clone();
+            let repair_metrics = metrics_recorder.clone();
+            tokio::spawn(async move {
+                let started = Instant::now();
+                let result = async {
+                    repair_storage.rebuild_vector_indices(expected).await?;
+                    repair_storage.mark_embeddings_stale().await
+                }
+                .await;
+                match result {
+                    Ok(()) => {
+                        tracing::info!(old = actual, new = expected, "Background vector index rebuild completed; embeddings marked stale");
+                        repair_metrics.record_duration(
+                            "startup.dimension_repair",
+                            started.elapsed(),
+                            serde_json::json!({"ok": true, "actual": actual, "expected": expected}),
+                        );
+                    }
+                    Err(error) => {
+                        tracing::warn!(%error, old = actual, new = expected, "Background vector index rebuild failed");
+                        repair_metrics.record_duration(
+                            "startup.dimension_repair",
+                            started.elapsed(),
+                            serde_json::json!({"ok": false, "actual": actual, "expected": expected, "error": error.to_string()}),
+                        );
+                    }
+                }
+            });
+        }
+        Ok(DimensionCheck::Unknown) => {
+            metrics_recorder.record_duration(
+                "startup.dimension_check",
+                dimension_check_start.elapsed(),
+                serde_json::json!({"ok": true, "status": "unknown"}),
+            );
+        }
+        Err(e) => {
+            tracing::warn!("Dimension check: {}", e);
+            metrics_recorder.record_duration(
+                "startup.dimension_check",
+                dimension_check_start.elapsed(),
+                serde_json::json!({"ok": false, "status": "error", "error": e.to_string()}),
+            );
+        }
     }
 
     tracing::info!(output_dim = embedding_config.output_dim(), model = %embedding_config.model, "Embedding engine configured");
@@ -578,7 +665,17 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
             .max_capacity(1)
             .time_to_live(std::time::Duration::from_secs(300))
             .build(),
+        metrics: metrics_recorder.clone(),
     });
+
+    state.metrics.record_duration(
+        "startup.state_ready",
+        process_start.elapsed(),
+        serde_json::json!({
+            "mode": runtime_mode,
+            "metrics_enabled": state.metrics.is_enabled(),
+        }),
+    );
 
     spawn_heartbeat(
         state.config.data_dir.clone(),
@@ -629,10 +726,30 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
     // Warm the in-memory BM25 index from existing DB data (background, non-blocking)
     let bm25_state = state.clone();
     tokio::spawn(async move {
-        let count = bm25_state
-            .code_search
-            .load_all_from_storage(bm25_state.storage.as_ref())
-            .await;
+        let started = Instant::now();
+        let project_stats = bm25_state.storage.get_all_project_stats().await.unwrap_or_default();
+        let project_count = project_stats.len();
+        let chunk_count: u64 = project_stats
+            .values()
+            .map(|stats| u64::from(stats.chunks))
+            .sum();
+        let count = if chunk_count == 0 {
+            0
+        } else {
+            bm25_state
+                .code_search
+                .load_all_from_storage(bm25_state.storage.as_ref())
+                .await
+        };
+        bm25_state.metrics.record_duration(
+            "warmup.code_bm25",
+            started.elapsed(),
+            serde_json::json!({
+                "chunks": count,
+                "projects": project_count,
+                "stored_chunks": chunk_count,
+            }),
+        );
         if count > 0 {
             tracing::info!(chunks = count, "BM25 in-memory index warmed from DB");
         }
@@ -640,10 +757,16 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
 
     let memory_bm25_state = state.clone();
     tokio::spawn(async move {
+        let started = Instant::now();
         let count = memory_bm25_state
             .memory_search
             .load_all_from_storage(memory_bm25_state.storage.as_ref())
             .await;
+        memory_bm25_state.metrics.record_duration(
+            "warmup.memory_bm25",
+            started.elapsed(),
+            serde_json::json!({"memories": count}),
+        );
         if count > 0 {
             tracing::info!(memories = count, "Memory lexical index warmed from DB");
         }
@@ -653,6 +776,7 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
     let reembed_state = state.clone();
     let reembed_engine = embedding.get_engine();
     tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_secs(60)).await;
         // Wait for embedding engine to be ready
         loop {
             let guard = reembed_engine.read().await;
@@ -745,14 +869,22 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
     let code_startup_state = state.clone();
     let code_startup_project_path = cli.project_path.clone();
     tokio::spawn(async move {
+        let recovery_start = Instant::now();
         perform_startup_job_recovery(&code_startup_state).await;
+        code_startup_state.metrics.record_duration(
+            "startup.code_job_recovery",
+            recovery_start.elapsed(),
+            serde_json::json!({}),
+        );
 
+        let lifecycle_start = Instant::now();
         let startup_outcome = start_code_intelligence_lifecycle(
-            code_startup_state,
+            code_startup_state.clone(),
             code_startup_project_path.as_deref(),
             std::path::Path::new("/project"),
         )
         .await;
+        let lifecycle_duration = lifecycle_start.elapsed();
 
         match startup_outcome.status {
             CodeIntelligenceStartupStatus::Started {
@@ -760,29 +892,50 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
                 project_path,
                 source,
                 diagnostic,
-            } => match source {
-                memory_mcp::codebase::resolver::StartupProjectRootSource::Configured => {
-                    tracing::info!(
-                        code_intelligence = ?diagnostic.as_json(),
-                        project_id = %project_id,
-                        path = %project_path.display(),
-                        "Using configured code intelligence project root"
-                    );
+            } => {
+                code_startup_state.metrics.record_duration(
+                    "startup.code_lifecycle",
+                    lifecycle_duration,
+                    serde_json::json!({
+                        "status": "started",
+                        "project_id": project_id,
+                        "project_path": project_path.display().to_string(),
+                        "source": format!("{:?}", source),
+                    }),
+                );
+                match source {
+                    memory_mcp::codebase::resolver::StartupProjectRootSource::Configured => {
+                        tracing::info!(
+                            code_intelligence = ?diagnostic.as_json(),
+                            project_id = %project_id,
+                            path = %project_path.display(),
+                            "Using configured code intelligence project root"
+                        );
+                    }
+                    memory_mcp::codebase::resolver::StartupProjectRootSource::Fallback => {
+                        tracing::info!(
+                            code_intelligence = ?diagnostic.as_json(),
+                            project_id = %project_id,
+                            path = %project_path.display(),
+                            "Using compatibility /project code intelligence root"
+                        );
+                    }
                 }
-                memory_mcp::codebase::resolver::StartupProjectRootSource::Fallback => {
-                    tracing::info!(
-                        code_intelligence = ?diagnostic.as_json(),
-                        project_id = %project_id,
-                        path = %project_path.display(),
-                        "Using compatibility /project code intelligence root"
-                    );
-                }
-            },
+            }
             CodeIntelligenceStartupStatus::MissingRoot {
                 configured_path,
                 fallback_path,
                 diagnostic,
             } => {
+                code_startup_state.metrics.record_duration(
+                    "startup.code_lifecycle",
+                    lifecycle_duration,
+                    serde_json::json!({
+                        "status": "missing_root",
+                        "configured_path": configured_path.display().to_string(),
+                        "fallback_path": fallback_path.display().to_string(),
+                    }),
+                );
                 tracing::warn!(
                     configured_path = %configured_path.display(),
                     fallback_path = %fallback_path.display(),
@@ -794,6 +947,14 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
                 fallback_path,
                 diagnostic,
             } => {
+                code_startup_state.metrics.record_duration(
+                    "startup.code_lifecycle",
+                    lifecycle_duration,
+                    serde_json::json!({
+                        "status": "disabled",
+                        "fallback_path": fallback_path.display().to_string(),
+                    }),
+                );
                 tracing::warn!(
                     fallback_path = %fallback_path.display(),
                     code_intelligence = ?diagnostic.as_json(),
@@ -805,6 +966,15 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
                 diagnostic,
                 fatal,
             } => {
+                code_startup_state.metrics.record_duration(
+                    "startup.code_lifecycle",
+                    lifecycle_duration,
+                    serde_json::json!({
+                        "status": "failed",
+                        "project_path": project_path.display().to_string(),
+                        "fatal": fatal,
+                    }),
+                );
                 tracing::error!(
                     path = %project_path.display(),
                     fatal,

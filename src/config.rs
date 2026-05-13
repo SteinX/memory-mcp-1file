@@ -10,6 +10,7 @@ use crate::codebase::{ProjectRegistry, SessionBindingStore};
 use crate::embedding::{AdaptiveEmbeddingQueue, EmbeddingService, EmbeddingStore};
 use crate::forgetting::access::AccessTracker;
 use crate::forgetting::config::ForgettingConfig;
+use crate::metrics::MetricsRecorder;
 use crate::search::{CodeSearchEngine, MemorySearchEngine};
 use crate::storage::SurrealStorage;
 
@@ -383,6 +384,8 @@ pub struct AppState {
     /// Keyed by `()` (single slot), TTL = 5 minutes, capacity = 1.
     /// Errors and empty results are never inserted.
     pub community_cache: moka::future::Cache<(), Vec<Vec<String>>>,
+    /// Optional JSONL metrics recorder, enabled by MEMORY_MCP_METRICS_DIR.
+    pub metrics: MetricsRecorder,
 }
 
 impl AppState {

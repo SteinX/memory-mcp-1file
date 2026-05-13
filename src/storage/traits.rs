@@ -408,6 +408,17 @@ pub trait StorageBackend: Send + Sync {
     /// List all indexed project IDs
     async fn list_projects(&self) -> Result<Vec<String>>;
 
+    /// List indexing status records for project overview surfaces.
+    async fn list_index_statuses(&self) -> Result<Vec<IndexStatus>> {
+        let mut statuses = Vec::new();
+        for project_id in self.list_projects().await? {
+            if let Some(status) = self.get_index_status(&project_id).await? {
+                statuses.push(status);
+            }
+        }
+        Ok(statuses)
+    }
+
     /// Create or replace a durable indexing job record keyed by (project_id, job_id).
     ///
     /// Durable `job_id` is distinct from same-process indexing operation IDs:

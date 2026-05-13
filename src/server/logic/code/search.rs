@@ -556,13 +556,16 @@ pub(crate) async fn search_code_with_context(
     params: SearchCodeParams,
     context: Option<CodeToolContext>,
 ) -> anyhow::Result<CallToolResult> {
+    let total_start = Instant::now();
     crate::ensure_embedding_ready!(state);
+    let embedding_readiness_wait = total_start.elapsed();
 
     let SearchCodeParams {
         query,
         project_id,
         limit,
     } = params;
+    let query_len = query.len();
     let project_resolution =
         resolve_project_for_code_tool(state, normalize_project_id(project_id), context.as_ref())
             .await;
@@ -611,7 +614,9 @@ pub(crate) async fn search_code_with_context(
         return Ok(success_json(response));
     }
 
+    let embed_start = Instant::now();
     let query_embedding = state.embedding.embed(&query).await?;
+    let embed_elapsed = embed_start.elapsed();
 
     // Run vector search and BM25 in parallel for robust results.
     // Previously BM25 was only a fallback — degenerate vectors masked BM25 entirely.
@@ -641,6 +646,7 @@ pub(crate) async fn search_code_with_context(
         .unwrap_or_default(),
         None => std::collections::HashMap::new(),
     };
+    let parallel_search_start = Instant::now();
     let (vector_results, bm25_results) = tokio::join!(
         async {
             match state
@@ -665,6 +671,7 @@ pub(crate) async fn search_code_with_context(
                 .await
         }
     );
+    let parallel_search_elapsed = parallel_search_start.elapsed();
 
     // Merge: vector results first, then BM25 results not already present.
     // This gives vector priority in ranking while ensuring BM25 fills gaps.
@@ -745,6 +752,23 @@ pub(crate) async fn search_code_with_context(
         super::apply_missing_project_binding_diagnostic(&mut response, diagnostic);
     }
 
+    state.metrics.record_duration(
+        "query.code_search",
+        total_start.elapsed(),
+        json!({
+            "query_len": query_len,
+            "project_id": project_id,
+            "limit": limit,
+            "result_count": merged.len(),
+            "vector_hits": vector_results.len(),
+            "bm25_hits": bm25_results.len(),
+            "is_partial": is_partial,
+            "embedding_readiness_wait_ms": embedding_readiness_wait.as_secs_f64() * 1000.0,
+            "embedding_ms": embed_elapsed.as_secs_f64() * 1000.0,
+            "parallel_search_ms": parallel_search_elapsed.as_secs_f64() * 1000.0,
+        }),
+    );
+
     Ok(success_json(response))
 }
 
@@ -780,6 +804,7 @@ pub(crate) async fn recall_code_with_context(
         language,
         chunk_type,
     } = params;
+    let query_len = query.len();
     let mut timing = RecallCodeTimingEvidence::maybe_new(
         &query,
         project_id.as_deref(),
@@ -1049,6 +1074,7 @@ pub(crate) async fn recall_code_with_context(
     } else {
         None
     };
+    let embedding_elapsed = stage_start.elapsed();
     if let Some(timing) = timing.as_mut() {
         timing.record("embedding_inference", stage_start.elapsed());
         timing.count("embedding_dim", query_embedding.as_ref().map(Vec::len).unwrap_or(0));
@@ -1152,6 +1178,7 @@ pub(crate) async fn recall_code_with_context(
     .into_iter()
     .filter(|r| matches_filters(r))
     .collect();
+    let vector_elapsed = stage_start.elapsed();
     if let Some(timing) = timing.as_mut() {
         timing.record("vector_search", stage_start.elapsed());
         timing.count("vector_hits_filtered", vector_results.len());
@@ -1171,6 +1198,7 @@ pub(crate) async fn recall_code_with_context(
         .into_iter()
         .filter(|r| matches_filters(r))
         .collect();
+    let bm25_elapsed = stage_start.elapsed();
     if let Some(timing) = timing.as_mut() {
         timing.record("bm25_search", stage_start.elapsed());
         timing.count("bm25_hits_filtered", bm25_results.len());
@@ -1439,6 +1467,7 @@ pub(crate) async fn recall_code_with_context(
     // 3. Graph component: find related symbols → PPR
     // (removed: _all_chunk_ids — HashSet+Vec was built but never read)
 
+    let ppr_stage_start = Instant::now();
     let ppr_tuples: Vec<(String, f32)> = if ppr_weight > 0.0
         && fallback_path == RecallCodeFallbackPath::Hybrid
         && graph_generation.is_some()
@@ -1653,6 +1682,7 @@ pub(crate) async fn recall_code_with_context(
         }
         vec![]
     };
+    let ppr_elapsed = ppr_stage_start.elapsed();
 
     // 4. RRF merge
     let stage_start = Instant::now();
@@ -1808,6 +1838,28 @@ pub(crate) async fn recall_code_with_context(
     }
 
     let results_count = response["count"].as_u64().unwrap_or(0) as usize;
+    state.metrics.record_duration(
+        "query.code_recall",
+        total_start.elapsed(),
+        json!({
+            "query_len": query_len,
+            "project_id": project_id,
+            "limit": limit,
+            "fetch_limit": fetch_limit,
+            "result_count": results_count,
+            "vector_hits": vector_results.len(),
+            "bm25_hits": bm25_results.len(),
+            "ppr_hits": ppr_tuples.len(),
+            "is_partial": response_is_partial,
+            "has_filters": has_filters,
+            "codeish_query": codeish_query,
+            "embedding_readiness_wait_ms": embedding_readiness_wait.as_secs_f64() * 1000.0,
+            "embedding_ms": embedding_elapsed.as_secs_f64() * 1000.0,
+            "vector_search_ms": vector_elapsed.as_secs_f64() * 1000.0,
+            "bm25_search_ms": bm25_elapsed.as_secs_f64() * 1000.0,
+            "ppr_ms": ppr_elapsed.as_secs_f64() * 1000.0,
+        }),
+    );
     if let Some(timing) = timing.as_mut() {
         timing.record("response_shaping", stage_start.elapsed());
         timing.count("results_count", results_count);

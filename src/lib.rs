@@ -4,6 +4,7 @@ pub mod embedding;
 pub mod forgetting;
 pub mod graph;
 pub mod lifecycle;
+pub mod metrics;
 pub mod search;
 pub mod server;
 pub mod storage;

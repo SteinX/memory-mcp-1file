@@ -938,6 +938,34 @@ Environment variables or CLI args:
 | `--project-path` | `PROJECT_PATH` | *(None)* | Primary project root for code intelligence. Fallback is `/project`. |
 | `--allowed-project-roots` | `ALLOWED_PROJECT_ROOTS` | *(None)* | Optional comma-delimited allowlist for server-visible project roots. When set, startup/manual registration rejects roots outside this allowlist with `reason_code=path_not_allowed`. |
 | `--max-managed-projects` | `MAX_MANAGED_PROJECTS` | `5` | Maximum number of managed lifecycle projects in registry. Additional registrations are rejected with `reason_code=max_project_limit`. |
+| `--block-cache-mb` | `SURREAL_SURREALKV_BLOCK_CACHE_CAPACITY_MB` | auto | SurrealKV block cache size in MB. If neither this nor `SURREAL_SURREALKV_BLOCK_CACHE_CAPACITY` is set, Memory MCP auto-configures a conservative cache. On macOS the auto value is 20% of reported free pages, clamped to 128-512 MB to avoid tiny caches on large data dirs. |
+| *(None)* | `MEMORY_MCP_METRICS_DIR` | *(None)* | Enables JSONL performance metrics and writes `memory-mcp-metrics-<timestamp>-<pid>.jsonl` into the specified directory. |
+| *(None)* | `MEMORY_MCP_METRICS` | `true` when `MEMORY_MCP_METRICS_DIR` is set | Set to `0`, `false`, `off`, or `no` to disable metrics even when `MEMORY_MCP_METRICS_DIR` is present. |
+
+### Metrics for startup and query optimization
+
+Metrics are opt-in and do not change startup, indexing, or query behavior. Set `MEMORY_MCP_METRICS_DIR` to collect newline-delimited JSON events for startup phases, background warm-ups, and memory/code query stages:
+
+```bash
+MEMORY_MCP_METRICS_DIR=/tmp/memory-mcp-metrics memory-mcp --data-dir /data --project-path /project
+```
+
+Each line contains `timestamp`, `event`, `pid`, and `fields`. Initial events include:
+
+| Event | Purpose |
+|-------|---------|
+| `startup.storage_open` | SurrealDB/SurrealKV open and schema initialization time |
+| `startup.dimension_check` | embedding dimension compatibility check time |
+| `startup.state_ready` | time until the in-process server state is constructed |
+| `startup.code_job_recovery` | startup recovery pass for interrupted index jobs |
+| `startup.code_lifecycle` | code-intelligence lifecycle startup result and duration |
+| `warmup.code_bm25` | in-memory code BM25 warm-up duration and chunk count |
+| `warmup.memory_bm25` | in-memory memory lexical warm-up duration and memory count |
+| `query.memory_vector` | memory vector search total time plus embedding/vector sub-stage times |
+| `query.memory_bm25` | memory BM25 search total time plus lexical sub-stage time |
+| `query.memory_recall` | hybrid memory recall total time and vector/BM25/PPR sub-stage times |
+| `query.code_search` | code search total time and embedding/search sub-stage times |
+| `query.code_recall` | hybrid code recall total time and vector/BM25/PPR sub-stage times |
 
 ### 🔧 Code Intelligence Indexing Pipeline
 

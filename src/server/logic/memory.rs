@@ -1,5 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
+use std::time::Instant;
 
 use blake3;
 use rmcp::model::CallToolResult;
@@ -1145,6 +1146,7 @@ pub async fn list_memories(
     state: &Arc<AppState>,
     params: ListMemoriesParams,
 ) -> anyhow::Result<CallToolResult> {
+    let total_start = Instant::now();
     let limit = normalize_limit(params.limit);
     let offset = params.offset.unwrap_or(0);
     let filters = match params.to_memory_query() {
@@ -1152,18 +1154,38 @@ pub async fn list_memories(
         Err(e) => return Ok(error_response(e)),
     };
 
+    let list_start = Instant::now();
     let mut memories = match state.storage.list_memories(&filters, limit, offset).await {
         Ok(m) => m,
         Err(e) => return Ok(error_response(e)),
     };
+    let list_elapsed = list_start.elapsed();
 
     strip_embeddings(&mut memories);
+    let count_start = Instant::now();
     let total = state
         .storage
         .count_memories_filtered(&filters)
         .await
         .unwrap_or(0);
+    let count_elapsed = count_start.elapsed();
+    let trace_start = Instant::now();
     let memories_json = memories_with_trace(state, &memories).await;
+    let trace_elapsed = trace_start.elapsed();
+    state.metrics.record_duration(
+        "query.memory_list",
+        total_start.elapsed(),
+        json!({
+            "limit": limit,
+            "offset": offset,
+            "result_count": memories.len(),
+            "total": total,
+            "metadata_filter": filters.uses_metadata_post_filter(),
+            "list_ms": list_elapsed.as_secs_f64() * 1000.0,
+            "count_ms": count_elapsed.as_secs_f64() * 1000.0,
+            "trace_ms": trace_elapsed.as_secs_f64() * 1000.0,
+        }),
+    );
 
     Ok(success_json(json!({
         "memories": memories_json,

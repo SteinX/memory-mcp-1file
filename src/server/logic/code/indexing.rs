@@ -1634,78 +1634,57 @@ pub async fn list_projects(
     state: &Arc<AppState>,
     _params: ListProjectsParams,
 ) -> anyhow::Result<CallToolResult> {
-    match state.storage.list_projects().await {
-        Ok(projects) => {
-            let project_stats = state.storage.get_all_project_stats().await.unwrap_or_default();
-            let mut enriched = Vec::with_capacity(projects.len());
+    let total_start = std::time::Instant::now();
+    let status_start = std::time::Instant::now();
+    match state.storage.list_index_statuses().await {
+        Ok(statuses) => {
+            let status_fetch_elapsed = status_start.elapsed();
+            let mut statuses = statuses;
+            statuses.sort_by(|a, b| a.project_id.cmp(&b.project_id));
+            let list_elapsed = std::time::Duration::ZERO;
+            let stats_elapsed = std::time::Duration::ZERO;
+            let mut enriched = Vec::with_capacity(statuses.len());
             let mut has_ready = false;
             let mut has_indexing = false;
             let mut has_degraded = false;
+            let status_enrich_start = std::time::Instant::now();
 
-            for project_id in &projects {
-                let mut status = state
-                    .storage
-                    .get_index_status(project_id)
-                    .await
-                    .ok()
-                    .flatten();
-                if let Some(status) = status.as_mut() {
-                    status.refresh_lifecycle_states();
-                }
-                let stats = project_stats.get(project_id).cloned().unwrap_or_default();
-                let chunks = stats.chunks;
-                let symbols = stats.symbols;
-                let embedded_chunks = stats.embedded_chunks;
-                let embedded_symbols = stats.embedded_symbols;
+            for status in &mut statuses {
+                status.refresh_lifecycle_states();
+                let project_id = &status.project_id;
+                let chunks = status.total_chunks;
+                let symbols = status.total_symbols;
+                let embedded_chunks = 0;
+                let embedded_symbols = 0;
 
                 let status_str = status
-                    .as_ref()
-                    .map(|s| s.status.to_string())
-                    .unwrap_or_else(|| "unknown".to_string());
-                if let Some(status) = status.as_ref() {
-                    match status.status {
-                        IndexState::Completed => has_ready = true,
-                        IndexState::Indexing | IndexState::EmbeddingPending => has_indexing = true,
-                        IndexState::Failed => has_degraded = true,
-                    }
-                } else if chunks > 0 || symbols > 0 {
-                    has_degraded = true;
+                    .status
+                    .to_string();
+                match status.status {
+                    IndexState::Completed => has_ready = true,
+                    IndexState::Indexing | IndexState::EmbeddingPending => has_indexing = true,
+                    IndexState::Failed => has_degraded = true,
                 }
-                let lifecycle = status
-                    .as_ref()
-                    .map(lifecycle_json)
-                    .unwrap_or_else(|| json!({
-                        "structural": { "state": "pending", "is_ready": false, "generation": 0 },
-                        "semantic": { "state": "pending", "is_ready": false, "generation": 0, "is_caught_up": true },
-                        "projection": { "state": "stale", "is_current": false }
-                    }));
-                let status_is_complete = status
-                    .as_ref()
-                    .map(|s| s.status == crate::types::IndexState::Completed)
-                    .unwrap_or(false);
-                let status_summary_message = match status.as_ref().map(|s| &s.status) {
-                    Some(IndexState::Completed) => None,
-                    Some(IndexState::Failed) => Some(
+                let lifecycle = lifecycle_json(status);
+                let status_is_complete = status.status == crate::types::IndexState::Completed;
+                let status_summary_message = match &status.status {
+                    IndexState::Completed => None,
+                    IndexState::Failed => Some(
                         "Project indexing failed. Results are incomplete until a force rebuild succeeds."
                             .to_string(),
                     ),
-                    Some(IndexState::Indexing) | Some(IndexState::EmbeddingPending) => {
+                    IndexState::Indexing | IndexState::EmbeddingPending => {
                         Some("Project indexing is still in progress.".to_string())
                     }
-                    None if chunks > 0 || symbols > 0 => Some(
-                        "Index status metadata is missing while code intelligence rows exist."
-                            .to_string(),
-                    ),
-                    None => None,
                 };
 
                 enriched.push(json!({
                     "id": project_id,
                     "project_id": project_id,
-                    "root_path": status.as_ref().and_then(|status| status.root_path.clone()),
+                    "root_path": status.root_path.clone(),
                     "status": status_str,
                     "lifecycle": lifecycle.clone(),
-                    "contract": phase1_contract_json(Some(project_id), Some(&lifecycle), status.as_ref()),
+                    "contract": phase1_contract_json(Some(project_id), Some(&lifecycle), Some(status)),
                     "summary": summary_collection_response(
                         "project",
                         chunks as usize,
@@ -1718,16 +1697,13 @@ pub async fn list_projects(
                     "embedded_chunks": embedded_chunks,
                     "embedded_symbols": embedded_symbols,
                     "diagnostics": {
-                        "status_metadata_missing": status.is_none() && (chunks > 0 || symbols > 0),
-                        "reason_code": if status.is_none() && (chunks > 0 || symbols > 0) { "degraded" } else { "ok" },
-                        "message": if status.is_none() && (chunks > 0 || symbols > 0) {
-                            Some("Index status metadata is missing while code intelligence rows exist; force rebuild writes a staged generation before promoting it active.".to_string())
-                        } else {
-                            None
-                        }
+                        "status_metadata_missing": false,
+                        "reason_code": "ok",
+                        "message": serde_json::Value::Null,
                     }
                 }));
             }
+            let status_elapsed = status_enrich_start.elapsed();
 
             let aggregate = if has_indexing {
                 CodeIntelligenceDiagnostic::indexing("At least one project is still indexing.")
@@ -1739,9 +1715,24 @@ pub async fn list_projects(
                 runtime_root_diagnostic()
             };
 
+            state.metrics.record_duration(
+                "query.project_list",
+                total_start.elapsed(),
+                json!({
+                    "project_count": statuses.len(),
+                    "ready": has_ready,
+                    "indexing": has_indexing,
+                    "degraded": has_degraded,
+                    "list_ms": list_elapsed.as_secs_f64() * 1000.0,
+                    "stats_ms": stats_elapsed.as_secs_f64() * 1000.0,
+                    "status_fetch_ms": status_fetch_elapsed.as_secs_f64() * 1000.0,
+                    "status_ms": status_elapsed.as_secs_f64() * 1000.0,
+                }),
+            );
+
             Ok(success_json(json!({
                 "projects": enriched,
-                "count": projects.len(),
+                "count": statuses.len(),
                 "code_intelligence": aggregate.as_json()
             })))
         }

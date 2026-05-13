@@ -245,6 +245,13 @@ pub(super) async fn list_projects(db: &Surreal<Db>) -> Result<Vec<String>> {
     Ok(projects.into_iter().collect())
 }
 
+pub(super) async fn list_index_statuses(db: &Surreal<Db>) -> Result<Vec<IndexStatus>> {
+    let sql = "SELECT * FROM index_status ORDER BY project_id";
+    let mut response = db.query(sql).await?;
+    let statuses: Vec<IndexStatus> = response.take(0).unwrap_or_default();
+    Ok(statuses)
+}
+
 pub(super) async fn get_all_project_stats(
     db: &Surreal<Db>,
 ) -> Result<HashMap<String, ProjectStats>> {
