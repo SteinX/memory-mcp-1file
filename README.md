@@ -378,7 +378,7 @@ Or with Docker:
 - **Session-Scoped Code Scoping**: The server now supports binding an HTTP MCP session to a specific project. Once bound, code-intelligence tools (`recall_code`, `search_symbols`) automatically scope their operations to that project unless an explicit `project_id` is provided. This state is stored in process memory only and does not survive server restarts.
 - **Governed Memory Retrieval**: Memory APIs now share first-class optional filters for `user_id`, `agent_id`, `run_id`, `namespace`, `memory_type`, metadata, and time windows. `list_memories` uses the same governance path and returns a filtered `total`.
 - **Memory Lexical Engine**: Memory BM25-style retrieval now uses a reusable in-memory lexical index that is warmed from DB at startup and kept in sync by memory CRUD / invalidation flows, instead of rebuilding the lexical model on every request.
-- **Layered Diagnostics**: Memory search/recall diagnostics expose retrieved candidates, post-filter hits, and returned hits; `metadata_filter` is explicitly reported as post-query subset matching.
+- **Layered Diagnostics**: Memory search/recall diagnostics expose retrieved candidates, post-filter hits, returned hits, and effective query metadata; `metadata_filter` is explicitly reported as post-query subset matching.
 - **Importance-aware Recall**: `importance_score` participates in memory ranking, so promoted memories can outrank equally matching low-priority ones.
 - **Replacement Links Preserved**: `invalidate(..., superseded_by=...)` now round-trips on reads, so replacement chains survive retrieval and inspection.
 - **Consolidation Preview**: `preview_consolidate_memory` shows exact-duplicate matches, replacement scope, and supersede reason before any write occurs.
@@ -517,8 +517,8 @@ rejects learning records; it does not physically delete data.
 ### 🔎 Search & Retrieval
 | Tool | Description |
 |------|-------------|
-| `recall` | Hybrid memory retrieval (vector+BM25+graph via RRF) with additive diagnostics and contract metadata. |
-| `search_memory` | Memory search (`query`, optional `mode`: `vector` or `bm25`) with optional filters and additive contract/summary metadata. |
+| `recall` | Hybrid memory retrieval (vector+BM25+graph via RRF) with bounded effective-query normalization plus additive diagnostics and contract metadata. |
+| `search_memory` | Memory search (`query`, optional `mode`: `vector` or `bm25`) with bounded effective-query normalization, optional filters, and additive contract/summary metadata. |
 
 ### 🕸️ Knowledge Graph
 | Tool | Description |
