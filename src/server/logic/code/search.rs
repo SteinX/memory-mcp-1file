@@ -12,13 +12,18 @@ use crate::graph::{
 };
 use crate::server::params::{normalize_project_id, RecallCodeParams, SearchCodeParams};
 use crate::storage::StorageBackend;
-use crate::types::{CapabilityFreshness, ContractReasonCode, ExportIdentity, ServingGenerationMetadata};
+use crate::types::{
+    CapabilityFreshness, ContractReasonCode, ExportIdentity, ServingGenerationMetadata,
+};
 
 use super::super::contracts::{
     export_contract_meta, summary_collection_response, with_surface_guidance,
 };
 use super::super::{normalize_limit, success_json};
-use super::{apply_project_resolution, resolve_project_for_code_tool, CodeToolContext};
+use super::{
+    apply_project_resolution, completed_serving_metadata,
+    effective_indexing_generation_for_project, resolve_project_for_code_tool, CodeToolContext,
+};
 
 struct RecallCodeTimingEvidence;
 
@@ -144,7 +149,9 @@ fn fallback_path_for_serving(serving: &ServingGenerationMetadata) -> RecallCodeF
     }
 }
 
-fn effective_recall_serving_metadata(serving: &ServingGenerationMetadata) -> ServingGenerationMetadata {
+fn effective_recall_serving_metadata(
+    serving: &ServingGenerationMetadata,
+) -> ServingGenerationMetadata {
     let any_cap_set = serving.bm25.or(serving.vector).or(serving.graph).is_some();
     if any_cap_set {
         serving.clone()
@@ -173,7 +180,9 @@ fn recall_item_freshness_json(
     let state = match classify_path_from_map(file_path, freshness_map) {
         Some(freshness) => freshness,
         None => match (item_generation, serving_generation, indexing_generation) {
-            (Some(item), Some(serving), Some(indexing)) if item == serving && indexing > serving => {
+            (Some(item), Some(serving), Some(indexing))
+                if item == serving && indexing > serving =>
+            {
                 if is_interrupted_generation || is_fallback_serving {
                     CapabilityFreshness::Stale
                 } else {
@@ -182,7 +191,9 @@ fn recall_item_freshness_json(
             }
             (Some(item), Some(serving), _) if item == serving => CapabilityFreshness::Fresh,
             (Some(_), Some(_), _) => CapabilityFreshness::Stale,
-            (None, Some(serving), Some(indexing)) if indexing > serving => CapabilityFreshness::Stale,
+            (None, Some(serving), Some(indexing)) if indexing > serving => {
+                CapabilityFreshness::Stale
+            }
             (None, Some(_), _) => CapabilityFreshness::Fresh,
             _ => CapabilityFreshness::Unavailable,
         },
@@ -226,13 +237,25 @@ fn attach_recall_code_generation_summary(
         "vector_hits": vector_hits,
     });
 
-    if let Some(summary) = response.get_mut("summary").and_then(|value| value.as_object_mut()) {
-        summary.insert("serving_generation".to_string(), metadata["serving_generation"].clone());
-        summary.insert("indexing_generation".to_string(), json!(indexing_generation));
+    if let Some(summary) = response
+        .get_mut("summary")
+        .and_then(|value| value.as_object_mut())
+    {
+        summary.insert(
+            "serving_generation".to_string(),
+            metadata["serving_generation"].clone(),
+        );
+        summary.insert(
+            "indexing_generation".to_string(),
+            json!(indexing_generation),
+        );
         summary.insert("fallback_path".to_string(), json!(fallback_path.as_str()));
         summary.insert("bm25_hits".to_string(), json!(bm25_hits));
         summary.insert("vector_hits".to_string(), json!(vector_hits));
-        if let Some(partial) = summary.get_mut("partial").and_then(|value| value.as_object_mut()) {
+        if let Some(partial) = summary
+            .get_mut("partial")
+            .and_then(|value| value.as_object_mut())
+        {
             partial.insert("is_partial".to_string(), json!(is_partial));
             partial.insert(
                 "reason_code".to_string(),
@@ -250,7 +273,10 @@ fn attach_recall_code_generation_summary(
         }
     }
 
-    if let Some(contract) = response.get_mut("contract").and_then(|value| value.as_object_mut()) {
+    if let Some(contract) = response
+        .get_mut("contract")
+        .and_then(|value| value.as_object_mut())
+    {
         contract.insert("recall_code".to_string(), metadata);
     }
 
@@ -264,15 +290,13 @@ fn attach_recall_code_generation_summary(
         .unwrap_or(None)
         .unwrap_or(serde_json::Value::Null);
     let is_stale = matches!(reason_code, Some(ContractReasonCode::Stale));
-    let mut capabilities = vec![
-        json!({
-            "capability": "recall_code",
-            "freshness": if effective_serving.is_some() { "fresh" } else { "missing" },
-            "serving_generation": effective_serving,
-            "reason_code": reason_code_val,
-            "reason": reason.map(|r| json!(r)).unwrap_or(serde_json::Value::Null),
-        })
-    ];
+    let mut capabilities = vec![json!({
+        "capability": "recall_code",
+        "freshness": if effective_serving.is_some() { "fresh" } else { "missing" },
+        "serving_generation": effective_serving,
+        "reason_code": reason_code_val,
+        "reason": reason.map(|r| json!(r)).unwrap_or(serde_json::Value::Null),
+    })];
     if is_stale {
         capabilities.push(json!({
             "capability": "recall_code",
@@ -631,7 +655,20 @@ pub(crate) async fn search_code_with_context(
         None => None,
     };
     let indexing_generation = match project_id {
-        Some(project_id) => state.storage.get_indexing_generation(project_id).await.ok().flatten(),
+        Some(project_id) => {
+            let active_status = project_status
+                .as_ref()
+                .and_then(|status| (status.project_id == project_id).then_some(status));
+            effective_indexing_generation_for_project(
+                state,
+                project_id,
+                active_generation,
+                None,
+                active_status,
+            )
+            .await
+            .0
+        }
         None => None,
     };
     let freshness_map = match project_id {
@@ -847,13 +884,38 @@ pub(crate) async fn recall_code_with_context(
     }
 
     let limit = normalize_limit(limit);
-    let (serving_metadata, indexing_generation, is_interrupted_generation) = match project_id.as_deref() {
-        Some(project_id) => {
-            let serving = state
-                .storage
-                .get_serving_metadata(project_id)
-                .await
-                .unwrap_or(ServingGenerationMetadata {
+    let (serving_metadata, indexing_generation, is_interrupted_generation) =
+        match project_id.as_deref() {
+            Some(project_id) => {
+                let serving = state
+                    .storage
+                    .get_serving_metadata(project_id)
+                    .await
+                    .unwrap_or(ServingGenerationMetadata {
+                        structural: None,
+                        bm25: None,
+                        symbols: None,
+                        graph: None,
+                        vector: None,
+                        semantic: None,
+                        indexing: None,
+                    });
+                let active_status = project_status
+                    .as_ref()
+                    .and_then(|status| (status.project_id == project_id).then_some(status));
+                let serving = completed_serving_metadata(serving, active_status);
+                let (indexing, is_interrupted) = effective_indexing_generation_for_project(
+                    state,
+                    project_id,
+                    serving.structural,
+                    serving.structural.or(serving.indexing),
+                    active_status,
+                )
+                .await;
+                (serving, indexing, is_interrupted)
+            }
+            None => (
+                ServingGenerationMetadata {
                     structural: None,
                     bm25: None,
                     symbols: None,
@@ -861,44 +923,16 @@ pub(crate) async fn recall_code_with_context(
                     vector: None,
                     semantic: None,
                     indexing: None,
-                });
-            let explicit_indexing = state
-                .storage
-                .get_indexing_generation(project_id)
-                .await
-                .ok()
-                .flatten();
-            let abandoned_max = state
-                .storage
-                .list_abandoned_generations(project_id)
-                .await
-                .ok()
-                .and_then(|gens| gens.into_iter().filter(|gen| Some(*gen) != serving.structural).max());
-            let is_interrupted = explicit_indexing.is_none() && match (abandoned_max, serving.structural) {
-                (Some(a), Some(s)) => a > s,
-                _ => false,
-            };
-            let indexing = explicit_indexing
-                .or(abandoned_max)
-                .or(serving.structural)
-                .or(serving.indexing);
-            (serving, indexing, is_interrupted)
-        }
-        None => (
-            ServingGenerationMetadata {
-                structural: None,
-                bm25: None,
-                symbols: None,
-                graph: None,
-                vector: None,
-                semantic: None,
-                indexing: None,
-            },
-            None,
-            false,
-        ),
-    };
-    let is_fallback_serving = serving_metadata.bm25.or(serving_metadata.vector).or(serving_metadata.graph).is_none();
+                },
+                None,
+                false,
+            ),
+        };
+    let is_fallback_serving = serving_metadata
+        .bm25
+        .or(serving_metadata.vector)
+        .or(serving_metadata.graph)
+        .is_none();
     let serving_metadata = effective_recall_serving_metadata(&serving_metadata);
     let fallback_path = fallback_path_for_serving(&serving_metadata);
 
@@ -915,7 +949,11 @@ pub(crate) async fn recall_code_with_context(
             let mut all_results: Vec<serde_json::Value> = Vec::new();
             let cross_project_limit = limit.min(50);
             for pid in &all_project_ids {
-                let pid_serving = state.storage.get_serving_metadata(pid).await.unwrap_or_default();
+                let pid_serving = state
+                    .storage
+                    .get_serving_metadata(pid)
+                    .await
+                    .unwrap_or_default();
                 if pid_serving.structural.is_none() {
                     continue;
                 }
@@ -931,7 +969,9 @@ pub(crate) async fn recall_code_with_context(
                     language: language.clone(),
                     chunk_type: chunk_type.clone(),
                 };
-                if let Ok(sub_result) = Box::pin(recall_code_with_context(state, sub_params, None)).await {
+                if let Ok(sub_result) =
+                    Box::pin(recall_code_with_context(state, sub_params, None)).await
+                {
                     let rmcp::model::RawContent::Text(text) = &sub_result.content[0].raw else {
                         continue;
                     };
@@ -958,7 +998,10 @@ pub(crate) async fn recall_code_with_context(
             });
             apply_project_resolution(&mut response, &project_resolution);
             if let Some(timing) = timing.as_mut() {
-                timing.record("response_shaping", Instant::now().duration_since(stage_start));
+                timing.record(
+                    "response_shaping",
+                    Instant::now().duration_since(stage_start),
+                );
                 timing.count("results_count", result_count);
                 timing.finish(false, result_count);
             }
@@ -1000,7 +1043,10 @@ pub(crate) async fn recall_code_with_context(
             response["_indexing"] = degradation;
         }
         if let Some(timing) = timing.as_mut() {
-            timing.record("response_shaping", Instant::now().duration_since(stage_start));
+            timing.record(
+                "response_shaping",
+                Instant::now().duration_since(stage_start),
+            );
             timing.count("results_count", 0usize);
             timing.count("has_degradation", response.get("_indexing").is_some());
             timing.finish(true, 0);
@@ -1077,7 +1123,10 @@ pub(crate) async fn recall_code_with_context(
     let embedding_elapsed = stage_start.elapsed();
     if let Some(timing) = timing.as_mut() {
         timing.record("embedding_inference", stage_start.elapsed());
-        timing.count("embedding_dim", query_embedding.as_ref().map(Vec::len).unwrap_or(0));
+        timing.count(
+            "embedding_dim",
+            query_embedding.as_ref().map(Vec::len).unwrap_or(0),
+        );
     }
 
     let stage_start = Instant::now();
@@ -1918,14 +1967,25 @@ mod tests {
         generation: u64,
     ) -> CodeChunk {
         let mut chunk = test_chunk(project_id, name, content, generation);
-        let id = ctx.state.storage.create_code_chunk(chunk.clone()).await.unwrap();
+        let id = ctx
+            .state
+            .storage
+            .create_code_chunk(chunk.clone())
+            .await
+            .unwrap();
         chunk.id = Some(crate::types::RecordId::new("code_chunks", id.as_str()));
         chunk
     }
 
     async fn seed_bm25(ctx: &TestContext, project_id: &str, chunks: &[CodeChunk]) {
-        let pairs: Vec<_> = chunks.iter().filter_map(ChunkMeta::from_code_chunk).collect();
-        ctx.state.code_search.rebuild_project(project_id, pairs).await;
+        let pairs: Vec<_> = chunks
+            .iter()
+            .filter_map(ChunkMeta::from_code_chunk)
+            .collect();
+        ctx.state
+            .code_search
+            .rebuild_project(project_id, pairs)
+            .await;
     }
 
     async fn seed_indexing_status(ctx: &TestContext, project_id: &str) {
@@ -2047,8 +2107,24 @@ mod tests {
             "unchanged_fresh_token",
         )
         .await;
-        seed_checkpoint(&ctx, project_id, 1, &chunk.file_path, &chunk.content_hash, true).await;
-        seed_checkpoint(&ctx, project_id, 2, &chunk.file_path, &chunk.content_hash, true).await;
+        seed_checkpoint(
+            &ctx,
+            project_id,
+            1,
+            &chunk.file_path,
+            &chunk.content_hash,
+            true,
+        )
+        .await;
+        seed_checkpoint(
+            &ctx,
+            project_id,
+            2,
+            &chunk.file_path,
+            &chunk.content_hash,
+            true,
+        )
+        .await;
         ctx.state
             .storage
             .set_indexing_generation(project_id, Some(2))
@@ -2127,7 +2203,15 @@ mod tests {
             true,
         )
         .await;
-        seed_checkpoint(&ctx, project_id, 2, &changed_chunk.file_path, "changed-hash-v2", true).await;
+        seed_checkpoint(
+            &ctx,
+            project_id,
+            2,
+            &changed_chunk.file_path,
+            "changed-hash-v2",
+            true,
+        )
+        .await;
         seed_checkpoint(&ctx, project_id, 1, pending_path, "pending-hash-v1", true).await;
         seed_checkpoint(&ctx, project_id, 2, pending_path, "pending-hash-v2", false).await;
         ctx.state
@@ -2300,6 +2384,78 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn recall_code_ignores_residual_indexing_generation_after_completion() {
+        let ctx = TestContext::new().await;
+        let project_id = "recall-code-completed-residual-indexing";
+        let chunk = seed_generation_for_freshness(
+            &ctx,
+            project_id,
+            8,
+            "completed_residual_marker",
+            "completed_residual_token",
+        )
+        .await;
+        seed_checkpoint(
+            &ctx,
+            project_id,
+            8,
+            &chunk.file_path,
+            &chunk.content_hash,
+            true,
+        )
+        .await;
+        ctx.state
+            .storage
+            .set_serving_generation(project_id, CapabilityKind::Semantic, 8)
+            .await
+            .unwrap();
+        ctx.state
+            .storage
+            .set_serving_generation(project_id, CapabilityKind::Symbols, 8)
+            .await
+            .unwrap();
+        ctx.state
+            .storage
+            .set_indexing_generation(project_id, Some(7))
+            .await
+            .unwrap();
+
+        let mut status = IndexStatus::new(project_id.to_string());
+        status.status = IndexState::Completed;
+        status.structural_generation = 8;
+        status.semantic_generation = 8;
+        status.refresh_lifecycle_states();
+        ctx.state.storage.update_index_status(status).await.unwrap();
+
+        let result = recall_code(
+            &ctx.state,
+            RecallCodeParams {
+                query: "completed_residual_token".to_string(),
+                project_id: Some(project_id.to_string()),
+                limit: Some(5),
+                mode: None,
+                vector_weight: None,
+                bm25_weight: None,
+                ppr_weight: None,
+                path_prefix: None,
+                language: None,
+                chunk_type: None,
+            },
+        )
+        .await
+        .unwrap();
+        let json = response_json(&result);
+
+        assert_eq!(
+            json["summary"]["indexing_generation"],
+            serde_json::Value::Null
+        );
+        assert_eq!(json["indexing_generation"], serde_json::Value::Null);
+        assert_eq!(json["summary"]["partial"]["is_partial"], false);
+        assert_eq!(first_result_freshness(&json), "fresh");
+    }
+
+    #[tokio::test]
     async fn recall_code_falls_back_to_bm25_when_semantic_unavailable() {
         let ctx = TestContext::new().await;
         let project_id = "recall-code-bm25-fallback";
@@ -2348,9 +2504,15 @@ mod tests {
         .unwrap();
         let json = response_json(&result);
 
-        assert_eq!(json["summary"]["fallback_path"], "bm25_lexical_symbol_hydration");
+        assert_eq!(
+            json["summary"]["fallback_path"],
+            "bm25_lexical_symbol_hydration"
+        );
         assert_eq!(json["summary"]["serving_generation"]["bm25"], 7);
-        assert_eq!(json["summary"]["serving_generation"]["vector"], serde_json::Value::Null);
+        assert_eq!(
+            json["summary"]["serving_generation"]["vector"],
+            serde_json::Value::Null
+        );
         assert_eq!(json["summary"]["vector_hits"], 0);
         assert!(json["summary"]["bm25_hits"].as_u64().unwrap() >= 1);
         assert_eq!(json["summary"]["partial"]["reason_code"], "degraded");
@@ -2391,8 +2553,14 @@ mod tests {
         assert_eq!(json["summary"]["indexing_generation"], 3);
         assert_eq!(json["summary"]["partial"]["is_partial"], true);
         assert_eq!(json["summary"]["partial"]["reason_code"], "missing");
-        assert_eq!(json["summary"]["partial"]["reason"], "no_serving_generation");
-        assert_eq!(json["contract"]["recall_code"]["fallback_path"], "no_serving_generation");
+        assert_eq!(
+            json["summary"]["partial"]["reason"],
+            "no_serving_generation"
+        );
+        assert_eq!(
+            json["contract"]["recall_code"]["fallback_path"],
+            "no_serving_generation"
+        );
     }
 
     #[test]

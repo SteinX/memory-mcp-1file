@@ -28,7 +28,6 @@ pub trait LanguageSupport: Send + Sync {
     }
 }
 
-
 fn clean_c_include_name(name: &str) -> String {
     name.trim_matches(|ch| ch == '<' || ch == '>' || ch == '"')
         .to_string()
@@ -336,7 +335,6 @@ impl LanguageSupport for JavaSupport {
     }
 }
 
-
 pub struct CSupport;
 impl LanguageSupport for CSupport {
     fn get_language(&self) -> tree_sitter::Language {
@@ -369,8 +367,6 @@ impl LanguageSupport for CSupport {
         (preproc_include path: (string_literal (string_content) @import))
         "#
     }
-
-
 
     fn extract_reference_name(&self, kind: &str, raw_name: &str) -> String {
         match kind {
@@ -451,7 +447,6 @@ impl LanguageSupport for CppSupport {
         (preproc_include path: (string_literal (string_content) @import))
         "#
     }
-
 
     fn extract_reference_name(&self, kind: &str, raw_name: &str) -> String {
         match kind {
@@ -757,10 +752,19 @@ mod grammar_compatibility_tests {
 
     #[test]
     fn mobile_grammar_crates_match_tree_sitter_026_language_api() {
-        accepts_language(tree_sitter_c::LANGUAGE.into(), "int main(void) { return 0; }");
+        accepts_language(
+            tree_sitter_c::LANGUAGE.into(),
+            "int main(void) { return 0; }",
+        );
         accepts_language(tree_sitter_cpp::LANGUAGE.into(), "int main() { return 0; }");
-        accepts_language(tree_sitter_swift::LANGUAGE.into(), "func main() { print(\"ok\") }");
-        accepts_language(tree_sitter_kotlin_ng::LANGUAGE.into(), "fun main() { println(\"ok\") }");
+        accepts_language(
+            tree_sitter_swift::LANGUAGE.into(),
+            "func main() { print(\"ok\") }",
+        );
+        accepts_language(
+            tree_sitter_kotlin_ng::LANGUAGE.into(),
+            "fun main() { println(\"ok\") }",
+        );
         accepts_language(
             tree_sitter_objc::LANGUAGE.into(),
             "@interface Foo @end @implementation Foo @end",

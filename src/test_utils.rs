@@ -3,8 +3,8 @@ use tempfile::TempDir;
 
 use crate::config::{AppConfig, AppState};
 use crate::embedding::{
-    AdaptiveEmbeddingQueue, EmbeddingConfig, EmbeddingMetrics, EmbeddingService, EmbeddingStore,
-    ModelType,
+    AdaptiveEmbeddingQueue, EmbeddingConfig, EmbeddingMetrics, EmbeddingRequest, EmbeddingService,
+    EmbeddingStore, ModelType,
 };
 use crate::forgetting::{create_access_channel, ForgettingConfig};
 use crate::search::{CodeSearchEngine, MemorySearchEngine};
@@ -13,6 +13,7 @@ use crate::storage::SurrealStorage;
 pub struct TestContext {
     pub state: Arc<AppState>,
     pub _temp_dir: TempDir, // Kept to ensure directory lives as long as context
+    pub _embedding_rx: tokio::sync::mpsc::Receiver<EmbeddingRequest>,
 }
 
 impl TestContext {
@@ -75,10 +76,6 @@ impl TestContext {
 
         let embedding_store =
             Arc::new(EmbeddingStore::new(db_path, "mock").expect("Failed to init embedding store"));
-        let metrics = Arc::new(EmbeddingMetrics::new());
-        let (queue_tx, _queue_rx) = tokio::sync::mpsc::channel(1000);
-        let adaptive_queue = AdaptiveEmbeddingQueue::with_defaults(queue_tx, metrics);
-
         let config = AppConfig {
             data_dir: db_path.to_path_buf(),
             model: "mock".to_string(),
@@ -98,6 +95,17 @@ impl TestContext {
             db_semaphore_size: 24,
             code_index,
         };
+
+        let metrics = Arc::new(EmbeddingMetrics::new());
+        let (queue_tx, embedding_rx) = tokio::sync::mpsc::channel(config.embedding_queue_capacity);
+        let adaptive_queue = AdaptiveEmbeddingQueue::new(
+            queue_tx,
+            metrics,
+            crate::embedding::AdaptiveQueueConfig {
+                capacity: config.embedding_queue_capacity,
+                ..Default::default()
+            },
+        );
 
         let (shutdown_tx, _) = tokio::sync::watch::channel(false);
         let db_semaphore_size = config.db_semaphore_size;
@@ -137,6 +145,7 @@ impl TestContext {
         Self {
             state,
             _temp_dir: temp_dir,
+            _embedding_rx: embedding_rx,
         }
     }
 }

@@ -5,10 +5,10 @@ use std::time::Duration;
 use crate::codebase::resolver::{
     resolve_startup_project_root, StartupProjectRootSource, StartupProjectRootStatus,
 };
-use crate::codebase::{CodebaseManager, IndexWorker};
+use crate::codebase::{resume_embeddings_for_project, CodebaseManager, IndexWorker};
 use crate::config::AppState;
 use crate::storage::StorageBackend;
-use crate::types::{CodeIntelligenceDiagnostic, IndexJobReasonCode, IndexJobState};
+use crate::types::{CodeIntelligenceDiagnostic, IndexJobReasonCode, IndexJobState, IndexState};
 
 #[derive(Debug, Clone)]
 pub enum CodeIntelligenceStartupStatus {
@@ -128,11 +128,155 @@ pub async fn perform_startup_job_recovery(state: &Arc<AppState>) {
     }
 
     if recovered + failed > 0 {
+        tracing::info!(recovered, failed, "startup job recovery: completed");
+    }
+}
+
+/// Re-enqueue incomplete code embeddings for every persisted project. This is
+/// separate from the code intelligence lifecycle because HTTP/SSE deployments
+/// can run without a startup `--project-path` while still serving previously
+/// registered projects.
+pub async fn resume_pending_embeddings_on_startup(state: &Arc<AppState>) {
+    let project_ids = match state.storage.list_projects().await {
+        Ok(ids) => ids,
+        Err(error) => {
+            tracing::warn!(
+                error = %error,
+                "startup embedding resume: failed to list projects; skipping"
+            );
+            return;
+        }
+    };
+
+    let mut projects_resumed = 0u32;
+    let mut items_enqueued = 0usize;
+
+    for project_id in project_ids {
+        let status = match state.storage.get_index_status(&project_id).await {
+            Ok(Some(status)) => status,
+            Ok(None) => continue,
+            Err(error) => {
+                tracing::warn!(
+                    project_id = %project_id,
+                    error = %error,
+                    "startup embedding resume: failed to read project status; skipping"
+                );
+                continue;
+            }
+        };
+
+        if status.status != IndexState::EmbeddingPending {
+            continue;
+        }
+
+        match resume_embeddings_for_project(state, &project_id).await {
+            Ok(count) if count > 0 => {
+                projects_resumed += 1;
+                items_enqueued += count;
+                tracing::info!(
+                    project_id = %project_id,
+                    count,
+                    "startup embedding resume: queued unembedded code items"
+                );
+            }
+            Ok(_) => {
+                tracing::debug!(
+                    project_id = %project_id,
+                    "startup embedding resume: no unembedded code items found"
+                );
+            }
+            Err(error) => {
+                tracing::error!(
+                    project_id = %project_id,
+                    error = %error,
+                    "startup embedding resume: failed to queue unembedded code items"
+                );
+            }
+        }
+    }
+
+    if projects_resumed > 0 {
         tracing::info!(
-            recovered,
-            failed,
-            "startup job recovery: completed"
+            projects_resumed,
+            items_enqueued,
+            "startup embedding resume: completed"
         );
+    }
+}
+
+/// Clear stale indexing-generation markers left by older builds after a
+/// project has already completed and semantic serving has caught up.
+pub async fn clear_completed_indexing_generations_on_startup(state: &Arc<AppState>) {
+    let project_ids = match state.storage.list_projects().await {
+        Ok(ids) => ids,
+        Err(error) => {
+            tracing::warn!(
+                error = %error,
+                "startup indexing generation cleanup: failed to list projects; skipping"
+            );
+            return;
+        }
+    };
+
+    let mut cleared = 0u32;
+    for project_id in project_ids {
+        let status = match state.storage.get_index_status(&project_id).await {
+            Ok(Some(status)) => status,
+            Ok(None) => continue,
+            Err(error) => {
+                tracing::warn!(
+                    project_id = %project_id,
+                    error = %error,
+                    "startup indexing generation cleanup: failed to read project status; skipping"
+                );
+                continue;
+            }
+        };
+
+        if status.status != IndexState::Completed
+            || status.semantic_generation != status.structural_generation
+        {
+            continue;
+        }
+
+        let indexing_generation = match state.storage.get_indexing_generation(&project_id).await {
+            Ok(generation) => generation,
+            Err(error) => {
+                tracing::warn!(
+                    project_id = %project_id,
+                    error = %error,
+                    "startup indexing generation cleanup: failed to read indexing generation"
+                );
+                continue;
+            }
+        };
+
+        if indexing_generation.is_none() {
+            continue;
+        }
+
+        if let Err(error) = state
+            .storage
+            .set_indexing_generation(&project_id, None)
+            .await
+        {
+            tracing::warn!(
+                project_id = %project_id,
+                error = %error,
+                "startup indexing generation cleanup: failed to clear indexing generation"
+            );
+            continue;
+        }
+
+        cleared += 1;
+        tracing::info!(
+            project_id = %project_id,
+            "startup indexing generation cleanup: cleared completed project marker"
+        );
+    }
+
+    if cleared > 0 {
+        tracing::info!(cleared, "startup indexing generation cleanup: completed");
     }
 }
 
@@ -290,7 +434,9 @@ fn spawn_periodic_manifest_diff(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::storage::StorageBackend;
     use crate::test_utils::TestContext;
+    use crate::types::{ChunkType, CodeChunk, CodeSymbol, IndexStatus, Language, SymbolType};
 
     #[tokio::test]
     async fn startup_lifecycle_missing_configured_root_returns_missing_root_diagnostic() {
@@ -434,5 +580,123 @@ mod tests {
         assert!(pending.contains_key("project"));
 
         context.state.shutdown_tx.send(true).unwrap();
+    }
+
+    #[tokio::test]
+    async fn startup_resume_embeddings_covers_registered_project_without_lifecycle_manager() {
+        let context = TestContext::new().await;
+        let project_id = "persisted-project-without-manager";
+
+        let chunk = CodeChunk {
+            id: None,
+            file_path: "/workspace/persisted/src/lib.rs".to_string(),
+            content: "pub fn persisted_embedding_resume_marker() { let value = 42; }".to_string(),
+            language: Language::Rust,
+            start_line: 1,
+            end_line: 1,
+            chunk_type: ChunkType::Function,
+            name: Some("persisted_embedding_resume_marker".to_string()),
+            context_path: None,
+            embedding: None,
+            content_hash: "persisted-embedding-resume-marker".to_string(),
+            project_id: Some(project_id.to_string()),
+            generation: Some(8),
+            indexed_at: crate::types::Datetime::default(),
+        };
+        context
+            .state
+            .storage
+            .create_code_chunks_batch(vec![chunk])
+            .await
+            .unwrap();
+
+        let symbol = CodeSymbol::new(
+            "PersistedEmbeddingResume".to_string(),
+            SymbolType::Function,
+            "/workspace/persisted/src/lib.rs".to_string(),
+            1,
+            1,
+            project_id.to_string(),
+        )
+        .with_signature("fn PersistedEmbeddingResume()".to_string());
+        context
+            .state
+            .storage
+            .create_code_symbols_batch(vec![symbol])
+            .await
+            .unwrap();
+        let stats = context.state.storage.get_all_project_stats().await.unwrap();
+        assert_eq!(
+            stats.get(project_id).map(|stats| stats.symbols),
+            Some(1),
+            "test setup should persist one symbol row for startup recovery"
+        );
+        let unembedded_symbols = context
+            .state
+            .storage
+            .get_unembedded_symbols(project_id)
+            .await
+            .unwrap();
+        assert_eq!(
+            unembedded_symbols.len(),
+            1,
+            "test setup should persist one unembedded symbol for startup recovery"
+        );
+
+        let mut status = IndexStatus::new(project_id.to_string());
+        status.status = IndexState::EmbeddingPending;
+        status.structural_generation = 8;
+        status.total_chunks = 1;
+        status.total_symbols = 1;
+        context
+            .state
+            .storage
+            .update_index_status(status)
+            .await
+            .unwrap();
+
+        resume_pending_embeddings_on_startup(&context.state).await;
+
+        assert_eq!(
+            context.state.embedding_queue.metrics().get_queue_depth(),
+            2,
+            "startup resume should enqueue chunk and symbol embeddings for persisted projects"
+        );
+    }
+
+    #[tokio::test]
+    async fn startup_clears_completed_project_indexing_generation_marker() {
+        let context = TestContext::new().await;
+        let project_id = "completed-project-with-stale-indexing-generation";
+
+        let mut status = IndexStatus::new(project_id.to_string());
+        status.status = IndexState::Completed;
+        status.structural_generation = 8;
+        status.semantic_generation = 8;
+        context
+            .state
+            .storage
+            .update_index_status(status)
+            .await
+            .unwrap();
+        context
+            .state
+            .storage
+            .set_indexing_generation(project_id, Some(7))
+            .await
+            .unwrap();
+
+        clear_completed_indexing_generations_on_startup(&context.state).await;
+
+        assert_eq!(
+            context
+                .state
+                .storage
+                .get_indexing_generation(project_id)
+                .await
+                .unwrap(),
+            None,
+            "completed projects should not keep a stale indexing generation marker"
+        );
     }
 }

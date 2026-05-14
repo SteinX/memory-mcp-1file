@@ -65,7 +65,9 @@ pub async fn classify_file_freshness(
         Some(indexing_checkpoint) if checkpoint_is_pending(&indexing_checkpoint) => {
             Ok(CapabilityFreshness::Partial)
         }
-        Some(indexing_checkpoint) if checkpoints_match(&serving_checkpoint, &indexing_checkpoint) => {
+        Some(indexing_checkpoint)
+            if checkpoints_match(&serving_checkpoint, &indexing_checkpoint) =>
+        {
             Ok(CapabilityFreshness::Fresh)
         }
         Some(_) => Ok(CapabilityFreshness::Stale),
@@ -83,7 +85,10 @@ pub async fn build_freshness_map(
     let mut freshness_by_path = HashMap::new();
     let Some(serving_gen) = serving_gen else {
         for changed_path in changed_paths {
-            freshness_by_path.insert(normalize_file_path(changed_path), CapabilityFreshness::Unavailable);
+            freshness_by_path.insert(
+                normalize_file_path(changed_path),
+                CapabilityFreshness::Unavailable,
+            );
         }
         return Ok(freshness_by_path);
     };
@@ -97,9 +102,11 @@ pub async fn build_freshness_map(
         .list_file_checkpoints_for_job(project_id, serving_gen)
         .await?;
     let indexing_checkpoints = match indexing_gen.filter(|generation| *generation != serving_gen) {
-        Some(indexing_gen) => storage
-            .list_file_checkpoints_for_job(project_id, indexing_gen)
-            .await?,
+        Some(indexing_gen) => {
+            storage
+                .list_file_checkpoints_for_job(project_id, indexing_gen)
+                .await?
+        }
         None => Vec::new(),
     };
     let indexing_by_path: HashMap<String, IndexFileCheckpoint> = indexing_checkpoints
@@ -113,7 +120,9 @@ pub async fn build_freshness_map(
             Some(indexing_checkpoint) if checkpoint_is_pending(indexing_checkpoint) => {
                 CapabilityFreshness::Partial
             }
-            Some(indexing_checkpoint) if checkpoints_match(&serving_checkpoint, indexing_checkpoint) => {
+            Some(indexing_checkpoint)
+                if checkpoints_match(&serving_checkpoint, indexing_checkpoint) =>
+            {
                 CapabilityFreshness::Fresh
             }
             Some(_) => CapabilityFreshness::Stale,
@@ -145,7 +154,10 @@ pub fn classify_path_from_map(
         .cloned()
 }
 
-pub fn relative_changed_paths(project_root: Option<&Path>, changed_paths: &[String]) -> Vec<String> {
+pub fn relative_changed_paths(
+    project_root: Option<&Path>,
+    changed_paths: &[String],
+) -> Vec<String> {
     changed_paths
         .iter()
         .map(|path| {

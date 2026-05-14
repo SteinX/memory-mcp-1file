@@ -4,8 +4,8 @@ pub mod languages;
 use std::path::Path;
 
 use crate::codebase::scanner::detect_language_with_content;
-use crate::types::Language;
 use crate::types::symbol::{CodeReference, CodeSymbol};
+use crate::types::Language;
 
 use extractor::Extractor;
 
@@ -807,11 +807,16 @@ fun fetchUser(): String = "user"
 
     fn assert_ref(refs: &[CodeReference], relation_type: CodeRelationType, to_symbol: &str) {
         assert!(
-            refs.iter().any(|reference| reference.relation_type == relation_type
-                && reference.to_symbol == to_symbol),
+            refs.iter()
+                .any(|reference| reference.relation_type == relation_type
+                    && reference.to_symbol == to_symbol),
             "Should find {relation_type:?} reference to '{to_symbol}'. References: {:?}",
             refs.iter()
-                .map(|reference| (&reference.from_symbol, &reference.to_symbol, &reference.relation_type))
+                .map(|reference| (
+                    &reference.from_symbol,
+                    &reference.to_symbol,
+                    &reference.relation_type
+                ))
                 .collect::<Vec<_>>()
         );
     }
@@ -829,10 +834,7 @@ fun fetchUser(): String = "user"
         for reference in refs {
             println!(
                 "  {} -> {} ({:?}) L{}",
-                reference.from_symbol,
-                reference.to_symbol,
-                reference.relation_type,
-                reference.line
+                reference.from_symbol, reference.to_symbol, reference.relation_type, reference.line
             );
         }
     }

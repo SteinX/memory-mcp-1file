@@ -29,13 +29,13 @@ pub(super) async fn create_code_symbols_batch(
 
     // Single INSERT ... ON DUPLICATE KEY UPDATE instead of N individual upserts.
     //
-    // We intentionally omit `indexed_at` and `embedding` from the JSON payload:
+    // We intentionally omit `indexed_at` from the JSON payload:
     //   - `indexed_at`: server DEFAULT time::now() applies on INSERT; explicit
     //     time::now() in ON DUPLICATE KEY UPDATE handles the upsert case.
     //     This side-steps SurrealDB #6816 where serde_json serializes Datetime
     //     as a string which SCHEMAFULL silently rejects.
-    //   - `embedding`: always None for newly created symbols (set later by
-    //     the embedding worker).
+    // `embedding` is included explicitly so freshly parsed symbols are visible
+    // to `get_unembedded_symbols` across SurrealDB NONE/NULL normalization.
     let mut data = Vec::with_capacity(symbols.len());
     let mut ids = Vec::with_capacity(symbols.len());
 
@@ -43,7 +43,7 @@ pub(super) async fn create_code_symbols_batch(
         let key = symbol.unique_key();
         ids.push(format!("code_symbols:{}", key));
 
-        data.push(serde_json::json!({
+        let mut row = serde_json::json!({
             "id": key,
             "name": symbol.name,
             "symbol_type": symbol.symbol_type,
@@ -52,8 +52,14 @@ pub(super) async fn create_code_symbols_batch(
             "end_line": symbol.end_line,
             "project_id": symbol.project_id,
             "signature": symbol.signature,
-            "generation": symbol.generation,
-        }));
+        });
+        if let Some(embedding) = &symbol.embedding {
+            row["embedding"] = serde_json::json!(embedding);
+        }
+        if let Some(generation) = symbol.generation {
+            row["generation"] = serde_json::json!(generation);
+        }
+        data.push(row);
     }
 
     let sql = r#"
@@ -66,11 +72,12 @@ pub(super) async fn create_code_symbols_batch(
             end_line = $input.end_line,
             project_id = $input.project_id,
             signature = $input.signature,
-            generation = $input.generation,
+            embedding = $input.embedding OR NONE,
+            generation = $input.generation OR NONE,
             indexed_at = time::now()
     "#;
 
-    db.query(sql).bind(("symbols", data)).await?;
+    db.query(sql).bind(("symbols", data)).await?.check()?;
     Ok(ids)
 }
 
@@ -641,7 +648,7 @@ pub(super) async fn count_embedded_symbols(
     use surrealdb_types::SurrealValue;
 
     let sql = format!(
-        "SELECT count() FROM code_symbols WHERE project_id = $project_id AND embedding IS NOT NONE AND {ACTIVE_SYMBOL_GENERATION_FILTER} GROUP ALL"
+        "SELECT count() FROM code_symbols WHERE project_id = $project_id AND embedding IS NOT NONE AND embedding IS NOT NULL AND {ACTIVE_SYMBOL_GENERATION_FILTER} GROUP ALL"
     );
     let mut response = db
         .query(&sql)
@@ -664,7 +671,7 @@ pub(super) async fn get_unembedded_symbols(
 ) -> Result<Vec<(String, String)>> {
     use surrealdb_types::SurrealValue;
 
-    let sql = "SELECT id, name, symbol_type, signature FROM code_symbols WHERE project_id = $project_id AND embedding IS NONE";
+    let sql = "SELECT id, name, symbol_type, signature FROM code_symbols WHERE project_id = $project_id AND (embedding IS NONE OR embedding IS NULL)";
     let response = db
         .query(sql)
         .bind(("project_id", project_id.to_string()))
@@ -978,11 +985,14 @@ pub(super) async fn get_symbol_project_id(
     db: &Surreal<Db>,
     symbol_id: &str,
 ) -> Result<Option<String>> {
-    let sql = "SELECT project_id FROM code_symbols WHERE id = type::record('code_symbols', $id) LIMIT 1";
+    let sql =
+        "SELECT project_id FROM code_symbols WHERE id = type::record('code_symbols', $id) LIMIT 1";
     let key = symbol_id.strip_prefix("code_symbols:").unwrap_or(symbol_id);
     let mut result = db.query(sql).bind(("id", key.to_string())).await?;
     let rows: Vec<serde_json::Value> = result.take(0)?;
     Ok(rows.into_iter().next().and_then(|v| {
-        v.get("project_id").and_then(|p| p.as_str()).map(String::from)
+        v.get("project_id")
+            .and_then(|p| p.as_str())
+            .map(String::from)
     }))
 }

@@ -260,7 +260,7 @@ pub(super) async fn get_all_project_stats(
     let sql = r#"
         SELECT project_id, count() AS files FROM file_manifest GROUP BY project_id;
         SELECT project_id, count() AS chunks, count(embedding IS NOT NONE OR string::len(content) < 50) AS embedded_chunks FROM code_chunks WHERE project_id IS NOT NONE GROUP BY project_id;
-        SELECT project_id, count() AS symbols, count(embedding IS NOT NONE) AS embedded_symbols FROM code_symbols GROUP BY project_id;
+        SELECT project_id, count() AS symbols, count(embedding IS NOT NONE AND embedding IS NOT NULL) AS embedded_symbols FROM code_symbols GROUP BY project_id;
         SELECT namespace AS project_id, count() AS memories FROM memories WHERE namespace IS NOT NONE GROUP BY namespace;
     "#;
 
@@ -908,7 +908,10 @@ fn capability_column(capability: &CapabilityKind) -> &'static str {
 }
 
 fn is_structural(capability: &CapabilityKind) -> bool {
-    matches!(capability, CapabilityKind::ProjectInfo | CapabilityKind::Projection)
+    matches!(
+        capability,
+        CapabilityKind::ProjectInfo | CapabilityKind::Projection
+    )
 }
 
 pub(super) async fn get_serving_generation(
@@ -920,9 +923,8 @@ pub(super) async fn get_serving_generation(
         return get_active_generation(db, project_id).await;
     }
     let col = capability_column(&capability);
-    let sql = format!(
-        "SELECT {col} FROM capability_serving_gen WHERE project_id = $project_id LIMIT 1"
-    );
+    let sql =
+        format!("SELECT {col} FROM capability_serving_gen WHERE project_id = $project_id LIMIT 1");
     let mut response = db
         .query(&sql)
         .bind(("project_id", project_id.to_string()))
@@ -983,11 +985,19 @@ pub(super) async fn set_indexing_generation(
     project_id: &str,
     generation: Option<u64>,
 ) -> Result<()> {
-    let sql = r#"UPSERT capability_serving_gen SET
+    let sql = if generation.is_some() {
+        r#"UPSERT capability_serving_gen SET
         project_id = $project_id,
         indexing_gen = $generation,
         updated_at = time::now()
-    WHERE project_id = $project_id"#;
+    WHERE project_id = $project_id"#
+    } else {
+        r#"UPSERT capability_serving_gen SET
+        project_id = $project_id,
+        indexing_gen = NONE,
+        updated_at = time::now()
+    WHERE project_id = $project_id"#
+    };
     db.query(sql)
         .bind(("project_id", project_id.to_string()))
         .bind(("generation", generation.map(|g| g as i64)))

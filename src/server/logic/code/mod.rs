@@ -14,13 +14,16 @@ use serde_json::{json, Value};
 
 use crate::config::AppState;
 use crate::storage::StorageBackend;
-use crate::types::{CodeIntelligenceDiagnostic, ContractReasonCode};
+use crate::types::{
+    CodeIntelligenceDiagnostic, ContractReasonCode, IndexState, IndexStatus,
+    ServingGenerationMetadata,
+};
 
 // Re-export everything so external callers see the same flat API as before.
 pub use indexing::{
     cancel_index, cleanup_abandoned_index_jobs, delete_project, get_degradation_info,
-    get_index_status, get_project_projection, get_project_projection_by_locator,
-    get_project_stats, index_project, list_projects,
+    get_index_status, get_project_projection, get_project_projection_by_locator, get_project_stats,
+    index_project, list_projects,
 };
 pub use search::{recall_code, search_code};
 pub(crate) use search::{recall_code_with_context, search_code_with_context};
@@ -183,6 +186,77 @@ pub(crate) fn apply_project_resolution(response: &mut Value, resolution: &Projec
     }
 }
 
+pub(crate) fn completed_semantic_generation_caught_up(status: &IndexStatus) -> bool {
+    status.status == IndexState::Completed
+        && status.semantic_generation == status.structural_generation
+}
+
+pub(crate) async fn effective_indexing_generation_for_project(
+    state: &Arc<AppState>,
+    project_id: &str,
+    serving_generation: Option<u64>,
+    fallback_generation: Option<u64>,
+    status_hint: Option<&IndexStatus>,
+) -> (Option<u64>, bool) {
+    let completed = match status_hint {
+        Some(status) => completed_semantic_generation_caught_up(status),
+        None => state
+            .storage
+            .get_index_status(project_id)
+            .await
+            .ok()
+            .flatten()
+            .as_ref()
+            .map(completed_semantic_generation_caught_up)
+            .unwrap_or(false),
+    };
+
+    if completed {
+        return (None, false);
+    }
+
+    let explicit = state
+        .storage
+        .get_indexing_generation(project_id)
+        .await
+        .ok()
+        .flatten();
+    let abandoned_max = state
+        .storage
+        .list_abandoned_generations(project_id)
+        .await
+        .ok()
+        .and_then(|generations| {
+            generations
+                .into_iter()
+                .filter(|generation| Some(*generation) != serving_generation)
+                .max()
+        });
+    let interrupted = explicit.is_none()
+        && match (abandoned_max, serving_generation) {
+            (Some(abandoned), Some(serving)) => abandoned > serving,
+            _ => false,
+        };
+
+    (
+        explicit.or(abandoned_max).or(fallback_generation),
+        interrupted,
+    )
+}
+
+pub(crate) fn completed_serving_metadata(
+    mut serving: ServingGenerationMetadata,
+    status: Option<&IndexStatus>,
+) -> ServingGenerationMetadata {
+    if status
+        .map(completed_semantic_generation_caught_up)
+        .unwrap_or(false)
+    {
+        serving.indexing = None;
+    }
+    serving
+}
+
 pub(crate) struct MissingProjectBindingDiagnostic {
     pub code_intelligence: serde_json::Value,
     pub project_binding: serde_json::Value,
@@ -209,8 +283,18 @@ pub(crate) async fn missing_project_binding_diagnostic(
         return None;
     }
 
-    let has_index_rows = state.storage.count_chunks(project_id, None).await.unwrap_or(0) > 0
-        || state.storage.count_symbols(project_id, None).await.unwrap_or(0) > 0
+    let has_index_rows = state
+        .storage
+        .count_chunks(project_id, None)
+        .await
+        .unwrap_or(0)
+        > 0
+        || state
+            .storage
+            .count_symbols(project_id, None)
+            .await
+            .unwrap_or(0)
+            > 0
         || state
             .storage
             .count_manifest_entries(project_id)
@@ -262,8 +346,8 @@ pub(crate) fn apply_missing_project_binding_diagnostic(
 mod tests {
     use super::CodeToolContext;
     use crate::server::params::{
-        GetIndexStatusParams, GetProjectProjectionParams, GetProjectionByLocatorParams,
-        GetProjectStatsParams, IndexProjectParams, RecallCodeParams, SearchCodeParams,
+        GetIndexStatusParams, GetProjectProjectionParams, GetProjectStatsParams,
+        GetProjectionByLocatorParams, IndexProjectParams, RecallCodeParams, SearchCodeParams,
         SearchSymbolsParams, SymbolGraphParams,
     };
     use crate::storage::StorageBackend;
@@ -385,8 +469,8 @@ mod tests {
                 allow_full_restart_fallback: None,
                 force: None,
                 confirm_failed_restart: None,
-            include_patterns: None,
-            exclude_patterns: None,
+                include_patterns: None,
+                exclude_patterns: None,
             },
         )
         .await
@@ -458,8 +542,8 @@ mod tests {
                 allow_full_restart_fallback: None,
                 force: None,
                 confirm_failed_restart: None,
-            include_patterns: None,
-            exclude_patterns: None,
+                include_patterns: None,
+                exclude_patterns: None,
             },
         )
         .await
@@ -575,8 +659,8 @@ mod tests {
                 allow_full_restart_fallback: None,
                 force: None,
                 confirm_failed_restart: None,
-            include_patterns: None,
-            exclude_patterns: None,
+                include_patterns: None,
+                exclude_patterns: None,
             },
         )
         .await
@@ -655,8 +739,8 @@ mod tests {
                 allow_full_restart_fallback: None,
                 force: None,
                 confirm_failed_restart: None,
-            include_patterns: None,
-            exclude_patterns: None,
+                include_patterns: None,
+                exclude_patterns: None,
             },
         )
         .await
@@ -807,8 +891,8 @@ mod tests {
                 allow_full_restart_fallback: None,
                 force: None,
                 confirm_failed_restart: None,
-            include_patterns: None,
-            exclude_patterns: None,
+                include_patterns: None,
+                exclude_patterns: None,
             },
         )
         .await
@@ -958,8 +1042,8 @@ mod tests {
                 allow_full_restart_fallback: None,
                 force: None,
                 confirm_failed_restart: None,
-            include_patterns: None,
-            exclude_patterns: None,
+                include_patterns: None,
+                exclude_patterns: None,
             },
         )
         .await
@@ -975,8 +1059,8 @@ mod tests {
                 allow_full_restart_fallback: None,
                 force: None,
                 confirm_failed_restart: None,
-            include_patterns: None,
-            exclude_patterns: None,
+                include_patterns: None,
+                exclude_patterns: None,
             },
         )
         .await
@@ -1147,8 +1231,8 @@ mod tests {
                 allow_full_restart_fallback: None,
                 force: None,
                 confirm_failed_restart: None,
-            include_patterns: None,
-            exclude_patterns: None,
+                include_patterns: None,
+                exclude_patterns: None,
             },
         )
         .await
@@ -1239,15 +1323,15 @@ mod tests {
                 &ctx.state,
                 IndexProjectParams {
                     path: Some(project_path.to_string_lossy().to_string()),
-                project_id: None,
-                resume: None,
-                job_id: None,
-                resume_token: None,
-                allow_full_restart_fallback: None,
+                    project_id: None,
+                    resume: None,
+                    job_id: None,
+                    resume_token: None,
+                    allow_full_restart_fallback: None,
                     force: None,
                     confirm_failed_restart: None,
-            include_patterns: None,
-            exclude_patterns: None,
+                    include_patterns: None,
+                    exclude_patterns: None,
                 },
             )
             .await
@@ -1387,15 +1471,15 @@ mod tests {
                 &ctx.state,
                 IndexProjectParams {
                     path: Some(project_path.to_string_lossy().to_string()),
-                project_id: None,
-                resume: None,
-                job_id: None,
-                resume_token: None,
-                allow_full_restart_fallback: None,
+                    project_id: None,
+                    resume: None,
+                    job_id: None,
+                    resume_token: None,
+                    allow_full_restart_fallback: None,
                     force: None,
                     confirm_failed_restart: None,
-            include_patterns: None,
-            exclude_patterns: None,
+                    include_patterns: None,
+                    exclude_patterns: None,
                 },
             )
             .await
@@ -1549,8 +1633,8 @@ mod tests {
                 allow_full_restart_fallback: None,
                 force: None,
                 confirm_failed_restart: None,
-            include_patterns: None,
-            exclude_patterns: None,
+                include_patterns: None,
+                exclude_patterns: None,
             },
         )
         .await
@@ -1708,8 +1792,8 @@ mod tests {
                 allow_full_restart_fallback: None,
                 force: None,
                 confirm_failed_restart: None,
-            include_patterns: None,
-            exclude_patterns: None,
+                include_patterns: None,
+                exclude_patterns: None,
             },
         )
         .await
@@ -1817,8 +1901,8 @@ mod tests {
                 allow_full_restart_fallback: None,
                 force: None,
                 confirm_failed_restart: None,
-            include_patterns: None,
-            exclude_patterns: None,
+                include_patterns: None,
+                exclude_patterns: None,
             },
         )
         .await
@@ -1963,8 +2047,8 @@ mod tests {
                 allow_full_restart_fallback: None,
                 force: None,
                 confirm_failed_restart: None,
-            include_patterns: None,
-            exclude_patterns: None,
+                include_patterns: None,
+                exclude_patterns: None,
             },
         )
         .await
@@ -2196,7 +2280,11 @@ mod tests {
     }
 
     #[allow(dead_code)]
-    fn interrupted_status_with_prior_serving(project_id: &str, serving: u64, interrupted: u64) -> IndexStatus {
+    fn interrupted_status_with_prior_serving(
+        project_id: &str,
+        serving: u64,
+        interrupted: u64,
+    ) -> IndexStatus {
         let mut status = indexing_status_with_serving(project_id, serving, interrupted);
         status.status = IndexState::Failed;
         status.error_message = Some("interrupted_generation_not_promoted".to_string());
@@ -2204,7 +2292,12 @@ mod tests {
         status
     }
 
-    async fn persist_generation_fixture(ctx: &TestContext, project_id: &str, generation: u64, marker: &str) -> String {
+    async fn persist_generation_fixture(
+        ctx: &TestContext,
+        project_id: &str,
+        generation: u64,
+        marker: &str,
+    ) -> String {
         let chunk = CodeChunk {
             id: None,
             file_path: format!("src/{marker}.rs"),
@@ -2266,12 +2359,20 @@ mod tests {
         let callee_id = persist_generation_fixture(ctx, project_id, generation, callee).await;
         ctx.state
             .storage
-            .upsert_file_checkpoint(&checkpoint(project_id, generation, &format!("src/{caller}.rs")))
+            .upsert_file_checkpoint(&checkpoint(
+                project_id,
+                generation,
+                &format!("src/{caller}.rs"),
+            ))
             .await
             .unwrap();
         ctx.state
             .storage
-            .upsert_file_checkpoint(&checkpoint(project_id, generation, &format!("src/{callee}.rs")))
+            .upsert_file_checkpoint(&checkpoint(
+                project_id,
+                generation,
+                &format!("src/{callee}.rs"),
+            ))
             .await
             .unwrap();
         let caller_thing = crate::types::safe_thing::symbol_thing(
@@ -2318,7 +2419,10 @@ mod tests {
             json["capability_readiness"]["serving_generation"],
             serde_json::to_value(expected_serving).unwrap()
         );
-        assert_eq!(json["capability_readiness"]["indexing_generation"], expected_indexing);
+        assert_eq!(
+            json["capability_readiness"]["indexing_generation"],
+            expected_indexing
+        );
         assert!(json["capability_readiness"]["capabilities"].is_array());
         assert_eq!(
             json["serving_generation"],
@@ -2331,14 +2435,21 @@ mod tests {
                     .as_array()
                     .expect("capabilities should be an array")
                     .iter()
-                    .any(|capability| capability["reason_code"].as_str() == Some(*expected_reason_code)),
+                    .any(|capability| capability["reason_code"].as_str()
+                        == Some(*expected_reason_code)),
                 "missing response capability reason_code={expected_reason_code:?}: {json}"
             );
         }
     }
 
-    fn assert_item_freshness(json: &serde_json::Value, expected_generation: u64, expected_freshness: &str) {
-        let items = json["results"].as_array().expect("results should be an array");
+    fn assert_item_freshness(
+        json: &serde_json::Value,
+        expected_generation: u64,
+        expected_freshness: &str,
+    ) {
+        let items = json["results"]
+            .as_array()
+            .expect("results should be an array");
         assert!(!items.is_empty(), "expected at least one result item");
         for item in items {
             assert_eq!(item["freshness"]["generation"], expected_generation);
@@ -2356,22 +2467,39 @@ mod tests {
         vec![
             (
                 "recall_code",
-                tool_result_json(&super::recall_code(&ctx.state, recall_params(project_id, query)).await.unwrap()),
+                tool_result_json(
+                    &super::recall_code(&ctx.state, recall_params(project_id, query))
+                        .await
+                        .unwrap(),
+                ),
             ),
             (
                 "search_symbols",
-                tool_result_json(&super::search_symbols(&ctx.state, symbol_params(project_id, query)).await.unwrap()),
+                tool_result_json(
+                    &super::search_symbols(&ctx.state, symbol_params(project_id, query))
+                        .await
+                        .unwrap(),
+                ),
             ),
             (
                 "symbol_graph",
-                tool_result_json(&super::symbol_graph(&ctx.state, symbol_graph_params(symbol_id)).await.unwrap()),
+                tool_result_json(
+                    &super::symbol_graph(&ctx.state, symbol_graph_params(symbol_id))
+                        .await
+                        .unwrap(),
+                ),
             ),
             (
                 "project_info_stats",
                 tool_result_json(
-                    &super::get_project_stats(&ctx.state, GetProjectStatsParams { project_id: project_id.to_string() })
-                        .await
-                        .unwrap(),
+                    &super::get_project_stats(
+                        &ctx.state,
+                        GetProjectStatsParams {
+                            project_id: project_id.to_string(),
+                        },
+                    )
+                    .await
+                    .unwrap(),
                 ),
             ),
         ]
@@ -2381,10 +2509,18 @@ mod tests {
     async fn capability_readiness_contract_fresh() {
         let ctx = TestContext::new().await;
         let project_id = "capability-readiness-fresh";
-        let symbol_id = persist_generation_fixture(&ctx, project_id, 1, "fresh_contract_marker").await;
-        ctx.state.storage.set_active_generation(project_id, 1).await.unwrap();
+        let symbol_id =
+            persist_generation_fixture(&ctx, project_id, 1, "fresh_contract_marker").await;
+        ctx.state
+            .storage
+            .set_active_generation(project_id, 1)
+            .await
+            .unwrap();
 
-        for (tool, json) in four_tool_contract_responses(&ctx, project_id, &symbol_id, "fresh_contract_marker").await {
+        for (tool, json) in
+            four_tool_contract_responses(&ctx, project_id, &symbol_id, "fresh_contract_marker")
+                .await
+        {
             assert_eq!(json["summary"]["partial"]["is_partial"], false, "{tool}");
             assert!(
                 json["summary"]["partial"]["reason_code"].is_null()
@@ -2403,20 +2539,48 @@ mod tests {
         let ctx = TestContext::new().await;
         let project_id = "capability-readiness-stale";
         let other_project_id = "capability-readiness-stale-other";
-        let symbol_id = persist_generation_fixture(&ctx, project_id, 1, "stale_contract_marker").await;
+        let symbol_id =
+            persist_generation_fixture(&ctx, project_id, 1, "stale_contract_marker").await;
         persist_generation_fixture(&ctx, other_project_id, 1, "other_project_marker").await;
-        ctx.state.storage.set_active_generation(project_id, 1).await.unwrap();
-        ctx.state.storage.set_indexing_generation(project_id, Some(2)).await.unwrap();
+        ctx.state
+            .storage
+            .set_active_generation(project_id, 1)
+            .await
+            .unwrap();
+        ctx.state
+            .storage
+            .set_indexing_generation(project_id, Some(2))
+            .await
+            .unwrap();
 
-        for (tool, json) in four_tool_contract_responses(&ctx, project_id, &symbol_id, "stale_contract_marker").await {
+        for (tool, json) in
+            four_tool_contract_responses(&ctx, project_id, &symbol_id, "stale_contract_marker")
+                .await
+        {
             if tool != "project_info_stats" {
-                assert!(json["summary"]["partial"]["is_partial"].as_bool().unwrap_or(false), "{tool}");
                 assert!(
-                    matches!(json["summary"]["partial"]["reason_code"].as_str(), Some("stale") | Some("partial")),
+                    json["summary"]["partial"]["is_partial"]
+                        .as_bool()
+                        .unwrap_or(false),
+                    "{tool}"
+                );
+                assert!(
+                    matches!(
+                        json["summary"]["partial"]["reason_code"].as_str(),
+                        Some("stale") | Some("partial")
+                    ),
                     "{tool} must expose stale/partial reason_code: {json}"
                 );
             }
-            assert_capability_contract_fields(&ctx, project_id, &json, Some(1), 2, &["stale", "partial"]).await;
+            assert_capability_contract_fields(
+                &ctx,
+                project_id,
+                &json,
+                Some(1),
+                2,
+                &["stale", "partial"],
+            )
+            .await;
             if tool != "project_info_stats" && tool != "symbol_graph" {
                 assert_item_freshness(&json, 1, "stale");
                 assert!(!json.to_string().contains("other_project_marker"));
@@ -2429,17 +2593,34 @@ mod tests {
         let ctx = TestContext::new().await;
         let project_id = "capability-readiness-no-serving";
         let other_project_id = "capability-readiness-no-serving-other";
-        let other_symbol_id = persist_generation_fixture(&ctx, other_project_id, 1, "no_serving_other_marker").await;
-        ctx.state.storage.set_active_generation(other_project_id, 1).await.unwrap();
-        ctx.state.storage.set_indexing_generation(project_id, Some(1)).await.unwrap();
+        let other_symbol_id =
+            persist_generation_fixture(&ctx, other_project_id, 1, "no_serving_other_marker").await;
+        ctx.state
+            .storage
+            .set_active_generation(other_project_id, 1)
+            .await
+            .unwrap();
+        ctx.state
+            .storage
+            .set_indexing_generation(project_id, Some(1))
+            .await
+            .unwrap();
         let session_id = "capability-readiness-no-serving-session";
-        ctx.state.session_bindings.bind(session_id.to_string(), project_id.to_string()).await;
-        let context = Some(CodeToolContext::from_session_id(Some(session_id.to_string())));
+        ctx.state
+            .session_bindings
+            .bind(session_id.to_string(), project_id.to_string())
+            .await;
+        let context = Some(CodeToolContext::from_session_id(Some(
+            session_id.to_string(),
+        )));
 
         let recall = tool_result_json(
             &super::recall_code_with_context(
                 &ctx.state,
-                RecallCodeParams { project_id: None, ..recall_params(project_id, "no_serving_other_marker") },
+                RecallCodeParams {
+                    project_id: None,
+                    ..recall_params(project_id, "no_serving_other_marker")
+                },
                 context.clone(),
             )
             .await
@@ -2448,17 +2629,29 @@ mod tests {
         let symbols = tool_result_json(
             &super::search_symbols_with_context(
                 &ctx.state,
-                SearchSymbolsParams { project_id: None, ..symbol_params(project_id, "no_serving_other_marker") },
+                SearchSymbolsParams {
+                    project_id: None,
+                    ..symbol_params(project_id, "no_serving_other_marker")
+                },
                 context,
             )
             .await
             .unwrap(),
         );
-        let graph = tool_result_json(&super::symbol_graph(&ctx.state, symbol_graph_params(&other_symbol_id)).await.unwrap());
-        let stats = tool_result_json(
-            &super::get_project_stats(&ctx.state, GetProjectStatsParams { project_id: project_id.to_string() })
+        let graph = tool_result_json(
+            &super::symbol_graph(&ctx.state, symbol_graph_params(&other_symbol_id))
                 .await
                 .unwrap(),
+        );
+        let stats = tool_result_json(
+            &super::get_project_stats(
+                &ctx.state,
+                GetProjectStatsParams {
+                    project_id: project_id.to_string(),
+                },
+            )
+            .await
+            .unwrap(),
         );
 
         for (tool, json) in [
@@ -2470,13 +2663,23 @@ mod tests {
             if tool != "symbol_graph" && tool != "project_info_stats" {
                 assert_eq!(json["summary"]["partial"]["is_partial"], true, "{tool}");
                 assert!(
-                    matches!(json["summary"]["partial"]["reason_code"].as_str(), Some("missing") | Some("no_serving_generation")),
+                    matches!(
+                        json["summary"]["partial"]["reason_code"].as_str(),
+                        Some("missing") | Some("no_serving_generation")
+                    ),
                     "{tool} must expose missing/no_serving_generation reason_code: {json}"
                 );
-                assert_eq!(json["count"].as_u64().or_else(|| json["symbol_count"].as_u64()), Some(0), "{tool}");
+                assert_eq!(
+                    json["count"]
+                        .as_u64()
+                        .or_else(|| json["symbol_count"].as_u64()),
+                    Some(0),
+                    "{tool}"
+                );
             }
             if tool != "symbol_graph" && tool != "project_info_stats" {
-                assert_capability_contract_fields(&ctx, project_id, &json, None, 1, &["missing"]).await;
+                assert_capability_contract_fields(&ctx, project_id, &json, None, 1, &["missing"])
+                    .await;
                 assert!(!json.to_string().contains("no_serving_other_marker"));
             }
             if let Some(project_resolution) = json.get("project_resolution") {
@@ -2490,19 +2693,37 @@ mod tests {
     async fn capability_readiness_contract_interrupted_generation() {
         let ctx = TestContext::new().await;
         let project_id = "capability-readiness-interrupted";
-        let symbol_id = persist_generation_fixture(&ctx, project_id, 1, "prior_serving_marker").await;
+        let symbol_id =
+            persist_generation_fixture(&ctx, project_id, 1, "prior_serving_marker").await;
         persist_generation_fixture(&ctx, project_id, 2, "interrupted_generation_marker").await;
-        ctx.state.storage.set_active_generation(project_id, 1).await.unwrap();
+        ctx.state
+            .storage
+            .set_active_generation(project_id, 1)
+            .await
+            .unwrap();
 
-        for (tool, json) in four_tool_contract_responses(&ctx, project_id, &symbol_id, "prior_serving_marker").await {
+        for (tool, json) in
+            four_tool_contract_responses(&ctx, project_id, &symbol_id, "prior_serving_marker").await
+        {
             if tool != "project_info_stats" {
                 assert_eq!(json["summary"]["partial"]["is_partial"], true, "{tool}");
                 assert!(
-                    matches!(json["summary"]["partial"]["reason_code"].as_str(), Some("stale") | Some("partial") | Some("degraded")),
+                    matches!(
+                        json["summary"]["partial"]["reason_code"].as_str(),
+                        Some("stale") | Some("partial") | Some("degraded")
+                    ),
                     "{tool} must expose interrupted/degraded capability reason_code: {json}"
                 );
             }
-            assert_capability_contract_fields(&ctx, project_id, &json, Some(1), 2, &["stale", "partial", "degraded"]).await;
+            assert_capability_contract_fields(
+                &ctx,
+                project_id,
+                &json,
+                Some(1),
+                2,
+                &["stale", "partial", "degraded"],
+            )
+            .await;
             assert!(!json.to_string().contains("interrupted_generation_marker"));
             if tool != "project_info_stats" && tool != "symbol_graph" {
                 assert_item_freshness(&json, 1, "stale");
@@ -2537,18 +2758,29 @@ mod tests {
             .set_indexing_generation("project", Some(2))
             .await
             .unwrap();
-        assert_eq!(ctx.state.storage.get_serving_metadata("project").await.unwrap().graph, Some(1));
+        assert_eq!(
+            ctx.state
+                .storage
+                .get_serving_metadata("project")
+                .await
+                .unwrap()
+                .graph,
+            Some(1)
+        );
 
         let response = tool_result_json(
             &super::symbol_graph(
                 &ctx.state,
                 SymbolGraphParams {
-                    symbol_id: format!("code_symbols:{}", crate::types::safe_thing::symbol_hash(
-                        "project",
-                        "src/stale_graph_caller.rs",
-                        "stale_graph_caller",
-                        1,
-                    )),
+                    symbol_id: format!(
+                        "code_symbols:{}",
+                        crate::types::safe_thing::symbol_hash(
+                            "project",
+                            "src/stale_graph_caller.rs",
+                            "stale_graph_caller",
+                            1,
+                        )
+                    ),
                     action: "related".to_string(),
                     depth: Some(1),
                     direction: Some("outgoing".to_string()),
@@ -2755,10 +2987,14 @@ mod tests {
             .unwrap(),
         );
 
-        assert_eq!(response["results"], serde_json::Value::Array(vec![]));        assert_eq!(response["count"], 0);
+        assert_eq!(response["results"], serde_json::Value::Array(vec![]));
+        assert_eq!(response["count"], 0);
         assert_eq!(response["summary"]["partial"]["is_partial"], true);
         assert_eq!(response["summary"]["partial"]["reason_code"], "missing");
-        assert_eq!(response["summary"]["partial"]["reason"], "no_serving_generation");
+        assert_eq!(
+            response["summary"]["partial"]["reason"],
+            "no_serving_generation"
+        );
     }
 
     #[tokio::test]
@@ -2917,6 +3153,9 @@ mod tests {
         assert_eq!(recall["summary"]["serving_generation"]["semantic"], 1);
         assert_eq!(recall["summary"]["partial"]["is_partial"], true);
         assert_eq!(recall["summary"]["partial"]["reason_code"], "degraded");
-        assert_eq!(recall["summary"]["fallback_path"], "bm25_lexical_symbol_hydration");
+        assert_eq!(
+            recall["summary"]["fallback_path"],
+            "bm25_lexical_symbol_hydration"
+        );
     }
 }

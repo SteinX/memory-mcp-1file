@@ -1,5 +1,5 @@
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use rmcp::model::CallToolResult;
@@ -12,20 +12,22 @@ use crate::server::params::{
     GetProjectionByLocatorParams, IndexProjectParams, ListProjectsParams,
 };
 use crate::storage::StorageBackend;
+use crate::types::code::{IndexJobError, IndexJobProgress, IndexJobResumeState};
 use crate::types::{
-    derive_project_id, CodeIntelligenceDiagnostic, ContractReasonCode, ExportIdentity, IndexState,
-    IndexJobPhase, IndexJobReasonCode, IndexJobRecord, IndexJobState, IndexStatus,
+    derive_project_id, CodeIntelligenceDiagnostic, ContractReasonCode, ExportIdentity,
+    IndexJobPhase, IndexJobReasonCode, IndexJobRecord, IndexJobState, IndexState, IndexStatus,
     ProjectionLocatorLifecycle, ProjectionLocatorLookup, ProjectionLocatorLookupState,
     ProjectionLocatorRecord,
 };
-use crate::types::code::{IndexJobError, IndexJobProgress, IndexJobResumeState};
 
 use super::super::contracts::{
     assemble_project_projection, collect_project_projection_inputs, export_contract_meta,
     project_info_capability_block, shape_project_projection_graph, summary_collection_response,
-    summary_index_status_response, summary_index_status_response_with_reason, with_surface_guidance,
+    summary_index_status_response, summary_index_status_response_with_reason,
+    with_surface_guidance,
 };
 use super::super::{error_response, success_json};
+use super::{completed_serving_metadata, effective_indexing_generation_for_project};
 
 fn root_diagnostic(
     configured_root: Option<&std::path::Path>,
@@ -190,7 +192,11 @@ fn index_job_phase_str(phase: &IndexJobPhase) -> &'static str {
 }
 
 fn checkpoint_resume_token(phase: &IndexJobPhase, files_done: u64) -> String {
-    format!("ckpt_v1_phase_{}_file_{}", index_job_phase_str(phase), files_done)
+    format!(
+        "ckpt_v1_phase_{}_file_{}",
+        index_job_phase_str(phase),
+        files_done
+    )
 }
 
 fn durable_index_job_record(
@@ -265,7 +271,9 @@ fn index_job_reason_code_str(reason: &IndexJobReasonCode) -> &'static str {
         IndexJobReasonCode::IndexStorageCorrupt => "index_storage_corrupt",
         IndexJobReasonCode::IllegalStateTransition => "illegal_state_transition",
         IndexJobReasonCode::ResumeTokenRequired => "resume_token_required",
-        IndexJobReasonCode::ForceRestartConfirmationRequired => "force_restart_confirmation_required",
+        IndexJobReasonCode::ForceRestartConfirmationRequired => {
+            "force_restart_confirmation_required"
+        }
         IndexJobReasonCode::CancellationRequested => "cancellation_requested",
         IndexJobReasonCode::CleanupRequested => "cleanup_requested",
     }
@@ -274,14 +282,23 @@ fn index_job_reason_code_str(reason: &IndexJobReasonCode) -> &'static str {
 async fn resumable_job_fields(
     state: &Arc<AppState>,
     job: &IndexJobRecord,
-) -> (bool, Option<String>, Option<u64>, Option<u64>, Option<IndexJobPhase>) {
+) -> (
+    bool,
+    Option<String>,
+    Option<u64>,
+    Option<u64>,
+    Option<IndexJobPhase>,
+) {
     match state
         .storage
         .list_file_checkpoints_for_job(&job.project_id, job.target_generation)
         .await
     {
         Ok(checkpoints) => {
-            let files_done = checkpoints.iter().filter(|checkpoint| checkpoint.completed).count() as u64;
+            let files_done = checkpoints
+                .iter()
+                .filter(|checkpoint| checkpoint.completed)
+                .count() as u64;
             if files_done == 0 {
                 return (false, None, Some(0), job.total_files_count, None);
             }
@@ -310,8 +327,10 @@ async fn index_job_json(state: &Arc<AppState>, job: &IndexJobRecord) -> serde_js
         .or_else(|| job.error.as_ref().map(|error| &error.code));
     let (checkpoint_can_resume, checkpoint_token, files_done, files_total, checkpoint_phase) =
         resumable_job_fields(state, job).await;
-    let can_resume = matches!(job.state, IndexJobState::Resumable | IndexJobState::Interrupted | IndexJobState::Failed)
-        && checkpoint_can_resume;
+    let can_resume = matches!(
+        job.state,
+        IndexJobState::Resumable | IndexJobState::Interrupted | IndexJobState::Failed
+    ) && checkpoint_can_resume;
     let resume_token = if can_resume { checkpoint_token } else { None };
     let effective_reason_code = if can_resume {
         Some(IndexJobReasonCode::ResumableInterruptedJob)
@@ -712,7 +731,10 @@ pub async fn index_project(
     let path = std::path::Path::new(request_path);
 
     if !path.exists() {
-        return Ok(error_response(format!("Path does not exist: {}", request_path)));
+        return Ok(error_response(format!(
+            "Path does not exist: {}",
+            request_path
+        )));
     }
 
     let project_id = match derive_project_id(path) {
@@ -943,9 +965,16 @@ pub async fn index_project(
         .indexed_files
         .store(0, std::sync::atomic::Ordering::Relaxed);
     set_monitor_string(&monitor.current_file, "");
-    let previous_status = state.storage.get_index_status(&project_id).await.ok().flatten();
+    let previous_status = state
+        .storage
+        .get_index_status(&project_id)
+        .await
+        .ok()
+        .flatten();
     let resume_job = if resume_requested {
-        let job_id = requested_job_id.as_deref().ok_or_else(|| anyhow::anyhow!("job_id is required when resume=true"))?;
+        let job_id = requested_job_id
+            .as_deref()
+            .ok_or_else(|| anyhow::anyhow!("job_id is required when resume=true"))?;
         match state.storage.get_index_job(&project_id, job_id).await? {
             Some(job) => Some(job),
             None => {
@@ -974,13 +1003,19 @@ pub async fn index_project(
     let structural_generation = resume_job
         .as_ref()
         .map(|job| job.target_generation)
-        .unwrap_or_else(|| previous_status
-        .as_ref()
-        .map(|status| status.structural_generation.saturating_add(1))
-        .unwrap_or(1));
-    let mut durable_job = resume_job.unwrap_or_else(|| durable_index_job_record(&project_id, &canonical_root_path, structural_generation));
+        .unwrap_or_else(|| {
+            previous_status
+                .as_ref()
+                .map(|status| status.structural_generation.saturating_add(1))
+                .unwrap_or(1)
+        });
+    let mut durable_job = resume_job.unwrap_or_else(|| {
+        durable_index_job_record(&project_id, &canonical_root_path, structural_generation)
+    });
     durable_job.state = IndexJobState::Running;
-    durable_job.started_at = durable_job.started_at.or_else(|| Some(crate::types::Datetime::default()));
+    durable_job.started_at = durable_job
+        .started_at
+        .or_else(|| Some(crate::types::Datetime::default()));
     durable_job.updated_at = crate::types::Datetime::default();
     durable_job.reason_code = None;
     durable_job.error = None;
@@ -1001,23 +1036,29 @@ pub async fn index_project(
         state,
         &durable_job,
         read_monitor_optional_string(&monitor.operation_id),
-    ).await;
+    )
+    .await;
 
     // Spawn indexing in background
     let state_clone = state.clone();
     let path_clone = request_path.to_string();
     let project_id_for_cleanup = project_id.clone();
     let durable_job_for_task = durable_job.clone();
-    let filter_config_opt = if params.include_patterns.is_some() || params.exclude_patterns.is_some() {
-        let include = params.include_patterns.unwrap_or_else(|| state.config.code_index.include_patterns.clone());
-        let exclude = params.exclude_patterns.unwrap_or_else(|| state.config.code_index.exclude_patterns.clone());
-        Some(crate::codebase::scanner::IndexFilterConfig {
-            include_patterns: include,
-            exclude_patterns: exclude,
-        })
-    } else {
-        None
-    };
+    let filter_config_opt =
+        if params.include_patterns.is_some() || params.exclude_patterns.is_some() {
+            let include = params
+                .include_patterns
+                .unwrap_or_else(|| state.config.code_index.include_patterns.clone());
+            let exclude = params
+                .exclude_patterns
+                .unwrap_or_else(|| state.config.code_index.exclude_patterns.clone());
+            Some(crate::codebase::scanner::IndexFilterConfig {
+                include_patterns: include,
+                exclude_patterns: exclude,
+            })
+        } else {
+            None
+        };
 
     tokio::spawn(async move {
         if let Some(monitor) = state_clone.progress.get(&project_id_for_cleanup).await {
@@ -1051,8 +1092,7 @@ pub async fn index_project(
                 resume_options,
             )
             .await
-        }
-        {
+        } {
             Ok(status) => {
                 let operation_id = state_clone
                     .progress
@@ -1110,14 +1150,21 @@ pub async fn index_project(
                 let mut failed_job = durable_job_for_task.clone();
                 let checkpoints = state_clone
                     .storage
-                    .list_file_checkpoints_for_job(&project_id_for_cleanup, failed_job.target_generation)
+                    .list_file_checkpoints_for_job(
+                        &project_id_for_cleanup,
+                        failed_job.target_generation,
+                    )
                     .await
                     .unwrap_or_default();
-                let completed_files = checkpoints.iter().filter(|checkpoint| checkpoint.completed).count() as u64;
+                let completed_files = checkpoints
+                    .iter()
+                    .filter(|checkpoint| checkpoint.completed)
+                    .count() as u64;
                 if completed_files > 0 {
                     failed_job.state = IndexJobState::Resumable;
                     failed_job.reason_code = Some(IndexJobReasonCode::ResumableInterruptedJob);
-                    failed_job.resume_token = checkpoint_resume_token(&IndexJobPhase::Parse, completed_files);
+                    failed_job.resume_token =
+                        checkpoint_resume_token(&IndexJobPhase::Parse, completed_files);
                     failed_job.resume = Some(IndexJobResumeState {
                         supported: true,
                         token: Some(failed_job.resume_token.clone()),
@@ -1132,7 +1179,10 @@ pub async fn index_project(
                 failed_job.completed_at = Some(crate::types::Datetime::default());
                 failed_job.completed_files_count = completed_files;
                 failed_job.error = Some(IndexJobError {
-                    code: failed_job.reason_code.clone().unwrap_or(IndexJobReasonCode::Unknown),
+                    code: failed_job
+                        .reason_code
+                        .clone()
+                        .unwrap_or(IndexJobReasonCode::Unknown),
                     message: e.to_string(),
                     retryable: true,
                 });
@@ -1339,25 +1389,22 @@ pub async fn get_index_status(
                 .get_serving_metadata(&project_id)
                 .await
                 .unwrap_or_default();
-    let explicit_indexing_gen = state
-        .storage
-        .get_indexing_generation(&project_id)
-        .await
-        .ok()
-        .flatten();
-    let abandoned_max = state
-        .storage
-        .list_abandoned_generations(&project_id)
-        .await
-        .ok()
-        .and_then(|gens| gens.into_iter().filter(|gen| Some(*gen) != serving_meta.structural).max());
-    let indexing_gen = explicit_indexing_gen.or(abandoned_max).or(serving_meta.structural);
+            let serving_meta = completed_serving_metadata(serving_meta, Some(&status));
+            let (indexing_gen, is_interrupted) = effective_indexing_generation_for_project(
+                state,
+                &project_id,
+                serving_meta.structural,
+                serving_meta.structural,
+                Some(&status),
+            )
+            .await;
             let is_indexing = status.status == crate::types::IndexState::Indexing;
-            let is_interrupted = match (abandoned_max, serving_meta.structural) {
-                (Some(a), Some(s)) => a > s,
-                _ => false,
-            };
-            let capability_block = project_info_capability_block(&serving_meta, indexing_gen, is_indexing, is_interrupted);
+            let capability_block = project_info_capability_block(
+                &serving_meta,
+                indexing_gen,
+                is_indexing,
+                is_interrupted,
+            );
 
             Ok(success_json(json!({
                 "project_id": status.project_id,
@@ -1466,8 +1513,16 @@ pub async fn get_index_status(
             })))
         }
         Ok(None) => {
-            let total_symbols = state.storage.count_symbols(&project_id, None).await.unwrap_or(0);
-            let total_chunks = state.storage.count_chunks(&project_id, None).await.unwrap_or(0);
+            let total_symbols = state
+                .storage
+                .count_symbols(&project_id, None)
+                .await
+                .unwrap_or(0);
+            let total_chunks = state
+                .storage
+                .count_chunks(&project_id, None)
+                .await
+                .unwrap_or(0);
             let indexed_files = state
                 .storage
                 .count_manifest_entries(&project_id)
@@ -1657,9 +1712,7 @@ pub async fn list_projects(
                 let embedded_chunks = 0;
                 let embedded_symbols = 0;
 
-                let status_str = status
-                    .status
-                    .to_string();
+                let status_str = status.status.to_string();
                 match status.status {
                     IndexState::Completed => has_ready = true,
                     IndexState::Indexing | IndexState::EmbeddingPending => has_indexing = true,
@@ -1778,8 +1831,16 @@ pub async fn get_project_stats(
         return Ok(error_response("project_id required for stats action"));
     }
 
-    let total_symbols = state.storage.count_symbols(&project_id, None).await.unwrap_or(0);
-    let total_chunks = state.storage.count_chunks(&project_id, None).await.unwrap_or(0);
+    let total_symbols = state
+        .storage
+        .count_symbols(&project_id, None)
+        .await
+        .unwrap_or(0);
+    let total_chunks = state
+        .storage
+        .count_chunks(&project_id, None)
+        .await
+        .unwrap_or(0);
     let embedded_symbols = state
         .storage
         .count_embedded_symbols(&project_id, None)
@@ -1811,7 +1872,11 @@ pub async fn get_project_stats(
                 })));
             }
 
-            let early_serving = state.storage.get_serving_metadata(&project_id).await.unwrap_or_default();
+            let early_serving = state
+                .storage
+                .get_serving_metadata(&project_id)
+                .await
+                .unwrap_or_default();
 
             let mut status = IndexStatus::new(project_id.clone());
             status.status = if early_serving.structural.is_some() {
@@ -1904,25 +1969,22 @@ pub async fn get_project_stats(
         .get_serving_metadata(&project_id)
         .await
         .unwrap_or_default();
-    let explicit_indexing_gen = state
-        .storage
-        .get_indexing_generation(&project_id)
-        .await
-        .ok()
-        .flatten();
-    let abandoned_max = state
-        .storage
-        .list_abandoned_generations(&project_id)
-        .await
-        .ok()
-        .and_then(|gens| gens.into_iter().filter(|gen| Some(*gen) != serving_meta.structural).max());
-    let indexing_gen = explicit_indexing_gen.or(abandoned_max).or(serving_meta.structural);
+    let serving_meta = completed_serving_metadata(serving_meta, Some(&status));
+    let (indexing_gen, is_interrupted_stats) = effective_indexing_generation_for_project(
+        state,
+        &project_id,
+        serving_meta.structural,
+        serving_meta.structural,
+        Some(&status),
+    )
+    .await;
     let is_indexing_stats = status.status == IndexState::Indexing;
-    let is_interrupted_stats = match (abandoned_max, serving_meta.structural) {
-        (Some(a), Some(s)) => a > s,
-        _ => false,
-    };
-    let capability_block = project_info_capability_block(&serving_meta, indexing_gen, is_indexing_stats, is_interrupted_stats);
+    let capability_block = project_info_capability_block(
+        &serving_meta,
+        indexing_gen,
+        is_indexing_stats,
+        is_interrupted_stats,
+    );
 
     Ok(success_json(json!({
         "project_id": project_id,
@@ -2200,13 +2262,21 @@ pub async fn get_degradation_info(state: &Arc<AppState>) -> Option<serde_json::V
             continue;
         }
 
-        let total_chunks = state.storage.count_chunks(project_id, None).await.unwrap_or(0);
+        let total_chunks = state
+            .storage
+            .count_chunks(project_id, None)
+            .await
+            .unwrap_or(0);
         let embedded_chunks = state
             .storage
             .count_embedded_chunks(project_id, None)
             .await
             .unwrap_or(0);
-        let total_symbols = state.storage.count_symbols(project_id, None).await.unwrap_or(0);
+        let total_symbols = state
+            .storage
+            .count_symbols(project_id, None)
+            .await
+            .unwrap_or(0);
         let embedded_symbols = state
             .storage
             .count_embedded_symbols(project_id, None)
@@ -2272,7 +2342,10 @@ pub async fn cancel_index(
 
     if matches!(
         job.state,
-        IndexJobState::Completed | IndexJobState::Cancelled | IndexJobState::Abandoned | IndexJobState::Failed
+        IndexJobState::Completed
+            | IndexJobState::Cancelled
+            | IndexJobState::Abandoned
+            | IndexJobState::Failed
     ) {
         return Ok(success_json(json!({
             "state": job.state,
@@ -2504,7 +2577,10 @@ mod tests {
         assert_eq!(json["index_job"]["reason_code"], serde_json::Value::Null);
         assert_eq!(json["index_job"]["requires_force"], false);
         assert_eq!(json["index_job"]["requires_confirmation"], false);
-        assert_eq!(json["index_job"]["restart_fallback"], serde_json::Value::Null);
+        assert_eq!(
+            json["index_job"]["restart_fallback"],
+            serde_json::Value::Null
+        );
     }
 
     #[tokio::test]
@@ -2554,9 +2630,15 @@ mod tests {
 
         let json = call_result_json(&result);
         assert_eq!(json["index_job"]["job_id"], job.job_id);
-        assert_eq!(json["background_task"]["operation_id"], format!("idx-{project_id}-active-test"));
+        assert_eq!(
+            json["background_task"]["operation_id"],
+            format!("idx-{project_id}-active-test")
+        );
         assert_eq!(json["index_job"]["operation_id"], serde_json::Value::Null);
-        assert_ne!(json["index_job"]["job_id"], json["background_task"]["operation_id"]);
+        assert_ne!(
+            json["index_job"]["job_id"],
+            json["background_task"]["operation_id"]
+        );
         assert!(json["index_job"]["identity_semantics"]["job_id"]
             .as_str()
             .unwrap()
@@ -2680,8 +2762,8 @@ mod tests {
                 allow_full_restart_fallback: None,
                 force: None,
                 confirm_failed_restart: None,
-            include_patterns: None,
-            exclude_patterns: None,
+                include_patterns: None,
+                exclude_patterns: None,
             },
         )
         .await
@@ -2769,8 +2851,8 @@ mod tests {
                 allow_full_restart_fallback: None,
                 force: Some(true),
                 confirm_failed_restart: None,
-            include_patterns: None,
-            exclude_patterns: None,
+                include_patterns: None,
+                exclude_patterns: None,
             },
         )
         .await
@@ -2942,8 +3024,8 @@ mod tests {
                 allow_full_restart_fallback: None,
                 force: None,
                 confirm_failed_restart: None,
-            include_patterns: None,
-            exclude_patterns: None,
+                include_patterns: None,
+                exclude_patterns: None,
             },
         )
         .await
@@ -2964,8 +3046,8 @@ mod tests {
                 allow_full_restart_fallback: None,
                 force: None,
                 confirm_failed_restart: None,
-            include_patterns: None,
-            exclude_patterns: None,
+                include_patterns: None,
+                exclude_patterns: None,
             },
         )
         .await
@@ -3030,8 +3112,8 @@ mod tests {
                 allow_full_restart_fallback: None,
                 force: Some(true),
                 confirm_failed_restart: None,
-            include_patterns: None,
-            exclude_patterns: None,
+                include_patterns: None,
+                exclude_patterns: None,
             },
         )
         .await
@@ -3072,8 +3154,8 @@ mod tests {
                 allow_full_restart_fallback: None,
                 force: None,
                 confirm_failed_restart: None,
-            include_patterns: None,
-            exclude_patterns: None,
+                include_patterns: None,
+                exclude_patterns: None,
             },
         )
         .await
@@ -3118,8 +3200,8 @@ mod tests {
                 allow_full_restart_fallback: None,
                 force: None,
                 confirm_failed_restart: None,
-            include_patterns: None,
-            exclude_patterns: None,
+                include_patterns: None,
+                exclude_patterns: None,
             },
         )
         .await
@@ -3754,7 +3836,10 @@ mod tests {
         assert!(project["diagnostics"].is_object());
 
         for field in ["chunks", "symbols", "embedded_chunks", "embedded_symbols"] {
-            assert!(project[field].is_u64() || project[field].is_i64(), "{field} must be numeric");
+            assert!(
+                project[field].is_u64() || project[field].is_i64(),
+                "{field} must be numeric"
+            );
         }
     }
 
@@ -3805,11 +3890,19 @@ mod tests {
         data_status.mark_structural_generation_advanced();
         data_status.mark_semantic_generation_caught_up();
         data_status.mark_projection_current();
-        ctx.state.storage.update_index_status(data_status).await.unwrap();
+        ctx.state
+            .storage
+            .update_index_status(data_status)
+            .await
+            .unwrap();
 
         let mut empty_status = IndexStatus::new(empty_project_id.to_string());
         empty_status.root_path = Some("/workspace/list-projects-empty".to_string());
-        ctx.state.storage.update_index_status(empty_status).await.unwrap();
+        ctx.state
+            .storage
+            .update_index_status(empty_status)
+            .await
+            .unwrap();
 
         let result = list_projects(&ctx.state, ListProjectsParams { _placeholder: true })
             .await
@@ -3838,7 +3931,9 @@ mod tests {
 
         for field in ["chunks", "symbols", "embedded_chunks", "embedded_symbols"] {
             assert_eq!(
-                empty_project[field].as_u64().or_else(|| empty_project[field].as_i64().map(|n| n as u64)),
+                empty_project[field]
+                    .as_u64()
+                    .or_else(|| empty_project[field].as_i64().map(|n| n as u64)),
                 Some(0),
                 "{field} must be 0 for empty project"
             );
@@ -3945,7 +4040,10 @@ mod tests {
 
         let json = call_result_json(&result);
         assert_eq!(json["status"], "indexing");
-        assert!(json["capabilities"].is_array(), "capabilities must be an array");
+        assert!(
+            json["capabilities"].is_array(),
+            "capabilities must be an array"
+        );
         assert!(json["serving"].is_object(), "serving must be an object");
         assert_eq!(json["indexing_generation"], 6);
         assert_eq!(json["serving"]["indexing"], 6);
@@ -3956,7 +4054,10 @@ mod tests {
         assert_eq!(bm25_cap["serving_generation"], 5);
         assert_eq!(bm25_cap["reason_code"], "indexing_in_progress");
 
-        let project_info_cap = caps.iter().find(|c| c["capability"] == "project_info").unwrap();
+        let project_info_cap = caps
+            .iter()
+            .find(|c| c["capability"] == "project_info")
+            .unwrap();
         assert_eq!(project_info_cap["freshness"], "missing");
         assert_eq!(project_info_cap["reason_code"], "no_serving_generation");
     }

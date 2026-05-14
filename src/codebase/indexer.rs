@@ -16,7 +16,7 @@ use super::relations::{
     create_symbol_relations, create_symbol_relations_for_generation, detect_containment_references,
     RelationStats,
 };
-use super::scanner::{scan_directory_with_filter, IndexFilterConfig};
+use super::scanner::{is_generated_source_content, scan_directory_with_filter, IndexFilterConfig};
 use super::symbol_index::SymbolIndex;
 
 use crate::embedding::{EmbeddingRequest, EmbeddingTarget};
@@ -24,6 +24,7 @@ use crate::types::code::{CodeChunk, IndexFileCheckpoint, IndexJobPhase, IndexJob
 use crate::types::symbol::{CodeReference, CodeSymbol};
 
 const PARSE_TIMEOUT_SECS: u64 = 30;
+const EMBEDDING_REENQUEUE_YIELD_EVERY: usize = 256;
 
 fn effective_parse_workers(config: &crate::config::CodeIndexConfig) -> usize {
     std::cmp::max(config.parse_workers, 2)
@@ -72,6 +73,117 @@ struct ParsedFile {
     skipped: bool,
 }
 
+fn code_chunk_embedding_request(id: String, content: String) -> EmbeddingRequest {
+    EmbeddingRequest {
+        text: content,
+        responder: None,
+        target: Some(EmbeddingTarget::Chunk(id)),
+        retry_count: 0,
+    }
+}
+
+async fn enqueue_embedding_for_backfill(
+    state: &Arc<AppState>,
+    project_id: &str,
+    request: EmbeddingRequest,
+    enqueued: &mut u64,
+    failed: &mut u64,
+) {
+    let (target_kind, target_id) = match &request.target {
+        Some(EmbeddingTarget::Chunk(id)) => ("chunk", id.clone()),
+        Some(EmbeddingTarget::Symbol(id)) => ("symbol", id.clone()),
+        None => ("adhoc", String::new()),
+    };
+
+    match state.embedding_queue.send(request).await {
+        Ok(()) => {
+            *enqueued += 1;
+        }
+        Err(error) => {
+            *failed += 1;
+            if *failed == 1 || failed.is_multiple_of(1000) {
+                tracing::warn!(
+                    project_id = %project_id,
+                    target_kind,
+                    target_id = %target_id,
+                    failed = *failed,
+                    error = %error,
+                    "Failed to enqueue post-publish embedding backfill item"
+                );
+            }
+        }
+    }
+}
+
+async fn enqueue_generation_embeddings_after_publish(state: Arc<AppState>, project_id: String) {
+    let started = Instant::now();
+    let mut enqueued = 0u64;
+    let mut failed = 0u64;
+
+    let unembedded_chunks = match state.storage.get_unembedded_chunks(&project_id).await {
+        Ok(rows) => rows,
+        Err(error) => {
+            tracing::warn!(
+                project_id = %project_id,
+                error = %error,
+                "Failed to load unembedded chunks for post-publish backfill"
+            );
+            return;
+        }
+    };
+    for (index, (id, content)) in unembedded_chunks.into_iter().enumerate() {
+        enqueue_embedding_for_backfill(
+            &state,
+            &project_id,
+            code_chunk_embedding_request(id, content),
+            &mut enqueued,
+            &mut failed,
+        )
+        .await;
+        if index > 0 && index.is_multiple_of(EMBEDDING_REENQUEUE_YIELD_EVERY) {
+            tokio::task::yield_now().await;
+        }
+    }
+
+    let unembedded_symbols = match state.storage.get_unembedded_symbols(&project_id).await {
+        Ok(rows) => rows,
+        Err(error) => {
+            tracing::warn!(
+                project_id = %project_id,
+                error = %error,
+                "Failed to load unembedded symbols for post-publish backfill"
+            );
+            return;
+        }
+    };
+    for (index, (id, text)) in unembedded_symbols.into_iter().enumerate() {
+        enqueue_embedding_for_backfill(
+            &state,
+            &project_id,
+            EmbeddingRequest {
+                text,
+                responder: None,
+                target: Some(EmbeddingTarget::Symbol(id)),
+                retry_count: 0,
+            },
+            &mut enqueued,
+            &mut failed,
+        )
+        .await;
+        if index > 0 && index.is_multiple_of(EMBEDDING_REENQUEUE_YIELD_EVERY) {
+            tokio::task::yield_now().await;
+        }
+    }
+
+    tracing::info!(
+        project_id = %project_id,
+        enqueued,
+        failed,
+        queue_capacity = state.embedding_queue.channel_capacity(),
+        elapsed_ms = started.elapsed().as_millis(),
+        "Post-publish embedding backfill queued"
+    );
+}
 
 fn emit_index_timing(
     project_id: &str,
@@ -134,7 +246,8 @@ pub(crate) async fn index_project_after_admission(
     state: Arc<AppState>,
     project_path: &Path,
 ) -> Result<IndexStatus> {
-    index_project_after_admission_with_resume(state, project_path, IndexResumeOptions::default()).await
+    index_project_after_admission_with_resume(state, project_path, IndexResumeOptions::default())
+        .await
 }
 
 pub(crate) async fn index_project_after_admission_with_resume(
@@ -146,7 +259,13 @@ pub(crate) async fn index_project_after_admission_with_resume(
         include_patterns: state.config.code_index.include_patterns.clone(),
         exclude_patterns: state.config.code_index.exclude_patterns.clone(),
     };
-    index_project_after_admission_with_resume_and_filter(state, project_path, resume_options, filter_config).await
+    index_project_after_admission_with_resume_and_filter(
+        state,
+        project_path,
+        resume_options,
+        filter_config,
+    )
+    .await
 }
 
 pub(crate) async fn index_project_after_admission_with_resume_and_filter(
@@ -179,7 +298,14 @@ async fn index_project_after_admission_with_resume_and_filter_inner(
     let project_id_clone = project_id.clone();
 
     let handle = tokio::spawn(async move {
-        do_index_project(state_clone, &project_path_clone, &project_id_clone, resume_options, filter_config).await
+        do_index_project(
+            state_clone,
+            &project_path_clone,
+            &project_id_clone,
+            resume_options,
+            filter_config,
+        )
+        .await
     });
 
     tracing::info!(
@@ -419,12 +545,8 @@ async fn record_bm25_rebuild_failure_if_current(
     let mut failed_status = status;
     failed_status.status = IndexState::Failed;
     failed_status.error_message = Some(message.clone());
-    let _ = finalize_index_status_if_current(
-        state,
-        failed_status,
-        active_structural_generation,
-    )
-    .await;
+    let _ =
+        finalize_index_status_if_current(state, failed_status, active_structural_generation).await;
     crate::AppError::Indexing(message)
 }
 
@@ -445,7 +567,9 @@ async fn rebuild_bm25_and_finalize_index_status(
         )
         .await
     {
-        Ok(_) => finalize_index_status_if_current(state, status, active_structural_generation).await,
+        Ok(_) => {
+            finalize_index_status_if_current(state, status, active_structural_generation).await
+        }
         Err(error) => Err(record_bm25_rebuild_failure_if_current(
             state,
             project_id,
@@ -481,7 +605,10 @@ async fn promote_index_generation_and_cleanup(
         .storage
         .set_serving_generation(project_id, CapabilityKind::Graph, target_generation)
         .await?;
-    state.storage.set_indexing_generation(project_id, None).await?;
+    state
+        .storage
+        .set_indexing_generation(project_id, None)
+        .await?;
     emit_index_timing(
         project_id,
         "promote",
@@ -567,7 +694,9 @@ async fn prepare_file_checkpoint_context(
 ) -> Result<Option<FileCheckpointContext>> {
     let job_id = if resume_options.resume {
         resume_options.job_id.clone().ok_or_else(|| {
-            crate::AppError::Indexing("resume_token_required: job_id is required for checkpoint resume".into())
+            crate::AppError::Indexing(
+                "resume_token_required: job_id is required for checkpoint resume".into(),
+            )
         })?
     } else {
         state
@@ -596,10 +725,14 @@ async fn prepare_file_checkpoint_context(
         })?;
         if checkpoints.is_empty() {
             return Err(crate::AppError::Indexing(
-                "checkpoint_generation_missing: no file checkpoints exist for requested resume".into(),
+                "checkpoint_generation_missing: no file checkpoints exist for requested resume"
+                    .into(),
             ));
         }
-        let files_done = checkpoints.iter().filter(|checkpoint| checkpoint.completed).count() as u64;
+        let files_done = checkpoints
+            .iter()
+            .filter(|checkpoint| checkpoint.completed)
+            .count() as u64;
         let expected_parse = checkpoint_resume_token(&IndexJobPhase::Parse, files_done);
         let expected_embed = checkpoint_resume_token(&IndexJobPhase::Embed, files_done);
         if token != expected_parse && token != expected_embed {
@@ -769,9 +902,11 @@ async fn do_index_project(
     tracing::info!(project_id = %project_id, phase = "file_enumeration_started", "Project file enumeration started");
     let project_path_for_scan = project_path.to_path_buf();
     let scan_started = Instant::now();
-    let files = tokio::task::spawn_blocking(move || scan_directory_with_filter(&project_path_for_scan, &compiled_filter))
-        .await
-        .map_err(|e| crate::AppError::Internal(format!("scan_directory panicked: {e}").into()))??;
+    let files = tokio::task::spawn_blocking(move || {
+        scan_directory_with_filter(&project_path_for_scan, &compiled_filter)
+    })
+    .await
+    .map_err(|e| crate::AppError::Internal(format!("scan_directory panicked: {e}").into()))??;
     tracing::info!(project_id = %project_id, phase = "file_enumeration_completed", total_files = files.len(), "Project file enumeration completed");
     status.total_files = files.len() as u32;
     tracing::info!(
@@ -953,23 +1088,9 @@ async fn run_legacy_index_pipeline(
                         status.failed_files.len() as u64,
                     );
 
-                    for (id, chunk) in results {
-                        let enqueue_started = Instant::now();
-                        if let Err(e) = state
-                            .embedding_queue
-                            .send(EmbeddingRequest {
-                                text: chunk.content,
-                                responder: None,
-                                target: Some(EmbeddingTarget::Chunk(id.clone())),
-                                retry_count: 0,
-                            })
-                            .await
-                        {
-                            tracing::warn!(chunk_id = %id, error = %e, "Failed to enqueue chunk embedding");
-                        }
-                        embedding_enqueue_elapsed_ms += enqueue_started.elapsed().as_millis();
-                        embeddings_enqueued += 1;
-                    }
+                    let enqueue_started = Instant::now();
+                    embedding_enqueue_elapsed_ms += enqueue_started.elapsed().as_millis();
+                    embeddings_enqueued += results.len() as u64;
                 }
             }
 
@@ -1011,27 +1132,9 @@ async fn run_legacy_index_pipeline(
                                 (total_relation_stats.created + total_relation_stats.failed) as u64,
                                 status.failed_files.len() as u64,
                             );
-                            for (id, sym) in ids.iter().zip(batch.iter()) {
-                                let embed_text = sym
-                                    .signature
-                                    .clone()
-                                    .unwrap_or_else(|| format!("{} {}", sym.symbol_type, sym.name));
-                                let enqueue_started = Instant::now();
-                                if let Err(e) = state
-                                    .embedding_queue
-                                    .send(EmbeddingRequest {
-                                        text: embed_text,
-                                        responder: None,
-                                        target: Some(EmbeddingTarget::Symbol(id.clone())),
-                                        retry_count: 0,
-                                    })
-                                    .await
-                                {
-                                    tracing::warn!(symbol_id = %id, error = %e, "Failed to enqueue symbol embedding");
-                                }
-                                embedding_enqueue_elapsed_ms += enqueue_started.elapsed().as_millis();
-                                embeddings_enqueued += 1;
-                            }
+                            let enqueue_started = Instant::now();
+                            embedding_enqueue_elapsed_ms += enqueue_started.elapsed().as_millis();
+                            embeddings_enqueued += ids.len() as u64;
                         }
                         Err(e) => {
                             tracing::error!(
@@ -1096,10 +1199,11 @@ async fn run_legacy_index_pipeline(
     }
 
     for file_path in &files {
-        if checkpoint_context
-            .as_ref()
-            .is_some_and(|context| context.completed_relative_paths.contains(&checkpoint_relative_path(file_path)))
-        {
+        if checkpoint_context.as_ref().is_some_and(|context| {
+            context
+                .completed_relative_paths
+                .contains(&checkpoint_relative_path(file_path))
+        }) {
             status.indexed_files += 1;
             monitor
                 .indexed_files
@@ -1185,6 +1289,38 @@ async fn run_legacy_index_pipeline(
                 continue;
             }
         };
+
+        if is_generated_source_content(&content) {
+            let read_hash_elapsed = read_hash_started.elapsed().as_millis();
+            file_read_hash_elapsed_ms += read_hash_elapsed;
+            tracing::debug!(path = ?file_path, "Skipping generated source file");
+            status.indexed_files += 1;
+            monitor
+                .indexed_files
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            upsert_file_checkpoint_after_file(
+                &state,
+                checkpoint_context.as_ref(),
+                project_id,
+                file_path,
+                None,
+                IndexJobPhase::Parse,
+                0,
+                0,
+            )
+            .await?;
+            emit_index_timing(
+                project_id,
+                "file_read_hash",
+                read_hash_elapsed,
+                files_read,
+                status.total_chunks as u64,
+                status.total_symbols as u64,
+                (total_relation_stats.created + total_relation_stats.failed) as u64,
+                status.failed_files.len() as u64,
+            );
+            continue;
+        }
 
         // Skip massive files to prevent OOM/TreeSitter crashes (e.g. giant bundled JS or Dart files)
         if content.len() > 1_000_000 {
@@ -1410,20 +1546,9 @@ async fn run_legacy_index_pipeline(
             status.failed_files.len() as u64,
         );
 
-        for (id, chunk) in results {
-            let enqueue_started = Instant::now();
-            let _ = state
-                .embedding_queue
-                .send(EmbeddingRequest {
-                    text: chunk.content,
-                    responder: None,
-                    target: Some(EmbeddingTarget::Chunk(id)),
-                    retry_count: 0,
-                })
-                .await;
-            embedding_enqueue_elapsed_ms += enqueue_started.elapsed().as_millis();
-            embeddings_enqueued += 1;
-        }
+        let enqueue_started = Instant::now();
+        embedding_enqueue_elapsed_ms += enqueue_started.elapsed().as_millis();
+        embeddings_enqueued += results.len() as u64;
     }
 
     if !symbol_buffer.is_empty() {
@@ -1449,24 +1574,9 @@ async fn run_legacy_index_pipeline(
             status.failed_files.len() as u64,
         );
 
-        for (id, sym) in ids.iter().zip(batch.iter()) {
-            let embed_text = sym
-                .signature
-                .clone()
-                .unwrap_or_else(|| format!("{} {}", sym.symbol_type, sym.name));
-            let enqueue_started = Instant::now();
-            let _ = state
-                .embedding_queue
-                .send(EmbeddingRequest {
-                    text: embed_text,
-                    responder: None,
-                    target: Some(EmbeddingTarget::Symbol(id.clone())),
-                    retry_count: 0,
-                })
-                .await;
-            embedding_enqueue_elapsed_ms += enqueue_started.elapsed().as_millis();
-            embeddings_enqueued += 1;
-        }
+        let enqueue_started = Instant::now();
+        embedding_enqueue_elapsed_ms += enqueue_started.elapsed().as_millis();
+        embeddings_enqueued += ids.len() as u64;
     }
 
     emit_index_timing(
@@ -1618,6 +1728,13 @@ async fn run_legacy_index_pipeline(
 
     tracing::info!(project_id = %project_id, phase = "final_persistence_completed", status = %status.status, "One-shot code index task completed");
 
+    if status.status == IndexState::EmbeddingPending {
+        tokio::spawn(enqueue_generation_embeddings_after_publish(
+            state.clone(),
+            project_id.to_string(),
+        ));
+    }
+
     let metrics = IndexMetrics {
         file_read_hash_elapsed_ms,
         parse_chunk_elapsed_ms,
@@ -1690,7 +1807,11 @@ async fn read_file_for_staged(
         .map(|meta| meta.len() as usize)
         .unwrap_or(1)
         .clamp(1, max_inflight_bytes.max(1).min(u32::MAX as usize));
-    let byte_permits_for_file = match byte_permits.clone().acquire_many_owned(size_hint as u32).await {
+    let byte_permits_for_file = match byte_permits
+        .clone()
+        .acquire_many_owned(size_hint as u32)
+        .await
+    {
         Ok(permit) => Some(permit),
         Err(e) => {
             return ParsedFile {
@@ -1711,6 +1832,21 @@ async fn read_file_for_staged(
 
     match fs::read_to_string(&path).await {
         Ok(content) => {
+            if is_generated_source_content(&content) {
+                return ParsedFile {
+                    seq,
+                    path,
+                    path_str,
+                    file_hash: None,
+                    chunks: vec![],
+                    symbols: vec![],
+                    references: vec![],
+                    read_elapsed_ms: read_hash_started.elapsed().as_millis(),
+                    parse_elapsed_ms: 0,
+                    error: None,
+                    skipped: true,
+                };
+            }
             if content.len() > 1_000_000 {
                 return ParsedFile {
                     seq,
@@ -1727,7 +1863,19 @@ async fn read_file_for_staged(
                 };
             }
             let file_hash = blake3::hash(content.as_bytes()).to_hex().to_string();
-            parse_file_for_staged(seq, path, path_str, project_id, active_structural_generation, content, file_hash, read_hash_started.elapsed().as_millis(), byte_permits_for_file, parse_worker_permits).await
+            parse_file_for_staged(
+                seq,
+                path,
+                path_str,
+                project_id,
+                active_structural_generation,
+                content,
+                file_hash,
+                read_hash_started.elapsed().as_millis(),
+                byte_permits_for_file,
+                parse_worker_permits,
+            )
+            .await
         }
         Err(e) => ParsedFile {
             seq,
@@ -1793,7 +1941,12 @@ async fn parse_file_for_staged(
                 symbol
             })
             .collect();
-        (chunks, symbols, references, parse_started.elapsed().as_millis())
+        (
+            chunks,
+            symbols,
+            references,
+            parse_started.elapsed().as_millis(),
+        )
     });
 
     match tokio::time::timeout(Duration::from_secs(PARSE_TIMEOUT_SECS), join).await {
@@ -1853,9 +2006,16 @@ async fn flush_staged_chunks(
     let batch_len = batch.len() as u64;
     let _permit = state.db_semaphore.acquire().await;
     let chunk_write_started = Instant::now();
-    let results = state.storage.create_code_chunks_batch(batch).await.map_err(|e| {
-        crate::AppError::Internal(format!("failed to persist staged code chunks for project {project_id}: {e}").into())
-    })?;
+    let results = state
+        .storage
+        .create_code_chunks_batch(batch)
+        .await
+        .map_err(|e| {
+            crate::AppError::Internal(
+                format!("failed to persist staged code chunks for project {project_id}: {e}")
+                    .into(),
+            )
+        })?;
     let chunk_write_elapsed = chunk_write_started.elapsed().as_millis();
     metrics.chunk_db_write_elapsed_ms += chunk_write_elapsed;
     metrics.chunks_written += batch_len;
@@ -1870,23 +2030,9 @@ async fn flush_staged_chunks(
         status.failed_files.len() as u64,
     );
 
-    for (id, chunk) in results {
-        let enqueue_started = Instant::now();
-        if let Err(e) = state
-            .embedding_queue
-            .send(EmbeddingRequest {
-                text: chunk.content,
-                responder: None,
-                target: Some(EmbeddingTarget::Chunk(id.clone())),
-                retry_count: 0,
-            })
-            .await
-        {
-            tracing::warn!(chunk_id = %id, error = %e, "Failed to enqueue chunk embedding");
-        }
-        metrics.embedding_enqueue_elapsed_ms += enqueue_started.elapsed().as_millis();
-        metrics.embeddings_enqueued += 1;
-    }
+    let enqueue_started = Instant::now();
+    metrics.embedding_enqueue_elapsed_ms += enqueue_started.elapsed().as_millis();
+    metrics.embeddings_enqueued += results.len() as u64;
 
     Ok(())
 }
@@ -1905,7 +2051,10 @@ async fn flush_staged_symbols(
     let batch_len = batch.len() as u64;
     let _permit = state.db_semaphore.acquire().await;
     let symbol_write_started = Instant::now();
-    let ids = state.storage.create_code_symbols_batch(batch.clone()).await?;
+    let ids = state
+        .storage
+        .create_code_symbols_batch(batch.clone())
+        .await?;
     let symbol_write_elapsed = symbol_write_started.elapsed().as_millis();
     metrics.symbol_db_write_elapsed_ms += symbol_write_elapsed;
     metrics.symbols_written += batch_len;
@@ -1920,27 +2069,9 @@ async fn flush_staged_symbols(
         status.failed_files.len() as u64,
     );
 
-    for (id, sym) in ids.iter().zip(batch.iter()) {
-        let embed_text = sym
-            .signature
-            .clone()
-            .unwrap_or_else(|| format!("{} {}", sym.symbol_type, sym.name));
-        let enqueue_started = Instant::now();
-        if let Err(e) = state
-            .embedding_queue
-            .send(EmbeddingRequest {
-                text: embed_text,
-                responder: None,
-                target: Some(EmbeddingTarget::Symbol(id.clone())),
-                retry_count: 0,
-            })
-            .await
-        {
-            tracing::warn!(symbol_id = %id, error = %e, "Failed to enqueue symbol embedding");
-        }
-        metrics.embedding_enqueue_elapsed_ms += enqueue_started.elapsed().as_millis();
-        metrics.embeddings_enqueued += 1;
-    }
+    let enqueue_started = Instant::now();
+    metrics.embedding_enqueue_elapsed_ms += enqueue_started.elapsed().as_millis();
+    metrics.embeddings_enqueued += ids.len() as u64;
 
     Ok(())
 }
@@ -2152,6 +2283,13 @@ async fn finish_full_index(
 
     tracing::info!(project_id = %project_id, phase = "final_persistence_completed", status = %status.status, "One-shot code index task completed");
 
+    if status.status == IndexState::EmbeddingPending {
+        tokio::spawn(enqueue_generation_embeddings_after_publish(
+            state.clone(),
+            project_id.to_string(),
+        ));
+    }
+
     metrics.status_update_elapsed_ms = status_update_elapsed_ms;
     Ok((status, metrics))
 }
@@ -2195,14 +2333,17 @@ async fn run_staged_index_pipeline(
     let read_worker_permits = Arc::new(tokio::sync::Semaphore::new(config.read_workers));
     let parse_worker_permits = Arc::new(tokio::sync::Semaphore::new(config.parse_workers));
     let file_permits = Arc::new(tokio::sync::Semaphore::new(config.max_inflight_files));
-    let byte_permits = Arc::new(tokio::sync::Semaphore::new(config.max_inflight_bytes.min(u32::MAX as usize)));
+    let byte_permits = Arc::new(tokio::sync::Semaphore::new(
+        config.max_inflight_bytes.min(u32::MAX as usize),
+    ));
     let mut parse_set: tokio::task::JoinSet<ParsedFile> = tokio::task::JoinSet::new();
 
     for (seq, file_path) in files.iter().cloned().enumerate() {
-        if checkpoint_context
-            .as_ref()
-            .is_some_and(|context| context.completed_relative_paths.contains(&checkpoint_relative_path(&file_path)))
-        {
+        if checkpoint_context.as_ref().is_some_and(|context| {
+            context
+                .completed_relative_paths
+                .contains(&checkpoint_relative_path(&file_path))
+        }) {
             pending.insert(
                 seq,
                 ParsedFile {
@@ -2244,9 +2385,14 @@ async fn run_staged_index_pipeline(
         // Check for cancellation request at per-file boundary (every 10 files to reduce DB load)
         if seq % 10 == 0 {
             if let Ok(jobs) = state.storage.list_index_jobs_for_project(project_id).await {
-                if jobs.iter().any(|j| j.state == IndexJobState::CancelRequested) {
+                if jobs
+                    .iter()
+                    .any(|j| j.state == IndexJobState::CancelRequested)
+                {
                     tracing::info!(project_id = %project_id, seq = seq, "Cancellation requested — stopping indexer");
-                    return Err(crate::AppError::Indexing("indexing cancelled by request".into()));
+                    return Err(crate::AppError::Indexing(
+                        "indexing cancelled by request".into(),
+                    ));
                 }
             }
         }
@@ -2383,7 +2529,10 @@ async fn run_staged_index_pipeline(
     )
     .await?;
     if !hash_buffer.is_empty() {
-        let _ = state.storage.set_file_hashes_batch(project_id, &hash_buffer).await;
+        let _ = state
+            .storage
+            .set_file_hashes_batch(project_id, &hash_buffer)
+            .await;
     }
     flush_staged_relations(
         &state,
@@ -2506,7 +2655,10 @@ async fn drain_ready_staged_results(
             hash_buffer.push((parsed.path_str.clone(), file_hash));
             if hash_buffer.len() >= config.commit_batch_size {
                 let batch = std::mem::take(hash_buffer);
-                let _ = state.storage.set_file_hashes_batch(project_id, &batch).await;
+                let _ = state
+                    .storage
+                    .set_file_hashes_batch(project_id, &batch)
+                    .await;
             }
         }
 
@@ -2654,13 +2806,7 @@ pub async fn incremental_index(
                 result.new_chunks.push(chunk.clone());
                 let _ = state
                     .embedding_queue
-                    .send(EmbeddingRequest {
-                        text: chunk.content,
-                        responder: None,
-                        target: Some(EmbeddingTarget::Chunk(id)),
-                        retry_count: 0,
-                    })
-                    .await;
+                    .try_send(code_chunk_embedding_request(id, chunk.content));
             }
 
             if !symbols.is_empty() {
@@ -2678,17 +2824,16 @@ pub async fn incremental_index(
                 };
 
                 for (id, sym) in created_ids.iter().zip(symbols.iter()) {
-                    if let Some(sig) = &sym.signature {
-                        let _ = state
-                            .embedding_queue
-                            .send(EmbeddingRequest {
-                                text: sig.clone(),
-                                responder: None,
-                                target: Some(EmbeddingTarget::Symbol(id.clone())),
-                                retry_count: 0,
-                            })
-                            .await;
-                    }
+                    let text = sym
+                        .signature
+                        .clone()
+                        .unwrap_or_else(|| format!("{} {}", sym.symbol_type, sym.name));
+                    let _ = state.embedding_queue.try_send(EmbeddingRequest {
+                        text,
+                        responder: None,
+                        target: Some(EmbeddingTarget::Symbol(id.clone())),
+                        retry_count: 0,
+                    });
                 }
             }
 
@@ -2772,6 +2917,20 @@ pub async fn incremental_index(
                 continue;
             }
         };
+
+        if is_generated_source_content(&content) {
+            let _ = state
+                .storage
+                .delete_chunks_by_path(project_id, &path_str)
+                .await;
+            let _ = state
+                .storage
+                .delete_symbols_by_path(project_id, &path_str)
+                .await;
+            let _ = state.storage.delete_file_hash(project_id, &path_str).await;
+            result.deleted_files.push(path_str);
+            continue;
+        }
 
         let new_hash = blake3::hash(content.as_bytes()).to_hex().to_string();
 
@@ -3047,7 +3206,11 @@ mod tests {
         previous.total_symbols = 3;
         previous.mark_structural_generation_advanced();
         previous.mark_semantic_generation_caught_up();
-        ctx.state.storage.update_index_status(previous).await.unwrap();
+        ctx.state
+            .storage
+            .update_index_status(previous)
+            .await
+            .unwrap();
         ctx.state
             .indexing_projects
             .lock()
@@ -3126,7 +3289,11 @@ mod tests {
         previous.total_symbols = 1;
         previous.mark_structural_generation_advanced();
         previous.mark_semantic_generation_caught_up();
-        ctx.state.storage.update_index_status(previous).await.unwrap();
+        ctx.state
+            .storage
+            .update_index_status(previous)
+            .await
+            .unwrap();
         ctx.state
             .indexing_projects
             .lock()
@@ -3498,7 +3665,10 @@ mod tests {
                 "src/lib.rs",
                 "pub mod utils;\npub fn alpha() -> i32 { utils::beta() }\n",
             ),
-            ("src/utils.rs", "pub fn beta() -> i32 { 7 }\nfn hidden() {}\n"),
+            (
+                "src/utils.rs",
+                "pub fn beta() -> i32 { 7 }\nfn hidden() {}\n",
+            ),
             ("src/model.rs", "pub struct Model { pub value: i32 }\n"),
         ];
 
@@ -3612,10 +3782,15 @@ mod tests {
         std::fs::write(project_dir.join("c.rs"), "pub fn gamma() -> i32 { 11 }\n").unwrap();
 
         let project_id = derive_project_id(&project_dir).unwrap();
-        let mut status = prepare_started_index_status(&project_id, &project_dir, None, vec![], vec![]);
+        let mut status =
+            prepare_started_index_status(&project_id, &project_dir, None, vec![], vec![]);
         status.total_files = 3;
         let active_structural_generation = status.structural_generation;
-        ctx.state.storage.update_index_status(status.clone()).await.unwrap();
+        ctx.state
+            .storage
+            .update_index_status(status.clone())
+            .await
+            .unwrap();
 
         let (status, _metrics) = run_staged_index_pipeline(
             ctx.state.clone(),
@@ -3686,14 +3861,15 @@ mod tests {
         assert_eq!(stored.status, IndexState::Failed);
         assert_eq!(stored.structural_generation, 1);
         assert_eq!(stored.semantic_generation, 0);
-        assert_eq!(stored.structural_state, crate::types::StructuralState::Failed);
-        assert!(
-            stored
-                .error_message
-                .as_deref()
-                .unwrap_or_default()
-                .contains("bm25_rebuild_failed")
+        assert_eq!(
+            stored.structural_state,
+            crate::types::StructuralState::Failed
         );
+        assert!(stored
+            .error_message
+            .as_deref()
+            .unwrap_or_default()
+            .contains("bm25_rebuild_failed"));
     }
 
     #[tokio::test]
@@ -3717,7 +3893,9 @@ mod tests {
             .unwrap();
         }
 
-        let status = index_project(ctx.state.clone(), &project_dir).await.unwrap();
+        let status = index_project(ctx.state.clone(), &project_dir)
+            .await
+            .unwrap();
 
         assert_eq!(status.status, IndexState::EmbeddingPending);
         assert_eq!(status.total_files, 8);
@@ -3749,10 +3927,15 @@ mod tests {
         std::fs::write(project_dir.join("z.rs"), "pub fn second() -> i32 { 2 }\n").unwrap();
 
         let project_id = derive_project_id(&project_dir).unwrap();
-        let mut status = prepare_started_index_status(&project_id, &project_dir, None, vec![], vec![]);
+        let mut status =
+            prepare_started_index_status(&project_id, &project_dir, None, vec![], vec![]);
         status.total_files = 3;
         let active_structural_generation = status.structural_generation;
-        ctx.state.storage.update_index_status(status.clone()).await.unwrap();
+        ctx.state
+            .storage
+            .update_index_status(status.clone())
+            .await
+            .unwrap();
 
         let (status, _metrics) = run_staged_index_pipeline(
             ctx.state.clone(),
@@ -3768,8 +3951,8 @@ mod tests {
             ],
             None,
         )
-            .await
-            .unwrap();
+        .await
+        .unwrap();
 
         assert_eq!(status.status, IndexState::EmbeddingPending);
         assert_eq!(status.total_files, 3);
@@ -3802,7 +3985,9 @@ mod tests {
         let large_content = format!("pub fn huge() {{}}\n//{}\n", "x".repeat(1_000_001));
         std::fs::write(project_dir.join("huge.rs"), large_content).unwrap();
 
-        let status = index_project(ctx.state.clone(), &project_dir).await.unwrap();
+        let status = index_project(ctx.state.clone(), &project_dir)
+            .await
+            .unwrap();
 
         assert_eq!(status.status, IndexState::EmbeddingPending);
         assert_eq!(status.total_files, 1);
@@ -3828,6 +4013,75 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn indexing_skips_protoc_generated_java_without_blocking_serving_generation() {
+        let mut config = staged_config_for_test();
+        config.commit_batch_size = 1;
+        config.max_inflight_files = 1;
+        config.max_inflight_bytes = 1024;
+        let ctx = TestContext::new_with_code_index_config(config).await;
+        let project_dir = ctx._temp_dir.path().join("protoc-generated-java-skip");
+        let generated_dir = project_dir.join("android/lib_sdk_proto/src/main/java/event");
+        fs::create_dir_all(project_dir.join("src")).unwrap();
+        fs::create_dir_all(&generated_dir).unwrap();
+        fs::write(
+            project_dir.join("src/main.rs"),
+            "pub fn searchable_symbol() -> i32 { 1 }\n",
+        )
+        .unwrap();
+        fs::write(
+            generated_dir.join("Event.java"),
+            format!(
+                "// Generated by the protocol buffer compiler.  DO NOT EDIT!\n// source: event.proto\npublic final class Event {{}}\n// {}\n",
+                "x".repeat(1_100_000)
+            ),
+        )
+        .unwrap();
+
+        let status = index_project(ctx.state.clone(), &project_dir)
+            .await
+            .unwrap();
+
+        assert_eq!(status.status, IndexState::EmbeddingPending);
+        assert_eq!(status.total_files, 1);
+        assert_eq!(status.indexed_files, 1);
+        assert_eq!(status.total_chunks, 1);
+        assert_eq!(status.total_symbols, 1);
+        assert!(status.failed_files.is_empty());
+
+        let active_generation = ctx
+            .state
+            .storage
+            .get_active_generation(&status.project_id)
+            .await
+            .unwrap();
+        assert_eq!(active_generation, Some(status.structural_generation));
+        let serving_bm25 = ctx
+            .state
+            .storage
+            .get_serving_generation(&status.project_id, CapabilityKind::Bm25)
+            .await
+            .unwrap();
+        let serving_symbols = ctx
+            .state
+            .storage
+            .get_serving_generation(&status.project_id, CapabilityKind::Symbols)
+            .await
+            .unwrap();
+        assert_eq!(serving_bm25, Some(status.structural_generation));
+        assert_eq!(serving_symbols, Some(status.structural_generation));
+
+        let symbols = ctx
+            .state
+            .storage
+            .get_project_symbols(&status.project_id, active_generation)
+            .await
+            .unwrap();
+        let symbol_names: HashSet<String> = symbols.into_iter().map(|symbol| symbol.name).collect();
+        assert!(symbol_names.contains("searchable_symbol"));
+        assert!(!symbol_names.contains("Event"));
+    }
+
+    #[tokio::test]
     async fn deterministic_repeated_indexing_has_stable_counts_and_locators() {
         let ctx = TestContext::new_with_code_index_config(staged_config_for_test()).await;
         let project_dir = ctx._temp_dir.path().join("deterministic-reindex");
@@ -3837,9 +4091,15 @@ mod tests {
             "pub fn alpha() -> i32 { beta() }\nfn beta() -> i32 { 7 }\n",
         )
         .unwrap();
-        fs::write(project_dir.join("model.rs"), "pub struct Model { pub v: i32 }\n").unwrap();
+        fs::write(
+            project_dir.join("model.rs"),
+            "pub struct Model { pub v: i32 }\n",
+        )
+        .unwrap();
 
-        let status1 = index_project(ctx.state.clone(), &project_dir).await.unwrap();
+        let status1 = index_project(ctx.state.clone(), &project_dir)
+            .await
+            .unwrap();
         let chunks1 = ctx
             .state
             .storage
@@ -3899,7 +4159,9 @@ mod tests {
             ids
         };
 
-        let status2 = index_project(ctx.state.clone(), &project_dir).await.unwrap();
+        let status2 = index_project(ctx.state.clone(), &project_dir)
+            .await
+            .unwrap();
         let chunks2 = ctx
             .state
             .storage
@@ -3990,7 +4252,9 @@ mod tests {
         fs::create_dir_all(project_dir.join("generated")).unwrap();
         fs::write(project_dir.join("generated/auto.g.dart"), "// generated\n").unwrap();
 
-        let status = index_project(ctx.state.clone(), &project_dir).await.unwrap();
+        let status = index_project(ctx.state.clone(), &project_dir)
+            .await
+            .unwrap();
         assert_eq!(status.status, IndexState::Completed);
         assert_eq!(status.total_files, 0);
         assert_eq!(status.total_chunks, 0);
@@ -4005,7 +4269,9 @@ mod tests {
         fs::write(project_dir.join("notes.txt"), "plain text\n").unwrap();
         fs::write(project_dir.join("data.json"), "{\"k\":1}\n").unwrap();
 
-        let status = index_project(ctx.state.clone(), &project_dir).await.unwrap();
+        let status = index_project(ctx.state.clone(), &project_dir)
+            .await
+            .unwrap();
         assert_eq!(status.status, IndexState::Completed);
         assert_eq!(status.total_files, 0);
         assert_eq!(status.total_chunks, 0);
@@ -4020,7 +4286,9 @@ mod tests {
         fs::write(project_dir.join("ok.rs"), "pub fn ok() -> i32 { 1 }\n").unwrap();
         fs::write(project_dir.join("bad.rs"), vec![0xff, 0xfe, 0xfd]).unwrap();
 
-        let status = index_project(ctx.state.clone(), &project_dir).await.unwrap();
+        let status = index_project(ctx.state.clone(), &project_dir)
+            .await
+            .unwrap();
         assert_eq!(status.total_files, 2);
         assert_eq!(status.indexed_files, 2);
         assert_eq!(status.total_symbols, 1);
@@ -4043,7 +4311,9 @@ mod tests {
         fs::write(&file_a, "pub fn alpha() -> i32 { 1 }\n").unwrap();
         fs::write(&file_b, "pub fn beta() -> i32 { 2 }\n").unwrap();
 
-        let status = index_project(ctx.state.clone(), &project_dir).await.unwrap();
+        let status = index_project(ctx.state.clone(), &project_dir)
+            .await
+            .unwrap();
         fs::write(&file_a, "pub fn alpha() -> i32 { 10 }\n").unwrap();
         fs::remove_file(&file_b).unwrap();
 
@@ -4077,6 +4347,58 @@ mod tests {
             .collect();
         assert!(b_chunks.is_empty());
         assert!(b_symbols.is_empty());
+    }
+
+    #[tokio::test]
+    async fn incremental_index_removes_file_that_becomes_generated_source() {
+        let ctx = TestContext::new().await;
+        let project_dir = ctx._temp_dir.path().join("incremental-generated-source");
+        fs::create_dir_all(&project_dir).unwrap();
+        let file = project_dir.join("api.rs");
+        fs::write(&file, "pub fn api() -> i32 { 1 }\n").unwrap();
+
+        let status = index_project(ctx.state.clone(), &project_dir)
+            .await
+            .unwrap();
+        let initial_symbols = ctx
+            .state
+            .storage
+            .get_project_symbols(&status.project_id, None)
+            .await
+            .unwrap();
+        assert!(initial_symbols.iter().any(|symbol| symbol.name == "api"));
+
+        fs::write(
+            &file,
+            "// This file was generated by codegen. Do not edit.\npub fn api() -> i32 { 2 }\n",
+        )
+        .unwrap();
+
+        let result = incremental_index(ctx.state.clone(), &status.project_id, vec![file.clone()])
+            .await
+            .unwrap();
+
+        assert_eq!(result.updated_files, 0);
+        assert_eq!(result.deleted_files.len(), 1);
+        assert!(result.deleted_files[0].contains("api.rs"));
+
+        let chunks = ctx
+            .state
+            .storage
+            .get_chunks_by_path(&status.project_id, &file.to_string_lossy(), None)
+            .await
+            .unwrap();
+        let symbols: Vec<_> = ctx
+            .state
+            .storage
+            .get_project_symbols(&status.project_id, None)
+            .await
+            .unwrap()
+            .into_iter()
+            .filter(|symbol| symbol.file_path == file.to_string_lossy())
+            .collect();
+        assert!(chunks.is_empty());
+        assert!(symbols.is_empty());
     }
 
     #[tokio::test]
@@ -4221,7 +4543,10 @@ mod tests {
             .await
             .unwrap();
         assert!(
-            stored.is_none() || stored.map(|s| s.status != IndexState::Indexing).unwrap_or(true),
+            stored.is_none()
+                || stored
+                    .map(|s| s.status != IndexState::Indexing)
+                    .unwrap_or(true),
             "index status should not be left in Indexing state after filter validation failure"
         );
     }
@@ -4261,7 +4586,11 @@ mod tests {
         fs::create_dir_all(&project_dir).unwrap();
 
         for i in 0..5 {
-            fs::write(project_dir.join(format!("file_{i}.rs")), format!("fn f{i}() {{}}")).unwrap();
+            fs::write(
+                project_dir.join(format!("file_{i}.rs")),
+                format!("fn f{i}() {{}}"),
+            )
+            .unwrap();
         }
 
         let status_default = index_project(ctx.state.clone(), &project_dir)
@@ -4272,16 +4601,21 @@ mod tests {
         let project_dir2 = ctx2._temp_dir.path().join("filter-nofilter-project2");
         fs::create_dir_all(&project_dir2).unwrap();
         for i in 0..5 {
-            fs::write(project_dir2.join(format!("file_{i}.rs")), format!("fn f{i}() {{}}")).unwrap();
+            fs::write(
+                project_dir2.join(format!("file_{i}.rs")),
+                format!("fn f{i}() {{}}"),
+            )
+            .unwrap();
         }
 
         let filter_config = IndexFilterConfig {
             include_patterns: vec![],
             exclude_patterns: vec![],
         };
-        let status_filtered = index_project_with_filter(ctx2.state.clone(), &project_dir2, filter_config)
-            .await
-            .unwrap();
+        let status_filtered =
+            index_project_with_filter(ctx2.state.clone(), &project_dir2, filter_config)
+                .await
+                .unwrap();
 
         assert_eq!(
             status_default.total_files, status_filtered.total_files,

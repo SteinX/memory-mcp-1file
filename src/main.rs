@@ -11,7 +11,8 @@ use tracing_subscriber::util::SubscriberInitExt;
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 use memory_mcp::codebase::startup::{
-    perform_startup_job_recovery, start_code_intelligence_lifecycle,
+    clear_completed_indexing_generations_on_startup, perform_startup_job_recovery,
+    resume_pending_embeddings_on_startup, start_code_intelligence_lifecycle,
     CodeIntelligenceStartupStatus,
 };
 use memory_mcp::codebase::ProjectRegistryPolicy;
@@ -514,9 +515,16 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
     );
 
     let dimension_check_start = Instant::now();
-    match storage.inspect_dimension(embedding_config.output_dim()).await {
+    match storage
+        .inspect_dimension(embedding_config.output_dim())
+        .await
+    {
         Ok(DimensionCheck::Match { actual }) => {
-            tracing::info!(model = embedding_config.output_dim(), db = actual, "Dimension check passed");
+            tracing::info!(
+                model = embedding_config.output_dim(),
+                db = actual,
+                "Dimension check passed"
+            );
             metrics_recorder.record_duration(
                 "startup.dimension_check",
                 dimension_check_start.elapsed(),
@@ -524,7 +532,11 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
             );
         }
         Ok(DimensionCheck::Mismatch { actual, expected }) => {
-            tracing::warn!(old = actual, new = expected, "Dimension mismatch detected; rebuilding vector indices in background");
+            tracing::warn!(
+                old = actual,
+                new = expected,
+                "Dimension mismatch detected; rebuilding vector indices in background"
+            );
             metrics_recorder.record_duration(
                 "startup.dimension_check",
                 dimension_check_start.elapsed(),
@@ -541,7 +553,11 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
                 .await;
                 match result {
                     Ok(()) => {
-                        tracing::info!(old = actual, new = expected, "Background vector index rebuild completed; embeddings marked stale");
+                        tracing::info!(
+                            old = actual,
+                            new = expected,
+                            "Background vector index rebuild completed; embeddings marked stale"
+                        );
                         repair_metrics.record_duration(
                             "startup.dimension_repair",
                             started.elapsed(),
@@ -585,15 +601,10 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
     embedding.start_loading();
 
     let metrics = std::sync::Arc::new(memory_mcp::embedding::EmbeddingMetrics::new());
-    let (queue_tx, queue_rx) = tokio::sync::mpsc::channel(256);
-    let adaptive_queue =
-        memory_mcp::embedding::AdaptiveEmbeddingQueue::with_defaults(queue_tx, metrics.clone());
     let forgetting_config = ForgettingConfig::from_env();
     let (access_tracker, access_writer) = create_access_channel(forgetting_config.clone());
 
     let (shutdown_tx, _shutdown_rx) = tokio::sync::watch::channel(false);
-
-    let requeue_tx = adaptive_queue.requeue_sender();
 
     let allowed_project_roots = if cli.allowed_project_roots.is_empty() {
         None
@@ -640,6 +651,17 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
         db_semaphore_size,
         ..AppConfig::default()
     };
+
+    let (queue_tx, queue_rx) = tokio::sync::mpsc::channel(app_config.embedding_queue_capacity);
+    let adaptive_queue = memory_mcp::embedding::AdaptiveEmbeddingQueue::new(
+        queue_tx,
+        metrics.clone(),
+        memory_mcp::embedding::AdaptiveQueueConfig {
+            capacity: app_config.embedding_queue_capacity,
+            ..Default::default()
+        },
+    );
+    let requeue_tx = adaptive_queue.requeue_sender();
 
     let state = Arc::new(AppState {
         config: app_config.clone(),
@@ -727,7 +749,11 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
     let bm25_state = state.clone();
     tokio::spawn(async move {
         let started = Instant::now();
-        let project_stats = bm25_state.storage.get_all_project_stats().await.unwrap_or_default();
+        let project_stats = bm25_state
+            .storage
+            .get_all_project_stats()
+            .await
+            .unwrap_or_default();
         let project_count = project_stats.len();
         let chunk_count: u64 = project_stats
             .values()
@@ -874,6 +900,22 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
         code_startup_state.metrics.record_duration(
             "startup.code_job_recovery",
             recovery_start.elapsed(),
+            serde_json::json!({}),
+        );
+
+        let indexing_generation_cleanup_start = Instant::now();
+        clear_completed_indexing_generations_on_startup(&code_startup_state).await;
+        code_startup_state.metrics.record_duration(
+            "startup.code_indexing_generation_cleanup",
+            indexing_generation_cleanup_start.elapsed(),
+            serde_json::json!({}),
+        );
+
+        let embedding_resume_start = Instant::now();
+        resume_pending_embeddings_on_startup(&code_startup_state).await;
+        code_startup_state.metrics.record_duration(
+            "startup.code_embedding_resume",
+            embedding_resume_start.elapsed(),
             serde_json::json!({}),
         );
 

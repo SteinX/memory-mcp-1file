@@ -15,7 +15,7 @@ pub mod watcher;
 
 pub use index_worker::{IndexJob, IndexJobSender, IndexWorker};
 pub use indexer::{incremental_index, index_project};
-pub use manager::CodebaseManager;
+pub use manager::{resume_embeddings_for_project, CodebaseManager};
 pub use parser::CodeParser;
 pub use project_registry::{
     ProjectLifecycle, ProjectLifecycleOptions, ProjectLifecycleState, ProjectLifecycleStatus,

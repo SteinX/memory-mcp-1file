@@ -29,6 +29,44 @@ pub struct CodebaseManager {
     index_tx: IndexJobSender,
 }
 
+/// Resume embedding for chunks/symbols that were indexed but not yet embedded.
+/// Used when recovering from an interrupted indexing session or a process
+/// restart after structural search was already published.
+pub async fn resume_embeddings_for_project(
+    state: &Arc<AppState>,
+    project_id: &str,
+) -> Result<usize> {
+    let storage = &state.storage;
+    let queue = &state.embedding_queue;
+    let mut enqueued = 0;
+
+    let unembedded_chunks = storage.get_unembedded_chunks(project_id).await?;
+    for (id, content) in &unembedded_chunks {
+        let req = EmbeddingRequest {
+            text: content.clone(),
+            responder: None,
+            target: Some(EmbeddingTarget::Chunk(id.clone())),
+            retry_count: 0,
+        };
+        queue.send(req).await?;
+        enqueued += 1;
+    }
+
+    let unembedded_symbols = storage.get_unembedded_symbols(project_id).await?;
+    for (id, text) in &unembedded_symbols {
+        let req = EmbeddingRequest {
+            text: text.clone(),
+            responder: None,
+            target: Some(EmbeddingTarget::Symbol(id.clone())),
+            retry_count: 0,
+        };
+        queue.send(req).await?;
+        enqueued += 1;
+    }
+
+    Ok(enqueued)
+}
+
 impl CodebaseManager {
     pub fn new(
         state: Arc<AppState>,
@@ -366,43 +404,7 @@ impl CodebaseManager {
     /// Resume embedding for chunks/symbols that were indexed but not yet embedded.
     /// Used when recovering from an interrupted indexing session.
     async fn resume_embeddings(&self) -> Result<usize> {
-        let storage = &self.state.storage;
-        let queue = &self.state.embedding_queue;
-        let mut enqueued = 0;
-
-        // Re-enqueue unembedded chunks
-        let unembedded_chunks = storage.get_unembedded_chunks(&self.project_id).await?;
-        for (id, content) in &unembedded_chunks {
-            let req = EmbeddingRequest {
-                text: content.clone(),
-                responder: None,
-                target: Some(EmbeddingTarget::Chunk(id.clone())),
-                retry_count: 0,
-            };
-            if let Err(e) = queue.send(req).await {
-                tracing::warn!(chunk_id = %id, error = %e, "Failed to enqueue chunk embedding during resume");
-            } else {
-                enqueued += 1;
-            }
-        }
-
-        // Re-enqueue unembedded symbols
-        let unembedded_symbols = storage.get_unembedded_symbols(&self.project_id).await?;
-        for (id, text) in &unembedded_symbols {
-            let req = EmbeddingRequest {
-                text: text.clone(),
-                responder: None,
-                target: Some(EmbeddingTarget::Symbol(id.clone())),
-                retry_count: 0,
-            };
-            if let Err(e) = queue.send(req).await {
-                tracing::warn!(symbol_id = %id, error = %e, "Failed to enqueue symbol embedding during resume");
-            } else {
-                enqueued += 1;
-            }
-        }
-
-        Ok(enqueued)
+        resume_embeddings_for_project(&self.state, &self.project_id).await
     }
 
     fn spawn_full_index(&self) {
@@ -477,7 +479,7 @@ impl CodebaseManager {
         Ok(())
     }
 
-pub async fn stop(&self) {
+    pub async fn stop(&self) {
         if let Some(mut watcher) = self.watcher.write().await.take() {
             watcher.stop();
             info!("Codebase manager stopped");

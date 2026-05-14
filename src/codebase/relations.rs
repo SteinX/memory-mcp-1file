@@ -94,11 +94,16 @@ pub async fn create_symbol_relations(
             count = fallback_names.len(),
             "Batch DB fallback for unresolved symbol names"
         );
-        match storage.find_symbols_by_names(project_id, &fallback_names).await {
+        match storage
+            .find_symbols_by_names(project_id, &fallback_names)
+            .await
+        {
             Ok(symbols) => {
                 for sym in symbols {
                     // Keep the first match per name (same priority as the old single-lookup path)
-                    db_symbol_map.entry(sym.name.clone()).or_insert_with(|| SymbolRef::from_symbol(&sym));
+                    db_symbol_map
+                        .entry(sym.name.clone())
+                        .or_insert_with(|| SymbolRef::from_symbol(&sym));
                 }
             }
             Err(e) => {
@@ -131,9 +136,17 @@ pub async fn create_symbol_relations(
         };
 
         let (relation_class, provenance, confidence_class) = if p.in_memory {
-            (p.reference.relation_class, p.reference.provenance, p.reference.confidence_class)
+            (
+                p.reference.relation_class,
+                p.reference.provenance,
+                p.reference.confidence_class,
+            )
         } else {
-            (RelationClass::Inferred, RelationProvenance::HeuristicResolver, ConfidenceClass::Ambiguous)
+            (
+                RelationClass::Inferred,
+                RelationProvenance::HeuristicResolver,
+                ConfidenceClass::Ambiguous,
+            )
         };
 
         batch.push(SymbolRelation::new(
@@ -378,103 +391,503 @@ mod tests {
 
         // ── Everything else is unreachable in this test ───────────────────────
 
-        async fn create_memory(&self, _: crate::types::Memory) -> crate::Result<String> { unreachable!() }
-        async fn get_memory(&self, _: &str) -> crate::Result<Option<crate::types::Memory>> { unreachable!() }
-        async fn update_memory(&self, _: &str, _: crate::types::MemoryUpdate) -> crate::Result<crate::types::Memory> { unreachable!() }
-        fn record_memory_access(&self, _: &str, _: chrono::DateTime<chrono::Utc>) -> impl Future<Output = crate::Result<()>> + Send { async { unreachable!() } }
-        async fn delete_memory(&self, _: &str) -> crate::Result<bool> { unreachable!() }
-        async fn list_memories(&self, _: &crate::types::MemoryQuery, _: usize, _: usize) -> crate::Result<Vec<crate::types::Memory>> { unreachable!() }
-        async fn list_memory_ids(&self, _: &crate::types::MemoryQuery) -> crate::Result<Vec<String>> { unreachable!() }
-        async fn count_memories(&self) -> crate::Result<usize> { unreachable!() }
-        async fn count_memories_filtered(&self, _: &crate::types::MemoryQuery) -> crate::Result<usize> { unreachable!() }
-        fn count_valid_memories(&self) -> impl Future<Output = crate::Result<usize>> + Send { async { unreachable!() } }
-        fn list_capacity_candidates(&self) -> impl Future<Output = crate::Result<Vec<CapacityMemoryCandidate>>> + Send { async { unreachable!() } }
-        fn get_memory_last_accessed_at(&self, _: &str) -> impl Future<Output = crate::Result<Option<chrono::DateTime<chrono::Utc>>>> + Send { async { unreachable!() } }
-        async fn find_memories_by_content_hash(&self, _: &crate::types::MemoryQuery, _: &str) -> crate::Result<Vec<crate::types::Memory>> { unreachable!() }
-        async fn vector_search(&self, _: &[f32], _: &crate::types::MemoryQuery, _: usize) -> crate::Result<Vec<crate::types::SearchResult>> { unreachable!() }
-        async fn vector_search_code(&self, _: &[f32], _: Option<&str>, _: Option<u64>, _: usize) -> crate::Result<Vec<crate::types::ScoredCodeChunk>> { unreachable!() }
-        async fn vector_search_symbols(&self, _: &[f32], _: Option<&str>, _: Option<u64>, _: usize) -> crate::Result<Vec<crate::types::CodeSymbol>> { unreachable!() }
-        async fn bm25_search(&self, _: &str, _: &crate::types::MemoryQuery, _: usize) -> crate::Result<Vec<crate::types::SearchResult>> { unreachable!() }
-        async fn bm25_search_code(&self, _: &str, _: Option<&str>, _: usize) -> crate::Result<Vec<crate::types::ScoredCodeChunk>> { unreachable!() }
-        async fn clear_project_embeddings(&self, _: &str) -> crate::Result<u64> { unreachable!() }
-        async fn create_entity(&self, _: crate::types::Entity) -> crate::Result<String> { unreachable!() }
-        async fn get_entity(&self, _: &str) -> crate::Result<Option<crate::types::Entity>> { unreachable!() }
-        async fn search_entities(&self, _: &str, _: usize) -> crate::Result<Vec<crate::types::Entity>> { unreachable!() }
-        async fn create_relation(&self, _: crate::types::Relation) -> crate::Result<String> { unreachable!() }
-        async fn get_related(&self, _: &str, _: usize, _: crate::types::Direction) -> crate::Result<(Vec<crate::types::Entity>, Vec<crate::types::Relation>)> { unreachable!() }
-        async fn get_subgraph(&self, _: &[String]) -> crate::Result<(Vec<crate::types::Entity>, Vec<crate::types::Relation>)> { unreachable!() }
-        async fn get_node_degrees(&self, _: &[String]) -> crate::Result<HashMap<String, usize>> { unreachable!() }
-        async fn get_all_entities(&self) -> crate::Result<Vec<crate::types::Entity>> { unreachable!() }
-        async fn get_all_relations(&self) -> crate::Result<Vec<crate::types::Relation>> { unreachable!() }
-        async fn get_valid(&self, _: &crate::types::MemoryQuery, _: usize) -> crate::Result<Vec<crate::types::Memory>> { unreachable!() }
-        async fn get_valid_at(&self, _: &crate::types::MemoryQuery, _: usize) -> crate::Result<Vec<crate::types::Memory>> { unreachable!() }
-        fn invalidate(&self, _: &str, _: Option<&str>, _: Option<&str>) -> impl Future<Output = crate::Result<bool>> + Send { async { unreachable!() } }
-        async fn create_code_chunk(&self, _: crate::types::CodeChunk) -> crate::Result<String> { unreachable!() }
-        async fn create_code_chunks_batch(&self, _: Vec<crate::types::CodeChunk>) -> crate::Result<Vec<(String, crate::types::CodeChunk)>> { unreachable!() }
-        async fn delete_project_chunks(&self, _: &str) -> crate::Result<usize> { unreachable!() }
-        async fn delete_chunks_by_path(&self, _: &str, _: &str) -> crate::Result<usize> { unreachable!() }
-        async fn get_chunks_by_path(&self, _: &str, _: &str, _: Option<u64>) -> crate::Result<Vec<crate::types::CodeChunk>> { unreachable!() }
-        async fn get_all_chunks_for_project(&self, _: &str, _: Option<u64>) -> crate::Result<Vec<crate::types::CodeChunk>> { unreachable!() }
-        async fn get_chunks_paginated(&self, _: &str, _: Option<u64>, _: usize, _: usize) -> crate::Result<Vec<crate::types::CodeChunk>> { unreachable!() }
-        async fn get_chunks_by_ids(&self, _: &[String], _: Option<u64>) -> crate::Result<Vec<crate::types::CodeChunk>> { unreachable!() }
-        async fn get_index_status(&self, _: &str) -> crate::Result<Option<crate::types::IndexStatus>> { unreachable!() }
-        async fn update_index_status(&self, _: crate::types::IndexStatus) -> crate::Result<()> { unreachable!() }
-        async fn delete_index_status(&self, _: &str) -> crate::Result<()> { unreachable!() }
-        async fn list_projects(&self) -> crate::Result<Vec<String>> { unreachable!() }
-        async fn create_or_update_index_job(&self, _: &crate::types::IndexJobRecord) -> crate::Result<()> { unreachable!() }
-        async fn get_index_job(&self, _: &str, _: &str) -> crate::Result<Option<crate::types::IndexJobRecord>> { unreachable!() }
-        async fn list_index_jobs_for_project(&self, _: &str) -> crate::Result<Vec<crate::types::IndexJobRecord>> { unreachable!() }
-        async fn delete_index_job(&self, _: &str, _: &str) -> crate::Result<()> { unreachable!() }
-        async fn upsert_file_checkpoint(&self, _: &crate::types::IndexFileCheckpoint) -> crate::Result<()> { unreachable!() }
-        async fn get_file_checkpoint(&self, _: &str, _: u64, _: &str) -> crate::Result<Option<crate::types::IndexFileCheckpoint>> { unreachable!() }
-        async fn list_file_checkpoints_for_job(&self, _: &str, _: u64) -> crate::Result<Vec<crate::types::IndexFileCheckpoint>> { unreachable!() }
-        async fn get_active_generation(&self, _: &str) -> crate::Result<Option<u64>> { unreachable!() }
-        async fn set_active_generation(&self, _: &str, _: u64) -> crate::Result<()> { unreachable!() }
-        async fn get_serving_generation(&self, _: &str, _: crate::types::CapabilityKind) -> crate::Result<Option<u64>> { unreachable!() }
-        async fn set_serving_generation(&self, _: &str, _: crate::types::CapabilityKind, _: u64) -> crate::Result<()> { unreachable!() }
-        async fn get_indexing_generation(&self, _: &str) -> crate::Result<Option<u64>> { unreachable!() }
-        async fn set_indexing_generation(&self, _: &str, _: Option<u64>) -> crate::Result<()> { unreachable!() }
-        async fn get_serving_metadata(&self, _: &str) -> crate::Result<crate::types::ServingGenerationMetadata> { unreachable!() }
-        async fn list_abandoned_generations(&self, _: &str) -> crate::Result<Vec<u64>> { unreachable!() }
-        async fn delete_project_generation(&self, _: &str, _: u64) -> crate::Result<()> { unreachable!() }
-        async fn get_file_hash(&self, _: &str, _: &str) -> crate::Result<Option<String>> { unreachable!() }
-        async fn set_file_hash(&self, _: &str, _: &str, _: &str) -> crate::Result<()> { unreachable!() }
-        async fn set_file_hashes_batch(&self, _: &str, _: &[(String, String)]) -> crate::Result<()> { unreachable!() }
-        async fn delete_file_hashes(&self, _: &str) -> crate::Result<()> { unreachable!() }
-        async fn delete_file_hash(&self, _: &str, _: &str) -> crate::Result<()> { unreachable!() }
-        async fn create_code_symbol(&self, _: crate::types::CodeSymbol) -> crate::Result<String> { unreachable!() }
-        async fn create_code_symbols_batch(&self, _: Vec<crate::types::CodeSymbol>) -> crate::Result<Vec<String>> { unreachable!() }
-        async fn update_symbol_embedding(&self, _: &str, _: Vec<f32>) -> crate::Result<()> { unreachable!() }
-        async fn update_chunk_embedding(&self, _: &str, _: Vec<f32>) -> crate::Result<()> { unreachable!() }
-        async fn batch_update_symbol_embeddings(&self, _: &[(String, Vec<f32>)]) -> crate::Result<()> { unreachable!() }
-        async fn batch_update_chunk_embeddings(&self, _: &[(String, Vec<f32>)]) -> crate::Result<()> { unreachable!() }
-        async fn delete_project_symbols(&self, _: &str) -> crate::Result<usize> { unreachable!() }
-        async fn delete_symbols_by_path(&self, _: &str, _: &str) -> crate::Result<usize> { unreachable!() }
-        async fn get_project_symbols(&self, _: &str, _: Option<u64>) -> crate::Result<Vec<crate::types::CodeSymbol>> { unreachable!() }
-        async fn get_symbol_callers(&self, _: &str, _: Option<u64>) -> crate::Result<Vec<crate::types::CodeSymbol>> { unreachable!() }
-        async fn get_symbol_callees(&self, _: &str, _: Option<u64>) -> crate::Result<Vec<crate::types::CodeSymbol>> { unreachable!() }
-        async fn get_related_symbols(&self, _: &str, _: usize, _: crate::types::Direction, _: Option<u64>) -> crate::Result<(Vec<crate::types::CodeSymbol>, Vec<crate::types::SymbolRelation>)> { unreachable!() }
-        async fn get_code_subgraph(&self, _: &[String], _: Option<u64>) -> crate::Result<(Vec<crate::types::CodeSymbol>, Vec<crate::types::SymbolRelation>)> { unreachable!() }
-        async fn search_symbols(&self, _: &str, _: Option<&str>, _: usize, _: usize, _: Option<&str>, _: Option<&str>, _: Option<u64>) -> crate::Result<(Vec<crate::types::CodeSymbol>, u32)> { unreachable!() }
-        async fn replace_symbol_chunk_map(&self, _: &str, _: &[(String, String, f32)]) -> crate::Result<u32> { unreachable!() }
-        async fn get_mapped_chunks_for_symbols(&self, _: &str, _: &[String], _: Option<u64>, _: usize) -> crate::Result<Vec<(String, f32)>> { unreachable!() }
-        async fn count_symbols(&self, _: &str, _: Option<u64>) -> crate::Result<u32> { unreachable!() }
-        async fn count_chunks(&self, _: &str, _: Option<u64>) -> crate::Result<u32> { unreachable!() }
-        async fn count_embedded_symbols(&self, _: &str, _: Option<u64>) -> crate::Result<u32> { unreachable!() }
-        async fn count_embedded_chunks(&self, _: &str, _: Option<u64>) -> crate::Result<u32> { unreachable!() }
-        async fn get_all_project_stats(&self) -> crate::Result<std::collections::HashMap<String, crate::storage::traits::ProjectStats>> { unreachable!() }
-        async fn get_unembedded_chunks(&self, _: &str) -> crate::Result<Vec<(String, String)>> { unreachable!() }
-        async fn get_unembedded_symbols(&self, _: &str) -> crate::Result<Vec<(String, String)>> { unreachable!() }
-        async fn count_symbol_relations(&self, _: &str) -> crate::Result<u32> { unreachable!() }
-        async fn health_check(&self) -> crate::Result<bool> { unreachable!() }
-        async fn reset_db(&self) -> crate::Result<()> { unreachable!() }
-        async fn shutdown(&self) -> crate::Result<()> { unreachable!() }
-        async fn upsert_manifest_entry(&self, _: &str, _: &str) -> crate::Result<()> { unreachable!() }
-        async fn upsert_manifest_entries(&self, _: &str, _: &[String]) -> crate::Result<()> { unreachable!() }
-        async fn get_manifest_entries(&self, _: &str) -> crate::Result<Vec<crate::types::ManifestEntry>> { unreachable!() }
-        async fn delete_manifest_entries(&self, _: &str) -> crate::Result<()> { unreachable!() }
-        async fn delete_manifest_entry(&self, _: &str, _: &str) -> crate::Result<()> { unreachable!() }
-        async fn count_manifest_entries(&self, _: &str) -> crate::Result<usize> { unreachable!() }
+        async fn create_memory(&self, _: crate::types::Memory) -> crate::Result<String> {
+            unreachable!()
+        }
+        async fn get_memory(&self, _: &str) -> crate::Result<Option<crate::types::Memory>> {
+            unreachable!()
+        }
+        async fn update_memory(
+            &self,
+            _: &str,
+            _: crate::types::MemoryUpdate,
+        ) -> crate::Result<crate::types::Memory> {
+            unreachable!()
+        }
+        fn record_memory_access(
+            &self,
+            _: &str,
+            _: chrono::DateTime<chrono::Utc>,
+        ) -> impl Future<Output = crate::Result<()>> + Send {
+            async { unreachable!() }
+        }
+        async fn delete_memory(&self, _: &str) -> crate::Result<bool> {
+            unreachable!()
+        }
+        async fn list_memories(
+            &self,
+            _: &crate::types::MemoryQuery,
+            _: usize,
+            _: usize,
+        ) -> crate::Result<Vec<crate::types::Memory>> {
+            unreachable!()
+        }
+        async fn list_memory_ids(
+            &self,
+            _: &crate::types::MemoryQuery,
+        ) -> crate::Result<Vec<String>> {
+            unreachable!()
+        }
+        async fn count_memories(&self) -> crate::Result<usize> {
+            unreachable!()
+        }
+        async fn count_memories_filtered(
+            &self,
+            _: &crate::types::MemoryQuery,
+        ) -> crate::Result<usize> {
+            unreachable!()
+        }
+        fn count_valid_memories(&self) -> impl Future<Output = crate::Result<usize>> + Send {
+            async { unreachable!() }
+        }
+        fn list_capacity_candidates(
+            &self,
+        ) -> impl Future<Output = crate::Result<Vec<CapacityMemoryCandidate>>> + Send {
+            async { unreachable!() }
+        }
+        fn get_memory_last_accessed_at(
+            &self,
+            _: &str,
+        ) -> impl Future<Output = crate::Result<Option<chrono::DateTime<chrono::Utc>>>> + Send
+        {
+            async { unreachable!() }
+        }
+        async fn find_memories_by_content_hash(
+            &self,
+            _: &crate::types::MemoryQuery,
+            _: &str,
+        ) -> crate::Result<Vec<crate::types::Memory>> {
+            unreachable!()
+        }
+        async fn vector_search(
+            &self,
+            _: &[f32],
+            _: &crate::types::MemoryQuery,
+            _: usize,
+        ) -> crate::Result<Vec<crate::types::SearchResult>> {
+            unreachable!()
+        }
+        async fn vector_search_code(
+            &self,
+            _: &[f32],
+            _: Option<&str>,
+            _: Option<u64>,
+            _: usize,
+        ) -> crate::Result<Vec<crate::types::ScoredCodeChunk>> {
+            unreachable!()
+        }
+        async fn vector_search_symbols(
+            &self,
+            _: &[f32],
+            _: Option<&str>,
+            _: Option<u64>,
+            _: usize,
+        ) -> crate::Result<Vec<crate::types::CodeSymbol>> {
+            unreachable!()
+        }
+        async fn bm25_search(
+            &self,
+            _: &str,
+            _: &crate::types::MemoryQuery,
+            _: usize,
+        ) -> crate::Result<Vec<crate::types::SearchResult>> {
+            unreachable!()
+        }
+        async fn bm25_search_code(
+            &self,
+            _: &str,
+            _: Option<&str>,
+            _: usize,
+        ) -> crate::Result<Vec<crate::types::ScoredCodeChunk>> {
+            unreachable!()
+        }
+        async fn clear_project_embeddings(&self, _: &str) -> crate::Result<u64> {
+            unreachable!()
+        }
+        async fn create_entity(&self, _: crate::types::Entity) -> crate::Result<String> {
+            unreachable!()
+        }
+        async fn get_entity(&self, _: &str) -> crate::Result<Option<crate::types::Entity>> {
+            unreachable!()
+        }
+        async fn search_entities(
+            &self,
+            _: &str,
+            _: usize,
+        ) -> crate::Result<Vec<crate::types::Entity>> {
+            unreachable!()
+        }
+        async fn create_relation(&self, _: crate::types::Relation) -> crate::Result<String> {
+            unreachable!()
+        }
+        async fn get_related(
+            &self,
+            _: &str,
+            _: usize,
+            _: crate::types::Direction,
+        ) -> crate::Result<(Vec<crate::types::Entity>, Vec<crate::types::Relation>)> {
+            unreachable!()
+        }
+        async fn get_subgraph(
+            &self,
+            _: &[String],
+        ) -> crate::Result<(Vec<crate::types::Entity>, Vec<crate::types::Relation>)> {
+            unreachable!()
+        }
+        async fn get_node_degrees(&self, _: &[String]) -> crate::Result<HashMap<String, usize>> {
+            unreachable!()
+        }
+        async fn get_all_entities(&self) -> crate::Result<Vec<crate::types::Entity>> {
+            unreachable!()
+        }
+        async fn get_all_relations(&self) -> crate::Result<Vec<crate::types::Relation>> {
+            unreachable!()
+        }
+        async fn get_valid(
+            &self,
+            _: &crate::types::MemoryQuery,
+            _: usize,
+        ) -> crate::Result<Vec<crate::types::Memory>> {
+            unreachable!()
+        }
+        async fn get_valid_at(
+            &self,
+            _: &crate::types::MemoryQuery,
+            _: usize,
+        ) -> crate::Result<Vec<crate::types::Memory>> {
+            unreachable!()
+        }
+        fn invalidate(
+            &self,
+            _: &str,
+            _: Option<&str>,
+            _: Option<&str>,
+        ) -> impl Future<Output = crate::Result<bool>> + Send {
+            async { unreachable!() }
+        }
+        async fn create_code_chunk(&self, _: crate::types::CodeChunk) -> crate::Result<String> {
+            unreachable!()
+        }
+        async fn create_code_chunks_batch(
+            &self,
+            _: Vec<crate::types::CodeChunk>,
+        ) -> crate::Result<Vec<(String, crate::types::CodeChunk)>> {
+            unreachable!()
+        }
+        async fn delete_project_chunks(&self, _: &str) -> crate::Result<usize> {
+            unreachable!()
+        }
+        async fn delete_chunks_by_path(&self, _: &str, _: &str) -> crate::Result<usize> {
+            unreachable!()
+        }
+        async fn get_chunks_by_path(
+            &self,
+            _: &str,
+            _: &str,
+            _: Option<u64>,
+        ) -> crate::Result<Vec<crate::types::CodeChunk>> {
+            unreachable!()
+        }
+        async fn get_all_chunks_for_project(
+            &self,
+            _: &str,
+            _: Option<u64>,
+        ) -> crate::Result<Vec<crate::types::CodeChunk>> {
+            unreachable!()
+        }
+        async fn get_chunks_paginated(
+            &self,
+            _: &str,
+            _: Option<u64>,
+            _: usize,
+            _: usize,
+        ) -> crate::Result<Vec<crate::types::CodeChunk>> {
+            unreachable!()
+        }
+        async fn get_chunks_by_ids(
+            &self,
+            _: &[String],
+            _: Option<u64>,
+        ) -> crate::Result<Vec<crate::types::CodeChunk>> {
+            unreachable!()
+        }
+        async fn get_index_status(
+            &self,
+            _: &str,
+        ) -> crate::Result<Option<crate::types::IndexStatus>> {
+            unreachable!()
+        }
+        async fn update_index_status(&self, _: crate::types::IndexStatus) -> crate::Result<()> {
+            unreachable!()
+        }
+        async fn delete_index_status(&self, _: &str) -> crate::Result<()> {
+            unreachable!()
+        }
+        async fn list_projects(&self) -> crate::Result<Vec<String>> {
+            unreachable!()
+        }
+        async fn create_or_update_index_job(
+            &self,
+            _: &crate::types::IndexJobRecord,
+        ) -> crate::Result<()> {
+            unreachable!()
+        }
+        async fn get_index_job(
+            &self,
+            _: &str,
+            _: &str,
+        ) -> crate::Result<Option<crate::types::IndexJobRecord>> {
+            unreachable!()
+        }
+        async fn list_index_jobs_for_project(
+            &self,
+            _: &str,
+        ) -> crate::Result<Vec<crate::types::IndexJobRecord>> {
+            unreachable!()
+        }
+        async fn delete_index_job(&self, _: &str, _: &str) -> crate::Result<()> {
+            unreachable!()
+        }
+        async fn upsert_file_checkpoint(
+            &self,
+            _: &crate::types::IndexFileCheckpoint,
+        ) -> crate::Result<()> {
+            unreachable!()
+        }
+        async fn get_file_checkpoint(
+            &self,
+            _: &str,
+            _: u64,
+            _: &str,
+        ) -> crate::Result<Option<crate::types::IndexFileCheckpoint>> {
+            unreachable!()
+        }
+        async fn list_file_checkpoints_for_job(
+            &self,
+            _: &str,
+            _: u64,
+        ) -> crate::Result<Vec<crate::types::IndexFileCheckpoint>> {
+            unreachable!()
+        }
+        async fn get_active_generation(&self, _: &str) -> crate::Result<Option<u64>> {
+            unreachable!()
+        }
+        async fn set_active_generation(&self, _: &str, _: u64) -> crate::Result<()> {
+            unreachable!()
+        }
+        async fn get_serving_generation(
+            &self,
+            _: &str,
+            _: crate::types::CapabilityKind,
+        ) -> crate::Result<Option<u64>> {
+            unreachable!()
+        }
+        async fn set_serving_generation(
+            &self,
+            _: &str,
+            _: crate::types::CapabilityKind,
+            _: u64,
+        ) -> crate::Result<()> {
+            unreachable!()
+        }
+        async fn get_indexing_generation(&self, _: &str) -> crate::Result<Option<u64>> {
+            unreachable!()
+        }
+        async fn set_indexing_generation(&self, _: &str, _: Option<u64>) -> crate::Result<()> {
+            unreachable!()
+        }
+        async fn get_serving_metadata(
+            &self,
+            _: &str,
+        ) -> crate::Result<crate::types::ServingGenerationMetadata> {
+            unreachable!()
+        }
+        async fn list_abandoned_generations(&self, _: &str) -> crate::Result<Vec<u64>> {
+            unreachable!()
+        }
+        async fn delete_project_generation(&self, _: &str, _: u64) -> crate::Result<()> {
+            unreachable!()
+        }
+        async fn get_file_hash(&self, _: &str, _: &str) -> crate::Result<Option<String>> {
+            unreachable!()
+        }
+        async fn set_file_hash(&self, _: &str, _: &str, _: &str) -> crate::Result<()> {
+            unreachable!()
+        }
+        async fn set_file_hashes_batch(
+            &self,
+            _: &str,
+            _: &[(String, String)],
+        ) -> crate::Result<()> {
+            unreachable!()
+        }
+        async fn delete_file_hashes(&self, _: &str) -> crate::Result<()> {
+            unreachable!()
+        }
+        async fn delete_file_hash(&self, _: &str, _: &str) -> crate::Result<()> {
+            unreachable!()
+        }
+        async fn create_code_symbol(&self, _: crate::types::CodeSymbol) -> crate::Result<String> {
+            unreachable!()
+        }
+        async fn create_code_symbols_batch(
+            &self,
+            _: Vec<crate::types::CodeSymbol>,
+        ) -> crate::Result<Vec<String>> {
+            unreachable!()
+        }
+        async fn update_symbol_embedding(&self, _: &str, _: Vec<f32>) -> crate::Result<()> {
+            unreachable!()
+        }
+        async fn update_chunk_embedding(&self, _: &str, _: Vec<f32>) -> crate::Result<()> {
+            unreachable!()
+        }
+        async fn batch_update_symbol_embeddings(
+            &self,
+            _: &[(String, Vec<f32>)],
+        ) -> crate::Result<()> {
+            unreachable!()
+        }
+        async fn batch_update_chunk_embeddings(
+            &self,
+            _: &[(String, Vec<f32>)],
+        ) -> crate::Result<()> {
+            unreachable!()
+        }
+        async fn delete_project_symbols(&self, _: &str) -> crate::Result<usize> {
+            unreachable!()
+        }
+        async fn delete_symbols_by_path(&self, _: &str, _: &str) -> crate::Result<usize> {
+            unreachable!()
+        }
+        async fn get_project_symbols(
+            &self,
+            _: &str,
+            _: Option<u64>,
+        ) -> crate::Result<Vec<crate::types::CodeSymbol>> {
+            unreachable!()
+        }
+        async fn get_symbol_callers(
+            &self,
+            _: &str,
+            _: Option<u64>,
+        ) -> crate::Result<Vec<crate::types::CodeSymbol>> {
+            unreachable!()
+        }
+        async fn get_symbol_callees(
+            &self,
+            _: &str,
+            _: Option<u64>,
+        ) -> crate::Result<Vec<crate::types::CodeSymbol>> {
+            unreachable!()
+        }
+        async fn get_related_symbols(
+            &self,
+            _: &str,
+            _: usize,
+            _: crate::types::Direction,
+            _: Option<u64>,
+        ) -> crate::Result<(
+            Vec<crate::types::CodeSymbol>,
+            Vec<crate::types::SymbolRelation>,
+        )> {
+            unreachable!()
+        }
+        async fn get_code_subgraph(
+            &self,
+            _: &[String],
+            _: Option<u64>,
+        ) -> crate::Result<(
+            Vec<crate::types::CodeSymbol>,
+            Vec<crate::types::SymbolRelation>,
+        )> {
+            unreachable!()
+        }
+        async fn search_symbols(
+            &self,
+            _: &str,
+            _: Option<&str>,
+            _: usize,
+            _: usize,
+            _: Option<&str>,
+            _: Option<&str>,
+            _: Option<u64>,
+        ) -> crate::Result<(Vec<crate::types::CodeSymbol>, u32)> {
+            unreachable!()
+        }
+        async fn replace_symbol_chunk_map(
+            &self,
+            _: &str,
+            _: &[(String, String, f32)],
+        ) -> crate::Result<u32> {
+            unreachable!()
+        }
+        async fn get_mapped_chunks_for_symbols(
+            &self,
+            _: &str,
+            _: &[String],
+            _: Option<u64>,
+            _: usize,
+        ) -> crate::Result<Vec<(String, f32)>> {
+            unreachable!()
+        }
+        async fn count_symbols(&self, _: &str, _: Option<u64>) -> crate::Result<u32> {
+            unreachable!()
+        }
+        async fn count_chunks(&self, _: &str, _: Option<u64>) -> crate::Result<u32> {
+            unreachable!()
+        }
+        async fn count_embedded_symbols(&self, _: &str, _: Option<u64>) -> crate::Result<u32> {
+            unreachable!()
+        }
+        async fn count_embedded_chunks(&self, _: &str, _: Option<u64>) -> crate::Result<u32> {
+            unreachable!()
+        }
+        async fn get_all_project_stats(
+            &self,
+        ) -> crate::Result<std::collections::HashMap<String, crate::storage::traits::ProjectStats>>
+        {
+            unreachable!()
+        }
+        async fn get_unembedded_chunks(&self, _: &str) -> crate::Result<Vec<(String, String)>> {
+            unreachable!()
+        }
+        async fn get_unembedded_symbols(&self, _: &str) -> crate::Result<Vec<(String, String)>> {
+            unreachable!()
+        }
+        async fn count_symbol_relations(&self, _: &str) -> crate::Result<u32> {
+            unreachable!()
+        }
+        async fn health_check(&self) -> crate::Result<bool> {
+            unreachable!()
+        }
+        async fn reset_db(&self) -> crate::Result<()> {
+            unreachable!()
+        }
+        async fn shutdown(&self) -> crate::Result<()> {
+            unreachable!()
+        }
+        async fn upsert_manifest_entry(&self, _: &str, _: &str) -> crate::Result<()> {
+            unreachable!()
+        }
+        async fn upsert_manifest_entries(&self, _: &str, _: &[String]) -> crate::Result<()> {
+            unreachable!()
+        }
+        async fn get_manifest_entries(
+            &self,
+            _: &str,
+        ) -> crate::Result<Vec<crate::types::ManifestEntry>> {
+            unreachable!()
+        }
+        async fn delete_manifest_entries(&self, _: &str) -> crate::Result<()> {
+            unreachable!()
+        }
+        async fn delete_manifest_entry(&self, _: &str, _: &str) -> crate::Result<()> {
+            unreachable!()
+        }
+        async fn count_manifest_entries(&self, _: &str) -> crate::Result<usize> {
+            unreachable!()
+        }
     }
 
     fn make_ref(from: &str, to: &str, file: &str) -> CodeReference {
@@ -522,8 +935,7 @@ mod tests {
         // The critical invariant: exactly one batch call, zero per-symbol calls.
         let batch_calls = batch_counter.load(Ordering::SeqCst);
         assert_eq!(
-            batch_calls,
-            1,
+            batch_calls, 1,
             "expected exactly 1 batched find_symbols_by_names call, got {batch_calls}"
         );
         assert_eq!(

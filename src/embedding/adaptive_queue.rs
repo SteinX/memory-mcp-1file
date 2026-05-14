@@ -88,6 +88,10 @@ impl AdaptiveEmbeddingQueue {
         })
     }
 
+    pub fn channel_capacity(&self) -> usize {
+        self.sender.max_capacity()
+    }
+
     /// Clone the underlying mpsc::Sender for re-queue in the embedding worker.
     pub fn requeue_sender(&self) -> mpsc::Sender<EmbeddingRequest> {
         self.sender.clone()
