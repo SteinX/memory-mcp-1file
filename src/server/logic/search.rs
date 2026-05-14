@@ -359,6 +359,15 @@ async fn lexical_memory_search(
     filters: &MemoryQuery,
     limit: usize,
 ) -> ChannelResults {
+    if filters.is_unfiltered() {
+        let scored = state.memory_search.search(query, None, limit).await;
+        return ChannelResults {
+            retrieved_candidates: state.memory_search.document_count().await,
+            post_filter_hits: scored.len(),
+            results: dedup_memory_results(scored, limit),
+        };
+    }
+
     let mut prefilter_filters = filters.clone();
     prefilter_filters.metadata_filter = None;
 

@@ -1707,8 +1707,24 @@ pub async fn list_projects(
             for status in &mut statuses {
                 status.refresh_lifecycle_states();
                 let project_id = &status.project_id;
-                let chunks = status.total_chunks;
-                let symbols = status.total_symbols;
+                let chunks = if status.total_chunks > 0 {
+                    status.total_chunks
+                } else {
+                    state
+                        .storage
+                        .count_chunks(project_id, None)
+                        .await
+                        .unwrap_or(0) as u32
+                };
+                let symbols = if status.total_symbols > 0 {
+                    status.total_symbols
+                } else {
+                    state
+                        .storage
+                        .count_symbols(project_id, None)
+                        .await
+                        .unwrap_or(0) as u32
+                };
                 let embedded_chunks = 0;
                 let embedded_symbols = 0;
 

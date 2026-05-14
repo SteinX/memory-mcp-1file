@@ -308,6 +308,10 @@ impl MemorySearchEngine {
 
     pub async fn upsert_memory(&self, memory: Memory) {
         if let Some(meta) = MemoryMeta::from_memory(memory) {
+            if meta.valid_until.is_some() {
+                self.remove_memory(&meta.id).await;
+                return;
+            }
             let mut index = self.index.write().await;
             index
                 .engine
@@ -323,6 +327,11 @@ impl MemorySearchEngine {
         let mut index = self.index.write().await;
         for memory in memories {
             if let Some(meta) = MemoryMeta::from_memory(memory) {
+                if meta.valid_until.is_some() {
+                    index.engine.remove(&meta.id);
+                    index.meta.remove(&meta.id);
+                    continue;
+                }
                 index
                     .engine
                     .upsert(Document::new(meta.id.clone(), meta.content.clone()));
@@ -369,6 +378,10 @@ impl MemorySearchEngine {
             })
             .take(limit)
             .collect()
+    }
+
+    pub async fn document_count(&self) -> usize {
+        self.index.read().await.meta.len()
     }
 
     pub async fn load_all_from_storage(&self, storage: &impl StorageBackend) -> usize {
@@ -737,31 +750,32 @@ impl CodeSearchEngine {
         &self,
         storage: &impl crate::storage::StorageBackend,
     ) -> usize {
-        let projects = match storage.list_projects().await {
-            Ok(p) => p,
+        let statuses = match storage.list_index_statuses().await {
+            Ok(statuses) => statuses,
             Err(e) => {
-                tracing::warn!("Failed to list projects for BM25 warm-up: {}", e);
+                tracing::warn!("Failed to list project statuses for BM25 warm-up: {}", e);
                 return 0;
             }
         };
 
         let mut total = 0usize;
 
-        for project_id in &projects {
+        for status in statuses {
             // Only load projects that finished indexing (completed or embedding_pending)
-            match storage.get_index_status(project_id).await {
-                Ok(Some(status))
-                    if status.status == crate::types::IndexState::Completed
-                        || status.status == crate::types::IndexState::EmbeddingPending =>
-                {
-                    // OK — load it
-                }
-                _ => continue,
+            if status.status != crate::types::IndexState::Completed
+                && status.status != crate::types::IndexState::EmbeddingPending
+            {
+                continue;
             }
 
-            let active_generation = storage.get_active_generation(project_id).await.ok().flatten();
+            let project_id = status.project_id;
+            let active_generation = storage
+                .get_active_generation(&project_id)
+                .await
+                .ok()
+                .flatten();
             match self
-                .rebuild_project_streaming(storage, project_id, active_generation)
+                .rebuild_project_streaming(storage, &project_id, active_generation)
                 .await
             {
                 Ok(count) => {

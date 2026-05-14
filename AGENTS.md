@@ -730,6 +730,9 @@ System:  get_status, reset_all_memory
 > Для пошуку коду використовуй `recall_code`.
 > `recall_code` mode=`vector` → викликає search_code internally.
 > `recall_code` mode=`hybrid` (default) → vector + BM25 + graph RRF.
+> Single identifier lookups may report `fallback_path="bm25_lexical_fast_path"`
+> and intentionally skip vector/PPR so exact symbol searches remain responsive
+> on large persisted indexes.
 
 #### Тестовий скрипт
 

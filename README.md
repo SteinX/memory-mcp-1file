@@ -1001,6 +1001,13 @@ For large projects, indexing is a continuous background process. Memory MCP keep
 | `search_symbols` | Serves stale symbol table from last promoted generation | N/A | Returns `reason_code=missing`, zero results |
 | `symbol_graph` | Serves stale graph; falls back to symbol frontier if graph missing | Symbol frontier | Returns partial metadata |
 
+For single code-identifier queries such as `RecallCodeParams`, `recall_code`
+uses a BM25 lexical fast path (`summary.fallback_path =
+"bm25_lexical_fast_path"`). This path is intentional: it skips vector
+embedding, symbol probing, and PPR graph expansion so exact symbol lookups stay
+responsive on large persisted indexes. It is not marked partial when the
+serving generation is current.
+
 ### Reading Degradation Metadata
 
 Every response includes a `summary.partial` object clients can branch on:

@@ -749,31 +749,15 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
     let bm25_state = state.clone();
     tokio::spawn(async move {
         let started = Instant::now();
-        let project_stats = bm25_state
-            .storage
-            .get_all_project_stats()
-            .await
-            .unwrap_or_default();
-        let project_count = project_stats.len();
-        let chunk_count: u64 = project_stats
-            .values()
-            .map(|stats| u64::from(stats.chunks))
-            .sum();
-        let count = if chunk_count == 0 {
-            0
-        } else {
-            bm25_state
-                .code_search
-                .load_all_from_storage(bm25_state.storage.as_ref())
-                .await
-        };
+        let count = bm25_state
+            .code_search
+            .load_all_from_storage(bm25_state.storage.as_ref())
+            .await;
         bm25_state.metrics.record_duration(
             "warmup.code_bm25",
             started.elapsed(),
             serde_json::json!({
                 "chunks": count,
-                "projects": project_count,
-                "stored_chunks": chunk_count,
             }),
         );
         if count > 0 {

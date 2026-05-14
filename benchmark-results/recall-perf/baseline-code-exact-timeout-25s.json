@@ -1,0 +1,53 @@
+{
+  "generated_at": "2026-05-14T09:30:29.474822+00:00",
+  "endpoint": "http://127.0.0.1:23819/mcp",
+  "context": {
+    "project_id": "reddoc_true_dev",
+    "project_stats": {
+      "status": "completed",
+      "files": {
+        "indexed": 0,
+        "parse_percent": "0.0",
+        "total": 3851
+      },
+      "chunks": {
+        "embedded": 207371,
+        "progress_percent": "92.4",
+        "total": 224372
+      },
+      "symbols": {
+        "embedded": 43790,
+        "progress_percent": "99.9",
+        "total": 43816
+      },
+      "serving": {
+        "bm25": 8,
+        "graph": 8,
+        "indexing": null,
+        "semantic": 8,
+        "structural": 8,
+        "symbols": 8,
+        "vector": 8
+      },
+      "indexing_generation": null
+    }
+  },
+  "results": [
+    {
+      "name": "code_recall_exact_symbol",
+      "tool": "recall_code",
+      "arguments": {
+        "project_id": "reddoc_true_dev",
+        "query": "RCChatSearchTabView",
+        "limit": 10
+      },
+      "iterations": 1,
+      "warmup": 0,
+      "elapsed_ms": 25007.625333,
+      "error": {
+        "type": "ScenarioTimeoutError",
+        "message": "scenario exceeded 25.000s wall-clock timeout"
+      }
+    }
+  ]
+}
