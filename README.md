@@ -478,7 +478,7 @@ The server exposes **36 tools** to the AI model, organized into logical categori
 |------|-------------|
 | `store_memory` | Store a new memory with content, optional scope fields, metadata, and optional `importance_score`. Read/list surfaces now also expose additive `contract` + `summary` metadata. |
 | `update_memory` | Update memory fields, including scope and `importance_score`. |
-| `delete_memory` | Delete memory by ID. This remains a single-record compatibility/admin operation, not the normal cleanup workflow. |
+| `delete_memory` | Emergency/admin single-record deletion by ID. Use only with explicit human confirmation; routine cleanup must use `invalidate` followed by `preview_purge_memory`/`purge_memory`. |
 | `consolidate_memory` | Store a new memory and explicitly supersede exact duplicates within the same optional scope/type boundary. |
 | `preview_consolidate_memory` | Preview exact-duplicate consolidation within the same optional scope/type boundary without writing any changes. |
 | `preview_purge_memory` | Preview explicit physical purge candidates for invalidated memories without deleting data. Returns a plan fingerprint. |
@@ -514,6 +514,36 @@ reasons default to 90 days. `DECISION:`, `PROJECT:`, `USER:`, and memories with
 `learning_memory_delete` remains a soft compatibility shim. It archives or
 rejects learning records; it does not physically delete data.
 
+Operational rules:
+
+- Use `invalidate` for routine removal from active recall/list/read-valid paths.
+- Use `preview_purge_memory` before any physical cleanup and pass the returned
+  `plan_fingerprint` to `purge_memory`.
+- Do not use `delete_memory` for stale-memory cleanup. It is reserved for
+  explicit operator-confirmed emergency/admin deletion of one record.
+- Use `get_status` after lifecycle maintenance to inspect database health,
+  invalidated counts, and purge eligibility.
+
+Recommended validation path:
+
+1. Store or update the replacement memory.
+2. Invalidate the stale memory with a clear reason and optional `superseded_by`.
+3. Confirm normal reads exclude the invalidated record via `get_valid`, `recall`,
+   or `search_memory`.
+4. Preview physical cleanup with `preview_purge_memory`.
+5. Apply cleanup only with the matching `plan_fingerprint`, then inspect
+   `get_status`.
+
+Error path guidance:
+
+- Missing or stale fingerprints from `purge_memory` mean the preview is no
+  longer current; run `preview_purge_memory` again.
+- Pinned records (`DECISION:`, `PROJECT:`, `USER:`, or
+  `importance_score >= 4.0`) should remain excluded from purge candidates unless
+  policy is intentionally changed.
+- `delete_memory` bypasses lineage and retention checks. Treat it as a last
+  resort, not a lifecycle mechanism.
+
 ### 🔎 Search & Retrieval
 | Tool | Description |
 |------|-------------|
@@ -529,7 +559,9 @@ rejects learning records; it does not physically delete data.
 | Tool | Description |
 |------|-------------|
 | `index_project` | Index codebase directory for code search. Retrying a previously failed full index requires `force=true` and `confirm_failed_restart=true`. Optional `include_patterns` and `exclude_patterns` allow filtering indexed files. |
-| `code_search` | Semantic code search within indexed projects. Actions: query(project_id, query, limit?) \| find_symbol(project_id, symbol_name) \| find_references(project_id, symbol_name). |
+| `recall_code` | Hybrid code retrieval within indexed projects. Parameters include `project_id`, `query`, `limit`, and optional `mode` (`hybrid` default, `vector` for semantic-only search). `search_code` is an internal implementation function, not a public MCP tool. |
+| `search_symbols` | Search indexed code symbols by name or lookup query. |
+| `symbol_graph` | Traverse callers, callees, and related symbol graph edges from a `symbol_id`. |
 | `project_info` | Project indexing information. Actions: list() \| index(path, force?, confirm_failed_restart?, include_patterns?, exclude_patterns?) \| status(project_id) \| stats(project_id) \| projection(project_id) \| projection_by_locator() \| bind(project_id) \| unbind() \| binding_status(). bind/unbind/status actions manage session-scoped project binding for HTTP MCP clients. Responses include additive contract/summary metadata, including lifecycle, generation, and projection/materialization fields. |
 
 
@@ -638,6 +670,11 @@ When `dry_run=true`, the tool parses and validates every record and returns the 
 - `contract` and `summary` remain **additive-first** surfaces. Clients must ignore unknown fields and unknown enum values.
 - `summary.partial.reason_code` is the canonical machine-readable contract reason. Current Phase 5A values are: `missing`, `stale`, `partial`, `degraded`, `invalid_locator`, `generation_mismatch`, and `unsupported`.
 - `summary.partial.reason` is retained as a legacy compatibility string. Existing values like `projection_stale`, `indexing_in_progress`, and `progress:NN.N` remain readable, but new integrations should key off `reason_code`.
+- Operator guidance for common `reason_code` values:
+  - `missing`: Requested data or serving generation is unavailable. Treat as an empty/blocked result and inspect setup or indexing status.
+  - `stale`: Data came from a previous generation or stale binding. Surface the result as usable but not current, and refresh/rebind when freshness matters.
+  - `degraded`: A fallback path served the request. Use the result cautiously and inspect capability readiness or diagnostics.
+  - `unsupported`: The transport or current context cannot perform the requested action. Switch to a supported transport/context or avoid that action.
 - `project_info(action="list")` discovers projects from the union of index status metadata, code chunks, code symbols, and file manifests, so partially indexed or degraded projects remain operator-visible. Each project entry includes persisted `root_path` when index metadata is available, allowing clients to verify which canonical workspace a `project_id` belongs to even when multiple same-shard projects exist.
 - `project_info(action="index", path="...", include_patterns?, exclude_patterns?)` is a compatibility entrypoint for the same behavior as `index_project`. Manual index requests run as one-shot background tasks; the returned `lifecycle` describes registry-managed watchers/workers only, while `background_task` and `project_info(action="status")` describe the one-shot indexing task. Client wrappers may expose the same surface as `project_status`; in that case use `project_status(action="status")` to inspect `background_task.operation_id`, `state`, progress, and restart guidance.
 - Immediately after queuing, `project_info(action="status")` can return the in-memory `background_task` even before persistent index metadata has been written, so clients do not see a transient `Project not found` during the queued-to-running handoff.
@@ -933,7 +970,7 @@ The job will be marked `Resumable` on next startup (if checkpoints were written)
 | Tool | Description |
 |------|-------------|
 | `get_status` | Get system status and startup progress. |
-| `reset_all_memory` | **DANGER**: Reset all database data (requires `confirm=true`). |
+| `reset_all_memory` | **DANGER**: Reset all database data (requires `confirm=true`). Use only for explicit operator-approved destructive resets, never for routine cleanup. |
 | `how_to_use` | Meta-help tool for concise MCP tool-surface guidance. |
 
 
@@ -990,7 +1027,7 @@ Each line contains `timestamp`, `event`, `pid`, and `fields`. Initial events inc
 | `query.memory_vector` | memory vector search total time plus embedding/vector sub-stage times |
 | `query.memory_bm25` | memory BM25 search total time plus lexical sub-stage time |
 | `query.memory_recall` | hybrid memory recall total time and vector/BM25/PPR sub-stage times |
-| `query.code_search` | code search total time and embedding/search sub-stage times |
+| `query.code_search` | internal code vector search total time and embedding/search sub-stage times, used by `recall_code mode="vector"` |
 | `query.code_recall` | hybrid code recall total time and vector/BM25/PPR sub-stage times |
 
 ### 🔧 Code Intelligence Indexing Pipeline
@@ -1010,7 +1047,7 @@ The indexing pipeline has been partially concurrent since its initial implementa
 | `CODE_INDEX_MAX_INFLIGHT_BYTES` | `134217728` (128 MB) | integer >= 1 | Maximum total bytes in flight through the pipeline. Acts as a memory-pressure bound. Keep this well below your container memory limit. |
 | `CODE_INDEX_STATUS_FLUSH_MS` | `1000` | integer >= 1 | Minimum interval (ms) between indexed-file progress status flushes. Lower values give more granular progress at the cost of more DB writes. |
 | `CODE_INDEX_RELATION_BATCH_SIZE` | `5000` | integer >= 1 | Number of symbol relations written per batch during final relation finalization. |
-| `CODE_INDEX_BM25_MODE` | `final_rebuild` | `final_rebuild`, `incremental` | BM25 finalization strategy. `final_rebuild` (default) rebuilds the lexical index from storage after all chunks are committed and produces a deterministic index state. `incremental` is accepted by the config parser but is not yet consumed by the production indexer; setting it has no effect beyond being stored. |
+| `CODE_INDEX_BM25_MODE` | `final_rebuild` | `final_rebuild`, `incremental` | BM25 finalization strategy. `final_rebuild` (default) rebuilds the lexical index from storage after all chunks are committed and produces a deterministic index state. `incremental` is accepted by the config parser but is experimental and not consumed by the production indexer; do not rely on it for behavior changes. |
 | `CODE_INDEX_INCLUDE_PATTERNS` | *(None)* | comma-delimited glob patterns | Optional whitelist of project-relative glob patterns. If specified, only files matching at least one include pattern are indexed. |
 | `CODE_INDEX_EXCLUDE_PATTERNS` | *(None)* | comma-delimited glob patterns | Optional blacklist of project-relative glob patterns. Files matching any exclude pattern are skipped, even if they match an include pattern. |
 
@@ -1041,6 +1078,17 @@ Every response includes a `summary.partial` object clients can branch on:
 - `is_partial: bool` — `true` when serving stale or missing data
 - `reason_code: string` — machine-readable: `"stale"` | `"partial"` | `"missing"` | `"degraded"`
 - `reason: string` — human-readable description (e.g. `"no_serving_generation"`)
+
+Treat `summary.partial.reason_code` as the control-flow field:
+
+- `missing`: no serving data is available; show an empty result and inspect
+  `project_info`.
+- `stale`: results are from the last promoted generation; use them for context
+  but refresh before freshness-sensitive decisions.
+- `degraded`: a fallback path served the request; inspect
+  `capability_readiness` before relying on ranking quality.
+- `unsupported`: the requested action is unavailable in the current transport or
+  context.
 
 The `capability_readiness.capabilities[]` array shows per-capability freshness. Structural/BM25/Symbols can serve new data while Semantic/Vector embeddings are still computing.
 
@@ -1207,8 +1255,6 @@ From the MCP server repository perspective, the remaining work is now **closure 
 
 See also:
 - [`ARCHITECTURE.md`](./ARCHITECTURE.md) — plugin-facing MCP contract notes
-- `SERVER_PLUGIN_BOUNDARY_STATUS.md` — final repo-side closure and handoff status
-- `PLUGIN_IMPLEMENTATION_PLAN.md` — detailed plugin-side implementation plan
 
 Based on analysis of advanced memory systems like [Hindsight](https://hindsight.vectorize.io/) (see their documentation for details on these mechanisms), we are exploring these "Cognitive Architecture" features for future releases:
 

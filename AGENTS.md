@@ -1,8 +1,9 @@
-# 🤖 AGENTS.md — AI Agent Master Protocol (MCP + VIDA Thinking)
+# AGENTS.md — Memory MCP Agent Protocol
 
 <identity>
-You are an AI agent operating with the **Memory MCP** and **VIDA Thinking Framework**.
-You must adhere to strict workflows, utilize specialized tools, and maintain context across sessions.
+You are an AI agent operating with the **Memory MCP** project protocol.
+Your job is to preserve context across sessions, follow explicit memory workflows,
+and verify behavior before reporting success.
 </identity>
 
 ---
@@ -14,7 +15,7 @@ You must adhere to strict workflows, utilize specialized tools, and maintain con
 2. **[MUST NOT]** Never perform auto-commits without explicit user permission.
 3. **[MUST NOT]** Never propose or implement "hotfixes". Demand root-cause solutions.
 4. **[MUST NOT]** Never delete files or code blocks without explicit discussion.
-5. **[MUST]** Always use `/vida-think` for architectural decisions, debugging, or complex refactoring.
+5. **[MUST]** Use explicit root-cause analysis and a short written plan for architectural decisions, debugging, or complex refactoring.
 6. **[MUST]** After each implementation step, report progress against the active roadmap/phase to the user.
 7. **[MUST]** Treat stale `README.md` and `AGENTS.md` updates as part of task completion whenever behavior, workflow, or operator-facing semantics change.
 8. **[MUST]** Prefer explicit operator-visible write flows (e.g. dedicated consolidation/supersede actions) over silently changing existing write semantics when evolving memory behavior.
@@ -25,62 +26,50 @@ You must adhere to strict workflows, utilize specialized tools, and maintain con
 
 <!-- SURVIVE_COMPRESSION: This entire section MUST be executed after every compression event -->
 
-### ⛔ THIS IS A HARD STOP. DO NOT RESPOND TO THE USER, DO NOT CONTINUE ANY TASK, DO NOT ANSWER ANY QUESTION UNTIL ALL STEPS BELOW ARE FULLY EXECUTED WITH `Read` TOOL CALLS.
+### ⛔ THIS IS A HARD STOP. DO NOT CONTINUE TASK WORK UNTIL THE STEPS BELOW ARE COMPLETE.
 
 When context is compressed or cleared, you MUST execute this sequence **before ANY other action**.
 **Violation = immediate protocol failure. No shortcuts. No "I already know". No skipping.**
 
 1. **Read `AGENTS.md`** — this file (full, not partial). Re-internalize all L0 invariants and protocols.
-2. **Read all `/vida-think` algorithm files** — required for architectural decisions:
-   - `_vida/algorithms/meta-analysis.md`
-   - `_vida/algorithms/pr-cot.md`
-   - `_vida/algorithms/mar.md`
-   - `_vida/algorithms/5-solutions.md`
-   - `_vida/shared/reasoning-modules.md`
-3. **Read `_vida/shared/beads-protocol.md`** — state management protocol.
-4. **Read the context summary** — if one exists in the compressed context, use it to orient.
-5. **Do NOT continue work** until steps 1-3 are complete.
+2. **Read the context summary** — if one exists in the compressed context, use it to orient.
+3. **Re-check active task state** — search Memory MCP task records before resuming any ongoing work.
+4. **Do NOT continue work** until steps 1-3 are complete.
 
 ### Detection heuristic
 If your first tool call after compression is NOT `Read AGENTS.md` — you are violating this protocol.
-If you skip ANY file from step 2 — you are violating this protocol.
-If you respond to the user before completing step 3 — you are violating this protocol.
+If you continue a prior task before checking the context summary and active task state — you are violating this protocol.
 
-**Why**: Algorithms define HOW to think. Without them, `/vida-think` produces shallow analysis
-that violates L0 #5. Compression strips algorithm knowledge — it must be reloaded explicitly.
+**Why**: Compression strips local project state and recent decisions. The protocol must be reloaded
+before continuing work.
 
-**Anti-pattern**: Proceeding with tasks using "remembered" algorithm steps from pre-compression.
-This leads to incomplete META-analysis, skipped PR-CoT passes, or fabricated MAR scores.
+**Anti-pattern**: Proceeding with tasks using remembered state from before compression.
+This leads to stale task state, skipped memory checks, and incorrect operator guidance.
 
 ---
 
-## 🔀 PHASE TRANSITION ROUTING (⛔ BLOCKING)
+## 🔀 WORK MODE ROUTING
 
-> ⛔ STOP. Before starting ANY new phase of work, you MUST execute the MANDATORY BOOT PROTOCOL.
-> Your output is VOID if this gate is not passed. "I already know how to code" is NOT an excuse.
+Before starting a new phase of work, classify the request and choose the smallest workflow that can
+complete it safely.
 
-### GATE-0: Phase Identification & Loading
+### GATE-0: Work Mode Identification
 
-Before ANY output, when a user requests a phase transition, you MUST:
+Before implementation, when a user requests a phase transition, you MUST:
 
-1. **Classify** the user's message against the `PHASE_ROUTING_TABLE` (see below).
-2. **IF** a phase is identified:
-   - State explicitly: `[ROUTER] Phase detected: vida_{phase_name}`
-   - State explicitly: `[ROUTER] Loading: _vida/commands/vida-{phase}.md`
-   - Call the `Read` tool on `_vida/commands/vida-{phase}.md` as your FIRST action.
-   - **WAIT** for the tool result.
-   - Proceed ONLY after executing the `PROOF-OF-LOAD` requirement.
-3. **IF** no phase is identified but a transition is suspected:
-   - Default to `/vida-status` to orient.
+1. **Classify** the message as advice, investigation, implementation, review, or maintenance.
+2. **If implementation is requested**, confirm scope is concrete enough to execute without guessing.
+3. **If scope is ambiguous or risky**, investigate first or ask one precise question.
+4. **If the request changes operator-facing behavior**, include README and AGENTS updates in completion.
 
-### 🧾 PROOF-OF-LOAD REQUIREMENT (CRITICAL)
+### Planning Gate
 
-After the `Read` tool call, your NEXT output line MUST be:
-```
-[PROOF-OF-LOAD] Loaded: _vida/commands/vida-{phase}.md
-Summary of first 3 lines: {actual content extracted directly from the tool result}
-```
-**⛔ If you cannot produce this exact summary from the tool result — you did NOT load the file. STOP. Do not generate code. Retry the tool call.**
+For non-trivial implementation, create a short plan before editing. The plan must include:
+
+- dependencies and sequencing;
+- parallel exploration opportunities;
+- verification commands;
+- explicit scope exclusions.
 
 ---
 
@@ -619,8 +608,8 @@ get_related(entity_id="WP:WP01", depth=2, direction="both")
 | **Memory: start** | REQUIRED `search_text` + show to user |
 | **Memory: completion** | REQUIRED `invalidate` + `store_memory` |
 | **Memory: deletion** | FORBIDDEN `delete_memory`, only `invalidate` |
-| **Thinking: Boot** | REQUIRED to read algorithms after context wipe |
-| **Thinking: Routing** | REQUIRED to identify phases and load specific commands |
+| **Boot** | REQUIRED to read `AGENTS.md`, context summary, and active task state after context wipe |
+| **Work routing** | REQUIRED to classify request mode before implementation |
 
 ---
 
@@ -718,14 +707,16 @@ SurrealDB використовує exclusive LOCK на `/data`. `docker exec` с
 #### Правильні назви MCP Tools
 
 ```
-Memory:  store_memory, update_memory, delete_memory, list_memories, get_memory,
+Memory:  store_memory, update_memory, list_memories, get_memory,
          invalidate, get_valid
+Memory Admin: delete_memory (emergency/admin only; routine cleanup uses invalidate + preview/apply purge)
 Search:  recall (hybrid vector+keyword+graph RRF)
          search_memory (mode: vector|bm25)
 Code:    recall_code (mode: vector|hybrid, DEFAULT=hybrid)
          search_symbols, symbol_graph (symbol_id, action: callers|callees|related)
          index_project, delete_project, project_info (action: list|index|status|stats)
-System:  get_status, reset_all_memory
+System:  get_status
+System Admin: reset_all_memory (destructive; requires confirm=true and explicit operator approval)
 ```
 
 > ⚠️ **`search_code` — це ВНУТРІШНЯ функція, НЕ MCP tool!**

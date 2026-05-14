@@ -21,7 +21,6 @@ doc/
 opencode-mmcp-1file.jsonc
 opencode-mmcp-1file.bck.jsonc
 .opencode/package-lock.json
-_vida
 .sisyphus
 npm/bin/test_ignore.rs
 test_qwen_loading.rs

@@ -168,7 +168,9 @@ impl MemoryMcpServer {
             .map_err(to_rpc_error)
     }
 
-    #[tool(description = "Delete memory by ID.")]
+    #[tool(
+        description = "Emergency/admin single-record deletion by ID. Use only with explicit human confirmation; routine cleanup must use invalidate plus preview_purge_memory/purge_memory."
+    )]
     async fn delete_memory(
         &self,
         params: Parameters<DeleteMemoryParams>,
@@ -725,7 +727,9 @@ impl MemoryMcpServer {
             .map_err(to_rpc_error)
     }
 
-    #[tool(description = "DANGER: Reset all database data (requires confirm=true).")]
+    #[tool(
+        description = "DANGER: Reset all database data (requires confirm=true). Use only for explicit operator-approved destructive resets, never routine cleanup."
+    )]
     async fn reset_all_memory(
         &self,
         params: Parameters<ResetAllMemoryParams>,
@@ -876,10 +880,12 @@ impl MemoryMcpServer {
     ) -> Result<CallToolResult, ErrorData> {
         let text = [
             "=== TOOL GROUPS ===",
-            "Memory: store_memory, update_memory, delete_memory, list_memories, get_memory, invalidate, get_valid, preview_purge_memory, purge_memory, export_memory, import_memory",
+            "Memory: store_memory, update_memory, list_memories, get_memory, invalidate, get_valid, preview_purge_memory, purge_memory, export_memory, import_memory",
+            "Memory admin only: delete_memory requires explicit human confirmation; routine cleanup must use invalidate -> preview_purge_memory -> purge_memory.",
             "Search: recall, search_memory, recall_code, search_symbols, symbol_graph",
             "Project: index_project, delete_project, project_info",
-            "System: get_status, reset_all_memory, how_to_use",
+            "System: get_status, how_to_use",
+            "System destructive admin only: reset_all_memory requires confirm=true and explicit operator approval.",
             "",
             "For exact request/response fields, inspect each tool schema from list_tools.",
         ]
@@ -1793,5 +1799,22 @@ mod tests {
             .and_then(Value::as_str)
             .unwrap_or_default();
         assert!(how_to_use_desc.contains("Meta-help") || how_to_use_desc.contains("meta-help"));
+
+        let delete_memory = get_tool("delete_memory");
+        let delete_memory_desc = delete_memory
+            .get("description")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        assert!(delete_memory_desc.contains("Emergency/admin"));
+        assert!(delete_memory_desc.contains("explicit human confirmation"));
+        assert!(delete_memory_desc.contains("preview_purge_memory"));
+
+        let reset_all_memory = get_tool("reset_all_memory");
+        let reset_all_memory_desc = reset_all_memory
+            .get("description")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        assert!(reset_all_memory_desc.contains("DANGER"));
+        assert!(reset_all_memory_desc.contains("explicit operator-approved"));
     }
 }
