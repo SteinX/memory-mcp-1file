@@ -168,6 +168,130 @@ fn normalize_memory_content(content: &str) -> String {
     content.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
+const MAX_MEMORY_RETRIEVAL_QUERY_CHARS: usize = 4096;
+
+#[derive(Debug, Clone)]
+struct EffectiveRetrievalQuery {
+    text: String,
+    original_chars: usize,
+    effective_chars: usize,
+    truncated: bool,
+    source: &'static str,
+}
+
+impl EffectiveRetrievalQuery {
+    fn diagnostics(&self) -> serde_json::Value {
+        json!({
+            "source": self.source,
+            "original_chars": self.original_chars,
+            "effective_chars": self.effective_chars,
+            "truncated": self.truncated,
+            "max_chars": MAX_MEMORY_RETRIEVAL_QUERY_CHARS,
+        })
+    }
+
+    fn log_if_adjusted(&self, surface: &'static str) {
+        if self.source != "direct" || self.truncated {
+            tracing::warn!(
+                surface,
+                source = self.source,
+                original_chars = self.original_chars,
+                effective_chars = self.effective_chars,
+                truncated = self.truncated,
+                "memory retrieval query adjusted before search"
+            );
+        }
+    }
+}
+
+fn extract_retrieval_query_candidate(query: &str) -> (&str, &'static str) {
+    let looks_like_prompt_context = query.contains("<system-reminder")
+        || query.contains("<Work_Context>")
+        || query.contains("<!-- OMO_INTERNAL_INITIATOR -->");
+    if !looks_like_prompt_context {
+        return (query, "direct");
+    }
+
+    for marker in ["## 1. TASK", "## TASK", "# TASK", "TASK:"] {
+        if let Some(index) = query.rfind(marker) {
+            return (&query[index..], "task_section");
+        }
+    }
+
+    if let Some(index) = query.rfind("</Work_Context>") {
+        let after_context = index + "</Work_Context>".len();
+        if after_context < query.len() {
+            let tail = &query[after_context..];
+            if !tail.trim().is_empty() {
+                return (tail, "post_work_context");
+            }
+        }
+    }
+
+    if let Some(index) = query.rfind("<Work_Context>") {
+        return (&query[index..], "work_context");
+    }
+
+    (query, "prompt_context")
+}
+
+fn normalize_and_limit_retrieval_query(candidate: &str) -> (String, bool) {
+    let mut text = String::with_capacity(candidate.len().min(MAX_MEMORY_RETRIEVAL_QUERY_CHARS));
+    let mut chars = candidate.chars().peekable();
+    let mut previous_was_space = false;
+    let mut truncated = false;
+    let mut written_chars = 0usize;
+
+    while let Some(ch) = chars.next() {
+        let next = if ch.is_whitespace() {
+            if text.is_empty() || previous_was_space {
+                continue;
+            }
+            previous_was_space = true;
+            ' '
+        } else {
+            previous_was_space = false;
+            ch
+        };
+
+        if written_chars >= MAX_MEMORY_RETRIEVAL_QUERY_CHARS {
+            truncated = !ch.is_whitespace() || chars.any(|remaining| !remaining.is_whitespace());
+            break;
+        }
+        text.push(next);
+        written_chars += 1;
+    }
+
+    if text.ends_with(' ') {
+        text.pop();
+    }
+
+    (text, truncated)
+}
+
+fn effective_retrieval_query(query: &str) -> EffectiveRetrievalQuery {
+    let original_chars = query.chars().count();
+    let (candidate, source) = extract_retrieval_query_candidate(query);
+    let (mut text, mut truncated) = normalize_and_limit_retrieval_query(candidate);
+    let mut effective_source = source;
+
+    if text.is_empty() && !query.trim().is_empty() {
+        let fallback = normalize_and_limit_retrieval_query(query);
+        text = fallback.0;
+        truncated = fallback.1;
+        effective_source = "direct_fallback";
+    }
+
+    let effective_chars = text.chars().count();
+    EffectiveRetrievalQuery {
+        text,
+        original_chars,
+        effective_chars,
+        truncated,
+        source: effective_source,
+    }
+}
+
 fn dedup_key(r: &SearchResult) -> String {
     if let Some(h) = &r.content_hash {
         if !h.is_empty() {
@@ -459,6 +583,10 @@ async fn search_impl(
 ) -> anyhow::Result<CallToolResult> {
     let total_start = Instant::now();
     let query_len = params.query.len();
+    let effective_query = effective_retrieval_query(&params.query);
+    effective_query.log_if_adjusted("search_memory_vector");
+    let query_diagnostics = effective_query.diagnostics();
+    let query = effective_query.text.as_str();
     crate::ensure_embedding_ready!(state);
     let filters = match params.to_memory_query() {
         Ok(filters) => filters,
@@ -466,7 +594,7 @@ async fn search_impl(
     };
 
     let embed_start = Instant::now();
-    let query_embedding = state.embedding.embed(&params.query).await?;
+    let query_embedding = state.embedding.embed(query).await?;
     let embed_elapsed = embed_start.elapsed();
 
     let limit = normalize_limit(params.limit);
@@ -498,6 +626,9 @@ async fn search_impl(
         total_start.elapsed(),
         json!({
             "query_len": query_len,
+            "effective_query_len": effective_query.effective_chars,
+            "query_truncated": effective_query.truncated,
+            "query_source": effective_query.source,
             "limit": limit,
             "fetch_limit": fetch_limit,
             "result_count": results.len(),
@@ -514,11 +645,12 @@ async fn search_impl(
         "summary": summary_collection_response("collection", results.len(), Some(results.len()), false, None),
         "contract": memory_search_contract_json(),
         "count": results.len(),
-        "query": params.query,
+        "query": effective_query.text,
         "filters": filters.describe(),
         "vector_hits": results.len(),
         "metadata_filter_diagnostics": metadata_filter_diagnostics(&filters),
         "diagnostics": {
+            "query": query_diagnostics,
             "vector_retrieved_candidates": vector_channel.retrieved_candidates,
             "vector_post_filter_hits": vector_channel.post_filter_hits,
             "returned_hits": results.len(),
@@ -546,6 +678,10 @@ async fn search_text_impl(
 ) -> anyhow::Result<CallToolResult> {
     let total_start = Instant::now();
     let query_len = params.query.len();
+    let effective_query = effective_retrieval_query(&params.query);
+    effective_query.log_if_adjusted("search_memory_bm25");
+    let query_diagnostics = effective_query.diagnostics();
+    let query = effective_query.text.as_str();
     let limit = normalize_limit(params.limit);
     let filters = match params.to_memory_query() {
         Ok(filters) => filters,
@@ -553,7 +689,7 @@ async fn search_text_impl(
     };
     let fetch_limit = overfetch_limit(limit, &filters);
     let bm25_start = Instant::now();
-    let bm25_channel = lexical_memory_search(state, &params.query, &filters, fetch_limit).await;
+    let bm25_channel = lexical_memory_search(state, query, &filters, fetch_limit).await;
     let bm25_elapsed = bm25_start.elapsed();
     let results = apply_min_score_scored(
         score_single_mode_results(
@@ -569,6 +705,9 @@ async fn search_text_impl(
         total_start.elapsed(),
         json!({
             "query_len": query_len,
+            "effective_query_len": effective_query.effective_chars,
+            "query_truncated": effective_query.truncated,
+            "query_source": effective_query.source,
             "limit": limit,
             "fetch_limit": fetch_limit,
             "result_count": results.len(),
@@ -584,11 +723,12 @@ async fn search_text_impl(
         "summary": summary_collection_response("collection", results.len(), Some(results.len()), false, None),
         "contract": memory_search_contract_json(),
         "count": results.len(),
-        "query": params.query,
+        "query": effective_query.text,
         "filters": filters.describe(),
         "bm25_hits": results.len(),
         "metadata_filter_diagnostics": metadata_filter_diagnostics(&filters),
         "diagnostics": {
+            "query": query_diagnostics,
             "bm25_retrieved_candidates": bm25_channel.retrieved_candidates,
             "bm25_post_filter_hits": bm25_channel.post_filter_hits,
             "returned_hits": results.len(),
@@ -622,6 +762,10 @@ async fn recall_impl(
 
     let total_start = Instant::now();
     let query_len = params.query.len();
+    let effective_query = effective_retrieval_query(&params.query);
+    effective_query.log_if_adjusted("recall");
+    let query_diagnostics = effective_query.diagnostics();
+    let query = effective_query.text.as_str();
     let filters = match params.to_memory_query() {
         Ok(filters) => filters,
         Err(e) => return Ok(error_response(e)),
@@ -639,7 +783,7 @@ async fn recall_impl(
     let embedding_ready = state.embedding.is_ready();
     let embed_start = Instant::now();
     let query_embedding = if embedding_ready {
-        Some(state.embedding.embed(&params.query).await?)
+        Some(state.embedding.embed(query).await?)
     } else {
         None
     };
@@ -660,7 +804,7 @@ async fn recall_impl(
         enrich_results_truth(dedup_memory_results(vector_channel.results, fetch_limit));
 
     let bm25_start = Instant::now();
-    let bm25_channel = lexical_memory_search(state, &params.query, &filters, fetch_limit).await;
+    let bm25_channel = lexical_memory_search(state, query, &filters, fetch_limit).await;
     let bm25_elapsed = bm25_start.elapsed();
     let bm25_results =
         enrich_results_truth(dedup_memory_results(bm25_channel.results, fetch_limit));
@@ -842,6 +986,9 @@ async fn recall_impl(
         total_start.elapsed(),
         json!({
             "query_len": query_len,
+            "effective_query_len": effective_query.effective_chars,
+            "query_truncated": effective_query.truncated,
+            "query_source": effective_query.source,
             "limit": limit,
             "fetch_limit": fetch_limit,
             "result_count": scored_memories.len(),
@@ -867,9 +1014,10 @@ async fn recall_impl(
         "summary": summary_collection_response("collection", scored_memories.len(), Some(scored_memories.len()), false, None),
         "contract": memory_search_contract_json(),
         "count": scored_memories.len(),
-        "query": params.query,
+        "query": effective_query.text,
         "filters": filters.describe(),
         "diagnostics": {
+            "query": query_diagnostics,
             "embedding_ready": embedding_ready,
             "degraded_reason": if embedding_ready { serde_json::Value::Null } else { json!("embedding_model_loading_bm25_only") },
             "vector_hits": vector_results.len(),
@@ -1230,6 +1378,136 @@ mod tests {
         let text = val["content"][0]["text"].as_str().unwrap();
         let json: serde_json::Value = serde_json::from_str(text).unwrap();
         assert_eq!(json["count"], 0);
+    }
+
+    #[test]
+    fn test_effective_retrieval_query_extracts_task_from_prompt_context() {
+        let query = r#"<system-reminder>
+noise that should not become a retrieval query
+</system-reminder>
+
+<Work_Context>
+## Notepad Location
+irrelevant orchestration details
+</Work_Context>
+## 1. TASK
+F4. Scope Fidelity Check for the Swift 6 strict-concurrency migration.
+
+## 2. EXPECTED OUTCOME
+Produce verdict: APPROVE or REJECT.
+<!-- OMO_INTERNAL_INITIATOR -->"#;
+
+        let effective = effective_retrieval_query(query);
+
+        assert_eq!(effective.source, "task_section");
+        assert!(effective.text.starts_with("## 1. TASK F4."));
+        assert!(effective.text.contains("Scope Fidelity Check"));
+        assert!(!effective.text.contains("<system-reminder>"));
+        assert!(!effective.text.contains("<Work_Context>"));
+        assert!(effective.original_chars > effective.effective_chars);
+        assert!(!effective.truncated);
+    }
+
+    #[test]
+    fn test_effective_retrieval_query_ignores_empty_post_work_context_tail() {
+        let query = r#"<system-reminder>
+noise that should not become a retrieval query
+</system-reminder>
+
+<Work_Context>
+## Notepad Location
+context that should remain searchable when no task section exists
+</Work_Context>
+   "#;
+
+        let effective = effective_retrieval_query(query);
+
+        assert_eq!(effective.source, "work_context");
+        assert!(effective.text.starts_with("<Work_Context>"));
+        assert!(effective
+            .text
+            .contains("context that should remain searchable"));
+        assert!(!effective.text.contains("<system-reminder>"));
+        assert!(effective.original_chars > effective.effective_chars);
+        assert!(!effective.truncated);
+    }
+
+    #[test]
+    fn test_effective_retrieval_query_limits_long_direct_query() {
+        let query = "token ".repeat(MAX_MEMORY_RETRIEVAL_QUERY_CHARS + 32);
+        let effective = effective_retrieval_query(&query);
+
+        assert_eq!(effective.source, "direct");
+        assert_eq!(effective.effective_chars, MAX_MEMORY_RETRIEVAL_QUERY_CHARS);
+        assert!(effective.truncated);
+        assert!(!effective.text.ends_with(' '));
+    }
+
+    #[tokio::test]
+    async fn test_recall_uses_effective_query_for_prompt_context() {
+        let ctx = TestContext::new().await;
+        let _ = seed_memory(
+            &ctx,
+            Memory {
+                content: "scope fidelity approve reject migration".to_string(),
+                embedding: Some(vec![0.2; 768]),
+                ..Memory::new("scope fidelity approve reject migration".to_string())
+            },
+        )
+        .await;
+
+        let result = recall(
+            &ctx.state,
+            RecallParams {
+                query: r#"<system-reminder>
+noise that should be stripped before retrieval
+</system-reminder>
+<Work_Context>
+operator-only notepad instructions
+</Work_Context>
+## 1. TASK
+F4. Scope Fidelity Check for migration.
+
+## 2. EXPECTED OUTCOME
+Produce verdict APPROVE or REJECT.
+<!-- OMO_INTERNAL_INITIATOR -->"#
+                    .to_string(),
+                limit: Some(5),
+                vector_weight: None,
+                bm25_weight: None,
+                ppr_weight: None,
+                min_score: None,
+                user_id: None,
+                agent_id: None,
+                run_id: None,
+                namespace: None,
+                memory_type: None,
+                metadata_filter: None,
+                valid_at: None,
+                event_after: None,
+                event_before: None,
+                ingestion_after: None,
+                ingestion_before: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        let val = serde_json::to_value(&result).unwrap();
+        let text = val["content"][0]["text"].as_str().unwrap();
+        let json: serde_json::Value = serde_json::from_str(text).unwrap();
+
+        assert_eq!(json["diagnostics"]["query"]["source"], "task_section");
+        assert_eq!(json["diagnostics"]["query"]["truncated"], false);
+        assert!(json["query"]
+            .as_str()
+            .unwrap()
+            .starts_with("## 1. TASK F4."));
+        assert!(!json["query"]
+            .as_str()
+            .unwrap()
+            .contains("<system-reminder>"));
+        assert!(json["count"].as_u64().unwrap() > 0);
     }
 
     #[tokio::test]
