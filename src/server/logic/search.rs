@@ -207,7 +207,7 @@ impl EffectiveRetrievalQuery {
 fn extract_retrieval_query_candidate(query: &str) -> (&str, &'static str) {
     let looks_like_prompt_context = query.contains("<system-reminder")
         || query.contains("<Work_Context>")
-        || query.contains("<!-- OMO_INTERNAL_INITIATOR -->");
+        || query.contains("<!-- MEMORY_MCP_INTERNAL_INITIATOR -->");
     if !looks_like_prompt_context {
         return (query, "direct");
     }
@@ -1395,7 +1395,7 @@ F4. Scope Fidelity Check for the Swift 6 strict-concurrency migration.
 
 ## 2. EXPECTED OUTCOME
 Produce verdict: APPROVE or REJECT.
-<!-- OMO_INTERNAL_INITIATOR -->"#;
+<!-- MEMORY_MCP_INTERNAL_INITIATOR -->"#;
 
         let effective = effective_retrieval_query(query);
 
@@ -1470,7 +1470,7 @@ F4. Scope Fidelity Check for migration.
 
 ## 2. EXPECTED OUTCOME
 Produce verdict APPROVE or REJECT.
-<!-- OMO_INTERNAL_INITIATOR -->"#
+<!-- MEMORY_MCP_INTERNAL_INITIATOR -->"#
                     .to_string(),
                 limit: Some(5),
                 vector_weight: None,
