@@ -17,15 +17,33 @@ use crate::graph::{
 };
 use crate::server::params::{RecallParams, SearchParams};
 use crate::storage::StorageBackend;
-use crate::types::{
-    ExportIdentity, MemoryQuery, MemoryType, ScoredMemory, SearchResult,
-};
+use crate::types::{ExportIdentity, Memory, MemoryQuery, MemoryType, ScoredMemory, SearchResult};
 
 use super::contracts::{export_contract_meta, summary_collection_response, with_surface_guidance};
+use super::memory_lifecycle::{derive_memory_lifecycle, RetentionPolicy};
 use super::{error_response, normalize_limit, success_json};
 
 fn consolidation_trace_from_result(result: &SearchResult) -> serde_json::Value {
     let invalidated = result.valid_until.is_some() || result.invalidation_reason.is_some();
+    let lifecycle_memory = Memory {
+        content: result.content.clone(),
+        memory_type: result.memory_type.clone(),
+        user_id: result.user_id.clone(),
+        agent_id: result.agent_id.clone(),
+        run_id: result.run_id.clone(),
+        namespace: result.namespace.clone(),
+        metadata: result.metadata.clone(),
+        importance_score: result.importance_score,
+        valid_until: result.valid_until.clone(),
+        invalidation_reason: result.invalidation_reason.clone(),
+        superseded_by: result.superseded_by.clone(),
+        ..Memory::new(result.content.clone())
+    };
+    let lifecycle = derive_memory_lifecycle(
+        &lifecycle_memory,
+        chrono::Utc::now(),
+        &RetentionPolicy::default(),
+    );
     let status = match (invalidated, result.superseded_by.as_ref()) {
         (true, Some(_)) => "superseded",
         (true, None) => "invalidated",
@@ -39,6 +57,12 @@ fn consolidation_trace_from_result(result: &SearchResult) -> serde_json::Value {
         "invalidation_reason": result.invalidation_reason,
         "superseded_by": result.superseded_by,
         "has_replacement": result.superseded_by.is_some(),
+        "lifecycle_state": lifecycle.lifecycle_state,
+        "default_search_visible": lifecycle.default_search_visible,
+        "purge_eligible": lifecycle.purge_eligible,
+        "retention_reason": lifecycle.retention_reason,
+        "eligible_after": lifecycle.eligible_after.map(crate::types::Datetime::from),
+        "pinned": lifecycle.pinned,
     })
 }
 

@@ -11,18 +11,22 @@ use crate::embedding::ContentHasher;
 use crate::server::params::{
     normalize_project_id, ConsolidateMemoryParams, DeleteMemoryParams, ExportMemoryParams,
     GetMemoryParams, GetValidAtParams, GetValidParams, ImportMemoryParams, InvalidateParams,
-    ListMemoriesParams, PreviewConsolidateMemoryParams, StoreMemoryParams, UpdateMemoryParams,
+    ListMemoriesParams, PreviewConsolidateMemoryParams, PreviewPurgeMemoryParams,
+    PurgeMemoryParams, StoreMemoryParams, UpdateMemoryParams,
 };
-use crate::storage::traits::{MemoryExportOptions, MemoryImportOptions};
+use crate::storage::traits::{MemoryExportOptions, MemoryGcFilter, MemoryImportOptions};
 use crate::storage::StorageBackend;
-use crate::types::{Datetime, EmbeddingState, MemoryQuery};
 use crate::types::{
     record_key_to_string, ExportIdentity, ImportConflictStrategy, ImportError, ImportErrorCode,
     ImportMemoryResponse, Memory, MemoryType, MemoryUpdate, MigrationMemoryRecord,
     MigrationRecordType, MigrationSummary, MEMORY_MIGRATION_SCHEMA_VERSION,
 };
+use crate::types::{Datetime, EmbeddingState, MemoryQuery};
 
 use super::contracts::{export_contract_meta, summary_collection_response, with_surface_guidance};
+use super::memory_lifecycle::{
+    derive_memory_lifecycle, MemoryLifecycleView, RetentionPolicy, RETENTION_POLICY_VERSION,
+};
 use super::{error_response, normalize_limit, strip_embedding, strip_embeddings, success_json};
 
 fn normalize_importance_score(value: Option<f32>) -> anyhow::Result<Option<f32>> {
@@ -657,8 +661,170 @@ fn operator_summary(
     })
 }
 
+#[derive(Clone)]
+struct PurgeCandidate {
+    id: String,
+    memory: Memory,
+    lifecycle: MemoryLifecycleView,
+}
+
+struct PurgePlan {
+    filter: MemoryGcFilter,
+    limit: usize,
+    older_than_days: Option<i64>,
+    candidate_count: usize,
+    total_invalidated_matches: usize,
+    has_more: bool,
+    reason_distribution: Vec<serde_json::Value>,
+    candidates: Vec<PurgeCandidate>,
+    plan_fingerprint: String,
+    retention_summary: serde_json::Value,
+}
+
+fn memory_id(memory: &Memory) -> Option<String> {
+    memory
+        .id
+        .as_ref()
+        .map(|thing| record_key_to_string(&thing.key))
+}
+
+fn purge_operator_summary(stage: &str, retention_summary: &serde_json::Value) -> serde_json::Value {
+    json!({
+        "stage": stage,
+        "primary_signal": if stage == "preview" { "retention_summary" } else { "purge_plan" },
+        "requires_operator_attention": retention_summary["pinned_count"].as_u64().unwrap_or(0) > 0,
+        "attention_flags": if retention_summary["pinned_count"].as_u64().unwrap_or(0) > 0 {
+            json!(["pinned_records_excluded"])
+        } else {
+            json!([])
+        },
+        "available_sections": [
+            "retention_summary",
+            "purge_plan",
+            "attention_summary"
+        ],
+    })
+}
+
+fn build_purge_plan_fingerprint(
+    filter: &MemoryGcFilter,
+    limit: usize,
+    older_than_days: Option<i64>,
+    candidate_ids: &[String],
+) -> String {
+    let payload = json!({
+        "policy_version": RETENTION_POLICY_VERSION,
+        "filters": {
+            "namespace": filter.namespace,
+            "memory_type": filter.memory_type.as_ref().map(|m| match m {
+                MemoryType::Episodic => "episodic",
+                MemoryType::Semantic => "semantic",
+                MemoryType::Procedural => "procedural",
+            }),
+            "invalidation_reason": filter.invalidation_reason,
+            "invalidated_before": filter.invalidated_before.map(crate::types::Datetime::from),
+            "older_than_days": older_than_days,
+        },
+        "limit": limit,
+        "candidate_ids": candidate_ids,
+    });
+    blake3::hash(payload.to_string().as_bytes())
+        .to_hex()
+        .to_string()
+}
+
+async fn build_purge_plan(
+    state: &Arc<AppState>,
+    namespace: Option<String>,
+    memory_type: Option<MemoryType>,
+    invalidation_reason: Option<String>,
+    older_than_days: Option<i64>,
+    limit: usize,
+) -> anyhow::Result<PurgePlan> {
+    let now = chrono::Utc::now();
+    let invalidated_before = older_than_days.map(|days| now - chrono::Duration::days(days.max(0)));
+    let filter = MemoryGcFilter {
+        namespace,
+        memory_type,
+        invalidation_reason,
+        invalidated_before,
+    };
+    let policy = RetentionPolicy::default();
+    let fetch_limit = limit.saturating_mul(5).max(limit).max(1);
+    let memories = state
+        .storage
+        .list_invalidated_memories_for_gc(&filter, fetch_limit, 0)
+        .await?;
+    let total_invalidated_matches = state
+        .storage
+        .count_invalidated_memories_for_gc(&filter)
+        .await?;
+    let reason_distribution = state
+        .storage
+        .count_invalidated_memories_by_reason(&filter)
+        .await?
+        .into_iter()
+        .map(|row| json!({ "reason": row.reason, "count": row.count }))
+        .collect::<Vec<_>>();
+
+    let mut candidates = Vec::new();
+    let mut pinned_count = 0usize;
+    let mut not_yet_eligible_count = 0usize;
+    for memory in memories {
+        let lifecycle = derive_memory_lifecycle(&memory, now, &policy);
+        if lifecycle.pinned {
+            pinned_count += 1;
+        } else if !lifecycle.purge_eligible {
+            not_yet_eligible_count += 1;
+        }
+        if lifecycle.purge_eligible {
+            if let Some(id) = memory_id(&memory) {
+                candidates.push(PurgeCandidate {
+                    id,
+                    memory,
+                    lifecycle,
+                });
+            }
+        }
+        if candidates.len() >= limit {
+            break;
+        }
+    }
+
+    let candidate_ids = candidates
+        .iter()
+        .map(|candidate| candidate.id.clone())
+        .collect::<Vec<_>>();
+    let plan_fingerprint =
+        build_purge_plan_fingerprint(&filter, limit, older_than_days, &candidate_ids);
+    let has_more = total_invalidated_matches > candidate_ids.len();
+    let retention_summary = json!({
+        "policy_version": RETENTION_POLICY_VERSION,
+        "candidate_count": candidate_ids.len(),
+        "total_invalidated_matches": total_invalidated_matches,
+        "pinned_count": pinned_count,
+        "not_yet_eligible_count": not_yet_eligible_count,
+        "reason_distribution": reason_distribution,
+    });
+
+    Ok(PurgePlan {
+        filter,
+        limit,
+        older_than_days,
+        candidate_count: candidate_ids.len(),
+        total_invalidated_matches,
+        has_more,
+        reason_distribution,
+        candidates,
+        plan_fingerprint,
+        retention_summary,
+    })
+}
+
 fn consolidation_trace(memory: &Memory) -> serde_json::Value {
     let invalidated = memory.valid_until.is_some() || memory.invalidation_reason.is_some();
+    let lifecycle =
+        derive_memory_lifecycle(memory, chrono::Utc::now(), &RetentionPolicy::default());
     let replacement_kind = match (invalidated, memory.superseded_by.as_ref()) {
         (true, Some(_)) => "superseded",
         (true, None) => "invalidated",
@@ -672,6 +838,12 @@ fn consolidation_trace(memory: &Memory) -> serde_json::Value {
         "invalidation_reason": memory.invalidation_reason,
         "superseded_by": memory.superseded_by,
         "has_replacement": memory.superseded_by.is_some(),
+        "lifecycle_state": lifecycle.lifecycle_state,
+        "default_search_visible": lifecycle.default_search_visible,
+        "purge_eligible": lifecycle.purge_eligible,
+        "retention_reason": lifecycle.retention_reason,
+        "eligible_after": lifecycle.eligible_after.map(crate::types::Datetime::from),
+        "pinned": lifecycle.pinned,
     })
 }
 
@@ -1044,6 +1216,172 @@ pub async fn preview_consolidate_memory(
     })))
 }
 
+pub async fn preview_purge_memory(
+    state: &Arc<AppState>,
+    params: PreviewPurgeMemoryParams,
+) -> anyhow::Result<CallToolResult> {
+    let limit = normalize_limit(params.limit);
+    let memory_type = match params.memory_type_filter() {
+        Ok(value) => value,
+        Err(e) => return Ok(error_response(e)),
+    };
+    let plan = match build_purge_plan(
+        state,
+        params.namespace,
+        memory_type,
+        params.invalidation_reason,
+        params.older_than_days,
+        limit,
+    )
+    .await
+    {
+        Ok(plan) => plan,
+        Err(e) => return Ok(error_response(e)),
+    };
+
+    let sample_ids = plan
+        .candidates
+        .iter()
+        .take(20)
+        .map(|candidate| candidate.id.clone())
+        .collect::<Vec<_>>();
+    let sample_records = plan
+        .candidates
+        .iter()
+        .take(10)
+        .map(|candidate| {
+            json!({
+                "id": candidate.id,
+                "invalidation_reason": candidate.memory.invalidation_reason,
+                "valid_until": candidate.memory.valid_until,
+                "lifecycle": candidate.lifecycle.to_json(),
+            })
+        })
+        .collect::<Vec<_>>();
+    let attention = json!({
+        "requires_operator_attention": plan.retention_summary["pinned_count"].as_u64().unwrap_or(0) > 0,
+        "attention_flags": if plan.retention_summary["pinned_count"].as_u64().unwrap_or(0) > 0 {
+            json!(["pinned_records_excluded"])
+        } else {
+            json!([])
+        },
+        "fingerprint_checked": false,
+    });
+
+    Ok(success_json(json!({
+        "mode": "preview",
+        "candidate_count": plan.candidate_count,
+        "total_invalidated_matches": plan.total_invalidated_matches,
+        "has_more": plan.has_more,
+        "reason_distribution": plan.reason_distribution,
+        "sample_ids": sample_ids,
+        "sample_records": sample_records,
+        "plan_fingerprint": plan.plan_fingerprint,
+        "retention_summary": plan.retention_summary,
+        "purge_plan": {
+            "policy_version": RETENTION_POLICY_VERSION,
+            "limit": plan.limit,
+            "older_than_days": plan.older_than_days,
+            "filters": {
+                "namespace": plan.filter.namespace,
+                "memory_type": plan.filter.memory_type.as_ref().map(|m| match m {
+                    MemoryType::Episodic => "episodic",
+                    MemoryType::Semantic => "semantic",
+                    MemoryType::Procedural => "procedural",
+                }),
+                "invalidation_reason": plan.filter.invalidation_reason,
+                "invalidated_before": plan.filter.invalidated_before.map(crate::types::Datetime::from),
+            }
+        },
+        "attention_summary": attention,
+        "operator_summary": purge_operator_summary("preview", &plan.retention_summary),
+        "notes": [
+            "Preview does not delete data.",
+            "Only invalidated records that are purge_eligible under the retention policy are candidates.",
+            "Pass plan_fingerprint as expected_plan_fingerprint to purge_memory."
+        ]
+    })))
+}
+
+pub async fn purge_memory(
+    state: &Arc<AppState>,
+    params: PurgeMemoryParams,
+) -> anyhow::Result<CallToolResult> {
+    let expected = params.expected_plan_fingerprint.trim();
+    if expected.is_empty() {
+        return Ok(error_response(
+            "expected_plan_fingerprint is required; run preview_purge_memory first",
+        ));
+    }
+
+    let limit = normalize_limit(params.limit);
+    let memory_type = match params.memory_type_filter() {
+        Ok(value) => value,
+        Err(e) => return Ok(error_response(e)),
+    };
+    let plan = match build_purge_plan(
+        state,
+        params.namespace,
+        memory_type,
+        params.invalidation_reason,
+        params.older_than_days,
+        limit,
+    )
+    .await
+    {
+        Ok(plan) => plan,
+        Err(e) => return Ok(error_response(e)),
+    };
+
+    if expected != plan.plan_fingerprint {
+        return Ok(error_response(format!(
+            "Purge preview is stale. expected_plan_fingerprint does not match current plan (expected={}, current={}). Re-run preview_purge_memory.",
+            expected, plan.plan_fingerprint
+        )));
+    }
+
+    let ids = plan
+        .candidates
+        .iter()
+        .map(|candidate| candidate.id.clone())
+        .collect::<Vec<_>>();
+    let deleted_ids = match state.storage.delete_memories_batch(&ids).await {
+        Ok(ids) => ids,
+        Err(e) => return Ok(error_response(e)),
+    };
+    for id in &deleted_ids {
+        state.memory_search.remove_memory(id).await;
+    }
+
+    let deleted_set = deleted_ids.iter().cloned().collect::<HashSet<_>>();
+    let failed_ids = ids
+        .iter()
+        .filter(|id| !deleted_set.contains(*id))
+        .cloned()
+        .collect::<Vec<_>>();
+    let attention = json!({
+        "requires_operator_attention": !failed_ids.is_empty(),
+        "attention_flags": if failed_ids.is_empty() { json!([]) } else { json!(["partial_delete_failure"]) },
+        "fingerprint_checked": true,
+    });
+
+    Ok(success_json(json!({
+        "mode": "apply",
+        "deleted_count": deleted_ids.len(),
+        "deleted_ids": deleted_ids,
+        "failed_ids": failed_ids,
+        "has_more": plan.has_more,
+        "plan_fingerprint": plan.plan_fingerprint,
+        "retention_summary": plan.retention_summary,
+        "execution_summary": {
+            "attempted_count": ids.len(),
+            "used_plan_fingerprint": expected,
+        },
+        "attention_summary": attention,
+        "operator_summary": purge_operator_summary("apply", &plan.retention_summary),
+    })))
+}
+
 pub async fn get_memory(
     state: &Arc<AppState>,
     params: GetMemoryParams,
@@ -1322,11 +1660,11 @@ pub async fn import_memory(
     let dry_run = params.dry_run.unwrap_or(false);
     let allow_invalidated = params.allow_invalidated.unwrap_or(false);
     let preserve_project_id = params.preserve_project_id.unwrap_or(false);
-    let conflict_strategy = match parse_import_conflict_strategy(params.conflict_strategy.as_deref())
-    {
-        Ok(strategy) => strategy,
-        Err(e) => return Ok(error_response(e)),
-    };
+    let conflict_strategy =
+        match parse_import_conflict_strategy(params.conflict_strategy.as_deref()) {
+            Ok(strategy) => strategy,
+            Err(e) => return Ok(error_response(e)),
+        };
     let (records, errors, total_records) = parse_import_jsonl(&params.jsonl);
 
     if !errors.is_empty() {
@@ -1341,14 +1679,11 @@ pub async fn import_memory(
         ));
     }
 
-    let project_id = match resolve_import_project_id(
-        &records,
-        Some(params.project_id),
-        preserve_project_id,
-    ) {
-        Ok(project_id) => project_id,
-        Err(e) => return Ok(error_response(e)),
-    };
+    let project_id =
+        match resolve_import_project_id(&records, Some(params.project_id), preserve_project_id) {
+            Ok(project_id) => project_id,
+            Err(e) => return Ok(error_response(e)),
+        };
     let options = MemoryImportOptions {
         project_id,
         conflict_strategy,
@@ -1456,6 +1791,148 @@ mod tests {
             .collect::<Result<Vec<_>, _>>()
             .unwrap()
             .join("\n")
+    }
+
+    async fn seed_invalidated_memory(
+        ctx: &TestContext,
+        content: &str,
+        reason: &str,
+        invalidated_at: chrono::DateTime<chrono::Utc>,
+    ) -> String {
+        let id = ctx
+            .state
+            .storage
+            .create_memory(Memory {
+                content: content.to_string(),
+                namespace: Some("gc-project".to_string()),
+                valid_until: Some(Datetime::from(invalidated_at)),
+                invalidation_reason: Some(reason.to_string()),
+                content_hash: Some(ContentHasher::hash(content)),
+                ..Memory::new(content.to_string())
+            })
+            .await
+            .unwrap();
+        if let Ok(Some(memory)) = ctx.state.storage.get_memory(&id).await {
+            ctx.state.memory_search.upsert_memory(memory).await;
+        }
+        id
+    }
+
+    #[tokio::test]
+    async fn preview_and_apply_purge_memory_deletes_only_eligible_invalidated_records() {
+        let ctx = TestContext::new().await;
+        let old_id = seed_invalidated_memory(
+            &ctx,
+            "old purge candidate",
+            crate::forgetting::capacity::CAPACITY_CONTROLLER_INVALIDATION_REASON,
+            chrono::Utc::now() - chrono::Duration::days(31),
+        )
+        .await;
+        let fresh_id = seed_invalidated_memory(
+            &ctx,
+            "fresh archive not eligible",
+            crate::forgetting::capacity::CAPACITY_CONTROLLER_INVALIDATION_REASON,
+            chrono::Utc::now() - chrono::Duration::days(2),
+        )
+        .await;
+
+        let preview = preview_purge_memory(
+            &ctx.state,
+            PreviewPurgeMemoryParams {
+                namespace: Some("gc-project".to_string()),
+                memory_type: None,
+                invalidation_reason: Some(
+                    crate::forgetting::capacity::CAPACITY_CONTROLLER_INVALIDATION_REASON
+                        .to_string(),
+                ),
+                older_than_days: None,
+                limit: Some(10),
+            },
+        )
+        .await
+        .unwrap();
+        let preview_json = tool_json(&preview);
+        assert_eq!(preview_json["candidate_count"], 1);
+        assert_eq!(preview_json["sample_ids"][0], old_id);
+
+        let fingerprint = preview_json["plan_fingerprint"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let apply = purge_memory(
+            &ctx.state,
+            PurgeMemoryParams {
+                namespace: Some("gc-project".to_string()),
+                memory_type: None,
+                invalidation_reason: Some(
+                    crate::forgetting::capacity::CAPACITY_CONTROLLER_INVALIDATION_REASON
+                        .to_string(),
+                ),
+                older_than_days: None,
+                limit: Some(10),
+                expected_plan_fingerprint: fingerprint,
+            },
+        )
+        .await
+        .unwrap();
+        let apply_json = tool_json(&apply);
+        assert_eq!(apply_json["deleted_count"], 1);
+        assert!(ctx
+            .state
+            .storage
+            .get_memory(&old_id)
+            .await
+            .unwrap()
+            .is_none());
+        assert!(ctx
+            .state
+            .storage
+            .get_memory(&fresh_id)
+            .await
+            .unwrap()
+            .is_some());
+        let bm25_after_purge = ctx
+            .state
+            .memory_search
+            .search("old purge candidate", None, 10)
+            .await;
+        assert!(
+            bm25_after_purge.iter().all(|result| result.id != old_id),
+            "purged memory must be removed from BM25 index"
+        );
+    }
+
+    #[tokio::test]
+    async fn purge_memory_rejects_stale_fingerprint() {
+        let ctx = TestContext::new().await;
+        seed_invalidated_memory(
+            &ctx,
+            "old purge candidate",
+            crate::forgetting::capacity::CAPACITY_CONTROLLER_INVALIDATION_REASON,
+            chrono::Utc::now() - chrono::Duration::days(31),
+        )
+        .await;
+
+        let result = purge_memory(
+            &ctx.state,
+            PurgeMemoryParams {
+                namespace: Some("gc-project".to_string()),
+                memory_type: None,
+                invalidation_reason: Some(
+                    crate::forgetting::capacity::CAPACITY_CONTROLLER_INVALIDATION_REASON
+                        .to_string(),
+                ),
+                older_than_days: None,
+                limit: Some(10),
+                expected_plan_fingerprint: "stale".to_string(),
+            },
+        )
+        .await
+        .unwrap();
+        assert!(tool_json(&result)["error"]
+            .as_str()
+            .unwrap()
+            .contains("Purge preview is stale"));
     }
 
     #[tokio::test]
@@ -1905,8 +2382,8 @@ mod tests {
         .unwrap();
         assert_eq!(tool_json(&before)["total"], 0);
 
-        let valid_line = serde_json::to_string(&import_record("valid-before-bad", "valid before bad"))
-            .unwrap();
+        let valid_line =
+            serde_json::to_string(&import_record("valid-before-bad", "valid before bad")).unwrap();
         let result = import_memory(
             &ctx.state,
             ImportMemoryParams {

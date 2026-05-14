@@ -3,7 +3,10 @@ use surrealdb::Surreal;
 
 use std::collections::{HashMap, HashSet};
 
-use crate::storage::traits::{CapacityMemoryCandidate, MemoryExportOptions, MemoryImportOptions};
+use crate::storage::traits::{
+    CapacityMemoryCandidate, MemoryExportOptions, MemoryGcFilter, MemoryGcReasonCount,
+    MemoryImportOptions,
+};
 use crate::types::SurrealValue;
 use crate::types::{
     record_key_to_string, AppError, ExportMemoryResponse, ImportConflictStrategy, ImportError,
@@ -218,6 +221,16 @@ pub(super) async fn delete_memory(db: &Surreal<Db>, id: &str) -> Result<bool> {
     Ok(deleted.is_some())
 }
 
+pub(super) async fn delete_memories_batch(db: &Surreal<Db>, ids: &[String]) -> Result<Vec<String>> {
+    let mut deleted_ids = Vec::new();
+    for id in ids {
+        if delete_memory(db, id).await? {
+            deleted_ids.push(id.clone());
+        }
+    }
+    Ok(deleted_ids)
+}
+
 pub(super) async fn list_memories(
     db: &Surreal<Db>,
     filters: &MemoryQuery,
@@ -317,6 +330,65 @@ pub(super) async fn count_valid_memories(db: &Surreal<Db>) -> Result<usize> {
         .and_then(|v| v.get("count").and_then(|c| c.as_u64()))
         .unwrap_or(0) as usize;
     Ok(count)
+}
+
+pub(super) async fn list_invalidated_memories_for_gc(
+    db: &Surreal<Db>,
+    filter: &MemoryGcFilter,
+    limit: usize,
+    offset: usize,
+) -> Result<Vec<Memory>> {
+    let sql = format!(
+        "SELECT {MEMORY_SELECT} FROM memories WHERE {} ORDER BY valid_until ASC LIMIT $limit START $offset",
+        gc_filter_clause()
+    );
+    let mut response = bind_gc_filter(db.query(&sql), filter)
+        .bind(("limit", limit))
+        .bind(("offset", offset))
+        .await?;
+    let memories: Vec<Memory> = response.take(0)?;
+    Ok(memories)
+}
+
+pub(super) async fn count_invalidated_memories_for_gc(
+    db: &Surreal<Db>,
+    filter: &MemoryGcFilter,
+) -> Result<usize> {
+    let sql = format!(
+        "SELECT count() FROM memories WHERE {} GROUP ALL",
+        gc_filter_clause()
+    );
+    let mut response = bind_gc_filter(db.query(&sql), filter).await?;
+    let result: Option<serde_json::Value> = response.take(0)?;
+    Ok(result
+        .and_then(|v| v.get("count").and_then(|c| c.as_u64()))
+        .unwrap_or(0) as usize)
+}
+
+pub(super) async fn count_invalidated_memories_by_reason(
+    db: &Surreal<Db>,
+    filter: &MemoryGcFilter,
+) -> Result<Vec<MemoryGcReasonCount>> {
+    #[derive(Debug, serde::Deserialize, SurrealValue)]
+    struct ReasonRow {
+        #[serde(default)]
+        invalidation_reason: Option<String>,
+        count: u32,
+    }
+
+    let sql = format!(
+        "SELECT invalidation_reason, count() AS count FROM memories WHERE {} GROUP BY invalidation_reason",
+        gc_filter_clause()
+    );
+    let mut response = bind_gc_filter(db.query(&sql), filter).await?;
+    let rows: Vec<ReasonRow> = response.take(0)?;
+    Ok(rows
+        .into_iter()
+        .map(|row| MemoryGcReasonCount {
+            reason: row.invalidation_reason,
+            count: row.count as usize,
+        })
+        .collect())
 }
 
 pub(super) async fn list_capacity_candidates(
@@ -584,6 +656,34 @@ fn bind_memory_query<'a>(
     query = query.bind(("event_before", filters.event_before.clone()));
     query = query.bind(("ingestion_after", filters.ingestion_after.clone()));
     query.bind(("ingestion_before", filters.ingestion_before.clone()))
+}
+
+fn gc_filter_clause() -> &'static str {
+    "valid_until IS NOT NONE \
+     AND ($namespace IS NONE OR namespace = $namespace) \
+     AND ($memory_type IS NONE OR memory_type = $memory_type) \
+     AND ($invalidation_reason IS NONE OR invalidation_reason = $invalidation_reason) \
+     AND ($invalidated_before IS NONE OR valid_until <= $invalidated_before)"
+}
+
+fn bind_gc_filter<'a>(
+    mut query: surrealdb::method::Query<'a, Db>,
+    filter: &MemoryGcFilter,
+) -> surrealdb::method::Query<'a, Db> {
+    query = query.bind(("namespace", filter.namespace.clone()));
+    query = query.bind((
+        "memory_type",
+        filter.memory_type.as_ref().map(|m| match m {
+            crate::types::MemoryType::Episodic => "episodic".to_string(),
+            crate::types::MemoryType::Semantic => "semantic".to_string(),
+            crate::types::MemoryType::Procedural => "procedural".to_string(),
+        }),
+    ));
+    query = query.bind(("invalidation_reason", filter.invalidation_reason.clone()));
+    query.bind((
+        "invalidated_before",
+        filter.invalidated_before.map(crate::types::Datetime::from),
+    ))
 }
 
 fn metadata_matches(

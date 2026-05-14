@@ -8,7 +8,9 @@ use surrealdb::Surreal;
 
 use super::StorageBackend;
 use crate::graph::{GraphTraversalStorage, SymbolGraphTraversalStorage};
-use crate::storage::traits::{MemoryExportOptions, MemoryImportOptions, ProjectStats};
+use crate::storage::traits::{
+    MemoryExportOptions, MemoryGcFilter, MemoryGcReasonCount, MemoryImportOptions, ProjectStats,
+};
 use crate::types::{
     CapabilityKind, CodeChunk, CodeSymbol, Direction, Entity, ExportMemoryResponse,
     ImportMemoryResponse, IndexFileCheckpoint, IndexJobRecord, IndexStatus, ManifestEntry, Memory,
@@ -450,6 +452,10 @@ impl StorageBackend for SurrealStorage {
         memory_ops::delete_memory(&self.db, id).await
     }
 
+    async fn delete_memories_batch(&self, ids: &[String]) -> Result<Vec<String>> {
+        memory_ops::delete_memories_batch(&self.db, ids).await
+    }
+
     async fn list_memories(
         &self,
         filters: &MemoryQuery,
@@ -494,6 +500,26 @@ impl StorageBackend for SurrealStorage {
         content_hash: &str,
     ) -> Result<Vec<Memory>> {
         memory_ops::find_memories_by_content_hash(&self.db, filters, content_hash).await
+    }
+
+    async fn list_invalidated_memories_for_gc(
+        &self,
+        filter: &MemoryGcFilter,
+        limit: usize,
+        offset: usize,
+    ) -> Result<Vec<Memory>> {
+        memory_ops::list_invalidated_memories_for_gc(&self.db, filter, limit, offset).await
+    }
+
+    async fn count_invalidated_memories_for_gc(&self, filter: &MemoryGcFilter) -> Result<usize> {
+        memory_ops::count_invalidated_memories_for_gc(&self.db, filter).await
+    }
+
+    async fn count_invalidated_memories_by_reason(
+        &self,
+        filter: &MemoryGcFilter,
+    ) -> Result<Vec<MemoryGcReasonCount>> {
+        memory_ops::count_invalidated_memories_by_reason(&self.db, filter).await
     }
 
     async fn export_memories(&self, options: &MemoryExportOptions) -> Result<ExportMemoryResponse> {
@@ -3854,10 +3880,7 @@ mod tests {
             Some(50)
         );
         assert_eq!(
-            storage
-                .get_indexing_generation(project_id)
-                .await
-                .unwrap(),
+            storage.get_indexing_generation(project_id).await.unwrap(),
             Some(99)
         );
 

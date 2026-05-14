@@ -563,6 +563,49 @@ impl PreviewConsolidateMemoryParams {
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[schemars(title = "")]
+pub struct PreviewPurgeMemoryParams {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub namespace: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub memory_type: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub invalidation_reason: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub older_than_days: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub limit: Option<usize>,
+}
+
+impl PreviewPurgeMemoryParams {
+    pub fn memory_type_filter(&self) -> anyhow::Result<Option<MemoryType>> {
+        parse_memory_type(self.memory_type.as_deref())
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[schemars(title = "")]
+pub struct PurgeMemoryParams {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub namespace: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub memory_type: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub invalidation_reason: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub older_than_days: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub limit: Option<usize>,
+    pub expected_plan_fingerprint: String,
+}
+
+impl PurgeMemoryParams {
+    pub fn memory_type_filter(&self) -> anyhow::Result<Option<MemoryType>> {
+        parse_memory_type(self.memory_type.as_deref())
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[schemars(title = "")]
 pub struct GetStatusParams {
     #[serde(skip)]
     pub _placeholder: bool,
@@ -1078,8 +1121,8 @@ pub struct LearningMemoryDeleteParams {
 #[cfg(test)]
 mod tests {
     use super::{
-        ExportMemoryParams, ImportMemoryParams, ProjectInfoParams, RecallCodeParams,
-        SearchSymbolsParams, normalize_project_id,
+        normalize_project_id, ExportMemoryParams, ImportMemoryParams, ProjectInfoParams,
+        RecallCodeParams, SearchSymbolsParams,
     };
 
     #[test]

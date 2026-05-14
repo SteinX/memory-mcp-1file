@@ -68,6 +68,20 @@ pub struct CapacityMemoryCandidate {
     pub importance_score: f32,
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct MemoryGcFilter {
+    pub namespace: Option<String>,
+    pub memory_type: Option<MemoryType>,
+    pub invalidation_reason: Option<String>,
+    pub invalidated_before: Option<DateTime<Utc>>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct MemoryGcReasonCount {
+    pub reason: Option<String>,
+    pub count: usize,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ProjectStats {
     pub files: u32,
@@ -207,6 +221,40 @@ pub trait StorageBackend: Send + Sync {
         filters: &MemoryQuery,
         content_hash: &str,
     ) -> Result<Vec<Memory>>;
+
+    /// List invalidated memories for GC planning.
+    async fn list_invalidated_memories_for_gc(
+        &self,
+        _filter: &MemoryGcFilter,
+        _limit: usize,
+        _offset: usize,
+    ) -> Result<Vec<Memory>> {
+        Ok(Vec::new())
+    }
+
+    /// Count invalidated memories for GC planning.
+    async fn count_invalidated_memories_for_gc(&self, _filter: &MemoryGcFilter) -> Result<usize> {
+        Ok(0)
+    }
+
+    /// Count invalidated memories grouped by invalidation reason.
+    async fn count_invalidated_memories_by_reason(
+        &self,
+        _filter: &MemoryGcFilter,
+    ) -> Result<Vec<MemoryGcReasonCount>> {
+        Ok(Vec::new())
+    }
+
+    /// Physically delete memory rows by ID for explicit GC flows.
+    async fn delete_memories_batch(&self, ids: &[String]) -> Result<Vec<String>> {
+        let mut deleted = Vec::new();
+        for id in ids {
+            if self.delete_memory(id).await? {
+                deleted.push(id.clone());
+            }
+        }
+        Ok(deleted)
+    }
 
     /// Export project-scoped memory records through the stable migration DTO.
     async fn export_memories(
@@ -436,11 +484,8 @@ pub trait StorageBackend: Send + Sync {
     }
 
     /// Get a durable indexing job by (project_id, job_id).
-    async fn get_index_job(
-        &self,
-        project_id: &str,
-        job_id: &str,
-    ) -> Result<Option<IndexJobRecord>>;
+    async fn get_index_job(&self, project_id: &str, job_id: &str)
+        -> Result<Option<IndexJobRecord>>;
 
     /// List durable indexing jobs for a project, newest first.
     async fn list_index_jobs_for_project(&self, project_id: &str) -> Result<Vec<IndexJobRecord>>;
@@ -507,10 +552,7 @@ pub trait StorageBackend: Send + Sync {
     ) -> Result<()>;
 
     /// Return all per-capability serving generations plus the active indexing generation.
-    async fn get_serving_metadata(
-        &self,
-        project_id: &str,
-    ) -> Result<ServingGenerationMetadata>;
+    async fn get_serving_metadata(&self, project_id: &str) -> Result<ServingGenerationMetadata>;
 
     /// List generations that have rows/checkpoints but are not the active generation.
     async fn list_abandoned_generations(&self, project_id: &str) -> Result<Vec<u64>>;

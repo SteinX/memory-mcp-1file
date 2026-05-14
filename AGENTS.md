@@ -588,6 +588,7 @@ get_related(entity_id="WP:WP01", depth=2, direction="both")
 - ✅ Every TASK/EPIC has `Updated:` field with ISO timestamp
 - ✅ TASK has fields: Status, Current, Path, Command, Agent
 - ✅ Use `invalidate` instead of `delete_memory`
+- ✅ For physical memory cleanup, call `preview_purge_memory` first and then `purge_memory` with the returned `plan_fingerprint`
 - ✅ Update TASK on subtask change
 - ✅ Update EPIC on WP completion
 - ✅ Store DECISION with REASON
@@ -602,6 +603,7 @@ get_related(entity_id="WP:WP01", depth=2, direction="both")
 - ❌ Consider user message BEFORE showing task as confirmation
 - ❌ Move to new WP without invalidating old TASK
 - ❌ Use `delete_memory` (only invalidate)
+- ❌ Use `delete_memory` for routine stale-memory cleanup; use preview/apply purge instead
 - ❌ Ignore found active TASK records
 - ❌ Store duplicates — use `update_memory`
 </must_not>

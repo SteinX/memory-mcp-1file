@@ -203,8 +203,30 @@ impl MemoryMcpServer {
     }
 
     #[tool(
-        description = "Export memories as JSONL using the public migration contract."
+        description = "Preview explicit physical purge candidates for invalidated memories without deleting data."
     )]
+    async fn preview_purge_memory(
+        &self,
+        params: Parameters<PreviewPurgeMemoryParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        logic::memory::preview_purge_memory(&self.state, params.0)
+            .await
+            .map_err(to_rpc_error)
+    }
+
+    #[tool(
+        description = "Physically purge invalidated memories selected by a prior preview_purge_memory fingerprint."
+    )]
+    async fn purge_memory(
+        &self,
+        params: Parameters<PurgeMemoryParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        logic::memory::purge_memory(&self.state, params.0)
+            .await
+            .map_err(to_rpc_error)
+    }
+
+    #[tool(description = "Export memories as JSONL using the public migration contract.")]
     async fn export_memory(
         &self,
         params: Parameters<ExportMemoryParams>,
@@ -214,9 +236,7 @@ impl MemoryMcpServer {
             .map_err(to_rpc_error)
     }
 
-    #[tool(
-        description = "Import memories from inline JSONL using the public migration contract."
-    )]
+    #[tool(description = "Import memories from inline JSONL using the public migration contract.")]
     async fn import_memory(
         &self,
         params: Parameters<ImportMemoryParams>,
@@ -856,7 +876,7 @@ impl MemoryMcpServer {
     ) -> Result<CallToolResult, ErrorData> {
         let text = [
             "=== TOOL GROUPS ===",
-            "Memory: store_memory, update_memory, delete_memory, list_memories, get_memory, invalidate, get_valid, export_memory, import_memory",
+            "Memory: store_memory, update_memory, delete_memory, list_memories, get_memory, invalidate, get_valid, preview_purge_memory, purge_memory, export_memory, import_memory",
             "Search: recall, search_memory, recall_code, search_symbols, symbol_graph",
             "Project: index_project, delete_project, project_info",
             "System: get_status, reset_all_memory, how_to_use",
@@ -1102,9 +1122,11 @@ mod tests {
         let tools = server.tool_router.list_all();
         let names: BTreeSet<String> = tools.iter().map(|tool| tool.name.to_string()).collect();
 
-        assert_eq!(names.len(), 34, "public MCP tool count changed");
+        assert_eq!(names.len(), 36, "public MCP tool count changed");
         assert!(names.contains("export_memory"));
         assert!(names.contains("import_memory"));
+        assert!(names.contains("preview_purge_memory"));
+        assert!(names.contains("purge_memory"));
         assert!(names.contains("recall_code"));
         assert!(names.contains("search_symbols"));
         assert!(names.contains("symbol_graph"));
@@ -1123,7 +1145,7 @@ mod tests {
         let tools = server.tool_router.list_all();
         let names: BTreeSet<String> = tools.iter().map(|tool| tool.name.to_string()).collect();
 
-        assert_eq!(names.len(), 34, "public MCP tool count changed");
+        assert_eq!(names.len(), 36, "public MCP tool count changed");
         assert!(names.contains("recall_code"));
         assert!(names.contains("search_symbols"));
         assert!(names.contains("symbol_graph"));
@@ -1133,6 +1155,8 @@ mod tests {
         assert!(names.contains("how_to_use"));
         assert!(names.contains("export_memory"));
         assert!(names.contains("import_memory"));
+        assert!(names.contains("preview_purge_memory"));
+        assert!(names.contains("purge_memory"));
         assert!(!names.contains("search"));
         assert!(!names.contains("search_code"));
     }
@@ -1157,21 +1181,15 @@ mod tests {
             "learning_memory_delete",
         ];
 
-        let tool_map: std::collections::HashMap<String, &_> = tools
-            .iter()
-            .map(|t| (t.name.to_string(), t))
-            .collect();
+        let tool_map: std::collections::HashMap<String, &_> =
+            tools.iter().map(|t| (t.name.to_string(), t)).collect();
 
         for name in &learning_tools {
-            let tool = tool_map.get(*name).unwrap_or_else(|| {
-                panic!("learning tool '{}' not found in tool list", name)
-            });
+            let tool = tool_map
+                .get(*name)
+                .unwrap_or_else(|| panic!("learning tool '{}' not found in tool list", name));
             let schema = schema_value(&serde_json::to_value(tool).unwrap());
-            assert!(
-                schema != Value::Null,
-                "tool '{}' has null schema",
-                name
-            );
+            assert!(schema != Value::Null, "tool '{}' has null schema", name);
         }
     }
 
@@ -1183,18 +1201,18 @@ mod tests {
         for action in ["bind", "unbind", "binding_status"] {
             let result = server
                 .project_info(Parameters(ProjectInfoParams {
-                                    action: action.to_string(),
-                                    project_id: None,
-                                    path: None,
-                                    force: None,
-                                    confirm_failed_restart: None,
+                    action: action.to_string(),
+                    project_id: None,
+                    path: None,
+                    force: None,
+                    confirm_failed_restart: None,
                     include_patterns: None,
                     exclude_patterns: None,
-                                    locator: None,
-                                    relation_scope: None,
-                                    sort_mode: None,
-                                    job_id: None,
-                                }))
+                    locator: None,
+                    relation_scope: None,
+                    sort_mode: None,
+                    job_id: None,
+                }))
                 .await;
 
             let body = result
@@ -1219,18 +1237,18 @@ mod tests {
 
         let result = server
             .project_info(Parameters(ProjectInfoParams {
-                                action: "index".to_string(),
-                                project_id: None,
-                                path: Some(project_path.to_string_lossy().to_string()),
-                                force: None,
-                                confirm_failed_restart: None,
-                    include_patterns: None,
-                    exclude_patterns: None,
-                                locator: None,
-                                relation_scope: None,
-                                sort_mode: None,
-                                job_id: None,
-                            }))
+                action: "index".to_string(),
+                project_id: None,
+                path: Some(project_path.to_string_lossy().to_string()),
+                force: None,
+                confirm_failed_restart: None,
+                include_patterns: None,
+                exclude_patterns: None,
+                locator: None,
+                relation_scope: None,
+                sort_mode: None,
+                job_id: None,
+            }))
             .await
             .expect("project_info index should succeed")
             .into_typed::<Value>()
@@ -1271,18 +1289,18 @@ mod tests {
         let bind = server
             .project_info_with_session(
                 Parameters(ProjectInfoParams {
-                                    action: "bind".to_string(),
-                                    project_id: Some(project_id.to_string()),
-                                    path: None,
-                                    force: None,
-                                    confirm_failed_restart: None,
+                    action: "bind".to_string(),
+                    project_id: Some(project_id.to_string()),
+                    path: None,
+                    force: None,
+                    confirm_failed_restart: None,
                     include_patterns: None,
                     exclude_patterns: None,
-                                    locator: None,
-                                    relation_scope: None,
-                                    sort_mode: None,
-                                    job_id: None,
-                                }),
+                    locator: None,
+                    relation_scope: None,
+                    sort_mode: None,
+                    job_id: None,
+                }),
                 Some(session_context.clone()),
             )
             .await
@@ -1296,18 +1314,18 @@ mod tests {
         let status = server
             .project_info_with_session(
                 Parameters(ProjectInfoParams {
-                                    action: "binding_status".to_string(),
-                                    project_id: None,
-                                    path: None,
-                                    force: None,
-                                    confirm_failed_restart: None,
+                    action: "binding_status".to_string(),
+                    project_id: None,
+                    path: None,
+                    force: None,
+                    confirm_failed_restart: None,
                     include_patterns: None,
                     exclude_patterns: None,
-                                    locator: None,
-                                    relation_scope: None,
-                                    sort_mode: None,
-                                    job_id: None,
-                                }),
+                    locator: None,
+                    relation_scope: None,
+                    sort_mode: None,
+                    job_id: None,
+                }),
                 Some(session_context.clone()),
             )
             .await
@@ -1321,18 +1339,18 @@ mod tests {
         let unbind = server
             .project_info_with_session(
                 Parameters(ProjectInfoParams {
-                                    action: "unbind".to_string(),
-                                    project_id: None,
-                                    path: None,
-                                    force: None,
-                                    confirm_failed_restart: None,
+                    action: "unbind".to_string(),
+                    project_id: None,
+                    path: None,
+                    force: None,
+                    confirm_failed_restart: None,
                     include_patterns: None,
                     exclude_patterns: None,
-                                    locator: None,
-                                    relation_scope: None,
-                                    sort_mode: None,
-                                    job_id: None,
-                                }),
+                    locator: None,
+                    relation_scope: None,
+                    sort_mode: None,
+                    job_id: None,
+                }),
                 Some(session_context),
             )
             .await
@@ -1360,18 +1378,18 @@ mod tests {
         let bind = server
             .project_info_with_session(
                 Parameters(ProjectInfoParams {
-                                    action: "bind".to_string(),
-                                    project_id: Some("project-a".to_string()),
-                                    path: None,
-                                    force: None,
-                                    confirm_failed_restart: None,
+                    action: "bind".to_string(),
+                    project_id: Some("project-a".to_string()),
+                    path: None,
+                    force: None,
+                    confirm_failed_restart: None,
                     include_patterns: None,
                     exclude_patterns: None,
-                                    locator: None,
-                                    relation_scope: None,
-                                    sort_mode: None,
-                                    job_id: None,
-                                }),
+                    locator: None,
+                    relation_scope: None,
+                    sort_mode: None,
+                    job_id: None,
+                }),
                 None,
             )
             .await
@@ -1485,18 +1503,18 @@ mod tests {
         let bind = server
             .project_info_with_session(
                 Parameters(ProjectInfoParams {
-                                    action: "bind".to_string(),
-                                    project_id: Some("missing-project-id".to_string()),
-                                    path: None,
-                                    force: None,
-                                    confirm_failed_restart: None,
+                    action: "bind".to_string(),
+                    project_id: Some("missing-project-id".to_string()),
+                    path: None,
+                    force: None,
+                    confirm_failed_restart: None,
                     include_patterns: None,
                     exclude_patterns: None,
-                                    locator: None,
-                                    relation_scope: None,
-                                    sort_mode: None,
-                                    job_id: None,
-                                }),
+                    locator: None,
+                    relation_scope: None,
+                    sort_mode: None,
+                    job_id: None,
+                }),
                 Some(session_context),
             )
             .await
@@ -1544,18 +1562,18 @@ mod tests {
         let bind = server
             .project_info_with_session(
                 Parameters(ProjectInfoParams {
-                                    action: "bind".to_string(),
-                                    project_id: Some(project_id.to_string()),
-                                    path: None,
-                                    force: None,
-                                    confirm_failed_restart: None,
+                    action: "bind".to_string(),
+                    project_id: Some(project_id.to_string()),
+                    path: None,
+                    force: None,
+                    confirm_failed_restart: None,
                     include_patterns: None,
                     exclude_patterns: None,
-                                    locator: None,
-                                    relation_scope: None,
-                                    sort_mode: None,
-                                    job_id: None,
-                                }),
+                    locator: None,
+                    relation_scope: None,
+                    sort_mode: None,
+                    job_id: None,
+                }),
                 Some(session_context),
             )
             .await
@@ -1592,8 +1610,8 @@ mod tests {
                 allow_full_restart_fallback: None,
                 force: None,
                 confirm_failed_restart: None,
-                    include_patterns: None,
-                    exclude_patterns: None,
+                include_patterns: None,
+                exclude_patterns: None,
             }))
             .await
             .expect("index_project should return success json");
@@ -1688,16 +1706,23 @@ mod tests {
             .get("description")
             .and_then(Value::as_str)
             .unwrap_or_default();
-        assert!(export_memory_desc.contains("migration contract") || export_memory_desc.contains("Export memories"));
+        assert!(
+            export_memory_desc.contains("migration contract")
+                || export_memory_desc.contains("Export memories")
+        );
         let export_memory_required = schema_value(export_memory)
             .get("required")
             .and_then(Value::as_array)
             .cloned()
             .unwrap_or_default();
-        assert!(export_memory_required
-            .iter()
-            .any(|value| value.as_str() == Some("projectId"))
-            || export_memory_required.iter().any(|value| value.as_str() == Some("project_id")));
+        assert!(
+            export_memory_required
+                .iter()
+                .any(|value| value.as_str() == Some("projectId"))
+                || export_memory_required
+                    .iter()
+                    .any(|value| value.as_str() == Some("project_id"))
+        );
         let export_memory_props = schema_value(export_memory)
             .get("properties")
             .and_then(Value::as_object)
@@ -1712,7 +1737,10 @@ mod tests {
             .get("description")
             .and_then(Value::as_str)
             .unwrap_or_default();
-        assert!(import_memory_desc.contains("migration contract") || import_memory_desc.contains("inline JSONL"));
+        assert!(
+            import_memory_desc.contains("migration contract")
+                || import_memory_desc.contains("inline JSONL")
+        );
         let import_memory_required = schema_value(import_memory)
             .get("required")
             .and_then(Value::as_array)

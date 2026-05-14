@@ -471,22 +471,48 @@ The canonical fixture for integration testing is at `tests/fixtures/learning_mem
 
 ## 🛠️ Tools Available
 
-The server exposes **23 tools** to the AI model, organized into logical categories.
+The server exposes **36 tools** to the AI model, organized into logical categories.
 
 ### 🧠 Core Memory Management
 | Tool | Description |
 |------|-------------|
 | `store_memory` | Store a new memory with content, optional scope fields, metadata, and optional `importance_score`. Read/list surfaces now also expose additive `contract` + `summary` metadata. |
 | `update_memory` | Update memory fields, including scope and `importance_score`. |
-| `delete_memory` | Delete memory by ID. |
+| `delete_memory` | Delete memory by ID. This remains a single-record compatibility/admin operation, not the normal cleanup workflow. |
 | `consolidate_memory` | Store a new memory and explicitly supersede exact duplicates within the same optional scope/type boundary. |
 | `preview_consolidate_memory` | Preview exact-duplicate consolidation within the same optional scope/type boundary without writing any changes. |
+| `preview_purge_memory` | Preview explicit physical purge candidates for invalidated memories without deleting data. Returns a plan fingerprint. |
+| `purge_memory` | Physically purge invalidated memories selected by a prior `preview_purge_memory` fingerprint. |
 | `list_memories` | List memories (newest first) with optional scope/type/metadata/time filters; `total` is the filtered total. Also returns additive `contract` + normalized `summary` metadata. |
 | `get_memory` | Get full memory by ID. Memory IDs are stable public identities; response includes additive contract and summary metadata. |
 | `invalidate` | Soft-delete memory, optionally linking replacement via `superseded_by`. |
 | `get_valid` | Get valid memories. Supports optional timestamp (ISO 8601), scope filters, memory_type, metadata_filter, and event/ingestion ranges. Response includes additive contract and summary metadata. |
 | `export_memory` | Export memories for a project as inline JSONL using the public migration contract. Returns a `jsonl` string in the response body — no filesystem path or file is involved. By default exports only valid (non-invalidated) records. To include invalidated records, set `valid_only=false` and `include_invalidated=true`. Raw embeddings and vectors are never exported. |
 | `import_memory` | Import memories from an inline JSONL string using the public migration contract. The `jsonl` field in the request carries the JSONL content directly — no filesystem path or file is involved. Defaults: `dry_run=false`, `conflict_strategy=remap`, `preserve_project_id=false`. Set `dry_run=true` to validate and preview without writing anything. Invalidated records are skipped unless `allow_invalidated=true`. Imported records are re-embedded by the current service; no vector payloads are preserved. |
+
+### Memory Lifecycle and GC
+
+`invalidate` is a soft-delete operation: it sets `valid_until`, records an
+`invalidation_reason`, and optionally links a replacement with `superseded_by`.
+Default list/search/read-valid paths exclude invalidated records, but the rows
+remain available for audit, lineage, and archival export.
+
+Physical cleanup is an explicit preview/apply flow:
+
+1. Call `preview_purge_memory` with optional `namespace`, `memory_type`,
+   `invalidation_reason`, `older_than_days`, and `limit`.
+2. Inspect `retention_summary`, `sample_ids`, and `operator_summary`.
+3. Pass the returned `plan_fingerprint` as `expected_plan_fingerprint` to
+   `purge_memory`.
+
+The default retention policy only makes invalidated records purge-eligible after
+their retention window. `capacity_controller_archive` and `learning_rejected`
+default to 30 days; `superseded`, `learning_archived`, and unknown invalidation
+reasons default to 90 days. `DECISION:`, `PROJECT:`, `USER:`, and memories with
+`importance_score >= 4.0` are pinned by default and are not purge candidates.
+
+`learning_memory_delete` remains a soft compatibility shim. It archives or
+rejects learning records; it does not physically delete data.
 
 ### 🔎 Search & Retrieval
 | Tool | Description |

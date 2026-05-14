@@ -9,21 +9,22 @@ use crate::server::params::{
     LearningMemoryPromoteParams, LearningMemoryRejectParams, LearningMemorySearchParams,
     LearningMemorySupersededParams, LearningMemoryUpdateParams,
 };
+use crate::storage::traits::MemoryGcFilter;
 use crate::storage::StorageBackend;
 use crate::types::{
-    Datetime, EmbeddingState, ExportIdentity, Memory, MemoryQuery, MemoryType, MemoryUpdate,
     learning::{
-        CreatedFrom, LearningKind, LearningMetadata, LearningScope, LearningSource, LearningStatus,
-        ScopeLevel, validate_learning_metadata,
+        validate_learning_metadata, CreatedFrom, LearningKind, LearningMetadata, LearningScope,
+        LearningSource, LearningStatus, ScopeLevel,
     },
-    record_key_to_string,
+    record_key_to_string, Datetime, EmbeddingState, ExportIdentity, Memory, MemoryQuery,
+    MemoryType, MemoryUpdate,
 };
 
 use super::contracts::{export_contract_meta, summary_collection_response, with_surface_guidance};
 use super::learning_filters::{
-    LearningFilter, apply_learning_filter, default_list_filter, default_search_filter,
+    apply_learning_filter, default_list_filter, default_search_filter, LearningFilter,
 };
-use super::learning_lifecycle::{LearningLifecycleState, derive_lifecycle_state};
+use super::learning_lifecycle::{derive_lifecycle_state, LearningLifecycleState};
 use super::learning_response::build_learning_response;
 use super::{
     error_response, normalize_limit, strip_embedding, strip_embeddings, success_json,
@@ -802,8 +803,7 @@ pub async fn search(
     // floor score so they appear even when neither vector nor BM25 returns them.
     let mut id_to_memory: std::collections::HashMap<String, Memory> =
         std::collections::HashMap::new();
-    let mut audit_seeded_ids: std::collections::HashSet<String> =
-        std::collections::HashSet::new();
+    let mut audit_seeded_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
 
     if include_invalidated {
         for r in &vector_results {
@@ -851,6 +851,44 @@ pub async fn search(
                     }
                 }
             }
+        }
+
+        // The in-memory BM25 index may not contain old invalidated rows after a
+        // restart. Audit mode is explicitly for lifecycle inspection, so scan
+        // invalidated storage rows and seed query-matching learning records.
+        let query_lc = params.query.to_ascii_lowercase();
+        let page_size = fetch_limit.max(50);
+        let mut offset = 0usize;
+        while audit_seeded_ids.len() < fetch_limit {
+            let invalidated_page = state
+                .storage
+                .list_invalidated_memories_for_gc(&MemoryGcFilter::default(), page_size, offset)
+                .await
+                .unwrap_or_default();
+            if invalidated_page.is_empty() {
+                break;
+            }
+
+            for m in invalidated_page {
+                let Some(id) = memory_id(&m) else {
+                    continue;
+                };
+                if allowed_ids.contains(&id)
+                    || !m.content.to_ascii_lowercase().contains(&query_lc)
+                    || !has_learning_schema(&m)
+                    || !status_allowed(&m)
+                {
+                    continue;
+                }
+                allowed_ids.insert(id.clone());
+                audit_seeded_ids.insert(id.clone());
+                id_to_memory.insert(id, m);
+                if audit_seeded_ids.len() >= fetch_limit {
+                    break;
+                }
+            }
+
+            offset += page_size;
         }
     }
 
@@ -1848,12 +1886,12 @@ pub async fn delete(
 #[cfg(test)]
 mod tests {
     use crate::server::logic::learning_lifecycle::{
-        LearningLifecycleState, derive_lifecycle_state,
+        derive_lifecycle_state, LearningLifecycleState,
     };
     use crate::server::params::LearningMemoryMigrateLegacyParams;
     use crate::types::{
-        Memory, MemoryType,
         learning::{LearningKind, LearningStatus, ScopeLevel},
+        Memory, MemoryType,
     };
     use serde_json::json;
 

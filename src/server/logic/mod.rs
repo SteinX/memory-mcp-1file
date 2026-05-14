@@ -6,6 +6,7 @@ pub mod learning_filters;
 pub mod learning_lifecycle;
 pub mod learning_response;
 pub mod memory;
+pub mod memory_lifecycle;
 pub mod search;
 pub mod system;
 
