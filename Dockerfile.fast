@@ -21,6 +21,7 @@ COPY --from=builder /app/target/fast/memory-mcp /usr/local/bin/memory-mcp
 # Data directory setup
 RUN mkdir -p /data /project
 ENV DATA_DIR=/data
+ENV EMBEDDING_MODEL_CACHE_DIR=/data/models
 ENV LOG_LEVEL=info
 # SurrealKV WAL recovery needs extra stack. 8MB is sufficient since
 # HNSW indexes use IF NOT EXISTS (no O(n log n) rebuild on startup).

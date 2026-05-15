@@ -336,6 +336,7 @@ Add to your MCP settings:
 > ```json
 > "args": ["-y", "memory-mcp-1file", "--", "--data-dir", "/path/to/data"]
 > ```
+> Downloaded HuggingFace model files are shared across local `--data-dir` values by default. The native default uses the platform's durable app-data location, not the OS cache directory. If the selected model is already present under the legacy `${data_dir}/models` layout, that existing cache is reused. Override `--model-cache-dir` only if you need a custom shared model location.
 
 ### Gemini CLI
 
@@ -983,6 +984,7 @@ Environment variables or CLI args:
 | Arg | Env | Default | Description |
 |-----|-----|---------|-------------|
 | `--data-dir` | `DATA_DIR` | platform-local app data dir (`memory-mcp`) | DB location |
+| `--model-cache-dir` | `EMBEDDING_MODEL_CACHE_DIR` | native: platform app-data dir (`memory-mcp/models`); container: `--data-dir/models` | Downloaded HuggingFace model files |
 | `--model` | `EMBEDDING_MODEL` | `gemma` | Embedding model (`qwen3`, `gemma`, `bge_m3`, `nomic`, `e5_multi`, `e5_small`) |
 | `--mrl-dim` | `MRL_DIM` | *(native)* | Output dimension for MRL-supported models (e.g. 64, 128, 256, 512, 1024 for Qwen3). Defaults to the model's native maximum dimension (1024 for Qwen3). |
 | `--batch-size` | `BATCH_SIZE` | `8` | Maximum batch size for embedding inference |
@@ -1208,13 +1210,15 @@ memory-mcp --model gemma
 
 Gemma currently works out of the box with the bundled downloader. `HF_TOKEN` is still optional and can help with higher rate limits or private/rate-limited HuggingFace access, but the current server code does not require any separate Gemma-specific license-acceptance flow.
 
+For native runs, downloaded model files are a shared machine resource: the default cache is the platform app-data directory (`memory-mcp/models`), not a subdirectory of `--data-dir` and not the OS cache directory. This lets multiple local server instances with separate databases reuse one model download without relying on a location the system may automatically clear. For backward compatibility, if the selected model already exists under `${data_dir}/models`, the server keeps using that legacy cache. To force a specific location, pass `--model-cache-dir` or set `EMBEDDING_MODEL_CACHE_DIR`.
+
 If you want the highest-quality bundled model instead, switch to **Qwen3** explicitly:
 
 ```bash
 memory-mcp --model qwen3
 ```
 
-When running in Docker, remember that changing models also changes embedding dimensions and storage requirements. Reuse the same `/data` volume only when the stored data was created with the same model/dimension settings.
+When running in Docker, the published image sets `EMBEDDING_MODEL_CACHE_DIR=/data/models`, so model files stay inside the named `/data` volume. Remember that changing models also changes embedding dimensions and storage requirements. Reuse the same `/data` volume only when the stored data was created with the same model/dimension settings.
 
 ### 🐳 Docker Image Notes
 

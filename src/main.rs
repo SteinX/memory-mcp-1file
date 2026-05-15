@@ -1,5 +1,5 @@
 use clap::Parser;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -39,6 +39,13 @@ use memory_mcp::types::EmbeddingState;
 struct Cli {
     #[arg(long, env, default_value_os_t = default_data_dir())]
     data_dir: PathBuf,
+
+    #[arg(
+        long,
+        env = "EMBEDDING_MODEL_CACHE_DIR",
+        help = "Directory for downloaded HuggingFace model files. Native runs default to a durable shared app-data directory outside --data-dir; containers default to --data-dir/models."
+    )]
+    model_cache_dir: Option<PathBuf>,
 
     #[arg(long, env = "EMBEDDING_MODEL", default_value = "gemma")]
     model: String,
@@ -136,6 +143,57 @@ fn default_data_dir() -> PathBuf {
     dirs::data_local_dir()
         .unwrap_or_else(|| PathBuf::from("."))
         .join("memory-mcp")
+}
+
+fn resolve_model_cache_dir(
+    data_dir: &Path,
+    model: ModelType,
+    override_dir: Option<PathBuf>,
+) -> PathBuf {
+    if let Some(dir) = override_dir {
+        return dir;
+    }
+
+    let legacy_dir = data_dir.join("models");
+    if model_exists_in_cache_dir(&legacy_dir, model) {
+        return legacy_dir;
+    }
+
+    default_model_cache_dir(data_dir)
+}
+
+fn model_exists_in_cache_dir(cache_dir: &Path, model: ModelType) -> bool {
+    let repo_dir = cache_dir.join(format!("models--{}", model.repo_id().replace('/', "--")));
+    let Ok(commit_hash) = std::fs::read_to_string(repo_dir.join("refs").join("main")) else {
+        return false;
+    };
+
+    repo_dir
+        .join("snapshots")
+        .join(commit_hash.trim())
+        .join("model.safetensors")
+        .exists()
+}
+
+fn default_model_cache_dir(data_dir: &Path) -> PathBuf {
+    default_model_cache_dir_for(data_dir, is_container_environment())
+}
+
+fn default_model_cache_dir_for(data_dir: &Path, is_container: bool) -> PathBuf {
+    if is_container {
+        return data_dir.join("models");
+    }
+
+    dirs::data_local_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("memory-mcp")
+        .join("models")
+}
+
+fn is_container_environment() -> bool {
+    std::path::Path::new("/.dockerenv").exists()
+        || std::env::var_os("MEMORY_MCP_CONTAINER").is_some()
+        || std::env::var_os("KUBERNETES_SERVICE_HOST").is_some()
 }
 
 fn init_logging(
@@ -441,6 +499,9 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
     )?;
 
     let runtime_mode = if cli.stdio { "stdio" } else { "http_sse" };
+    let model: ModelType = cli.model.parse().map_err(|e: String| anyhow::anyhow!(e))?;
+    let model_cache_dir =
+        resolve_model_cache_dir(&cli.data_dir, model, cli.model_cache_dir.clone());
     let metrics_recorder = memory_mcp::metrics::MetricsRecorder::from_env();
     if let Some(path) = metrics_recorder.output_path() {
         tracing::info!(path = %path.display(), "metrics output enabled");
@@ -451,6 +512,7 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
             "mode": runtime_mode,
             "version": env!("CARGO_PKG_VERSION"),
             "model": cli.model,
+            "model_cache_dir": model_cache_dir.display().to_string(),
             "project_path": cli.project_path.as_ref().map(|path| path.display().to_string()),
         }),
     );
@@ -463,6 +525,7 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
         serde_json::json!({
             "version": env!("CARGO_PKG_VERSION"),
             "model": cli.model,
+            "model_cache_dir": model_cache_dir.display().to_string(),
             "bind": cli.bind,
             "port": cli.port,
             "log_level": cli.log_level,
@@ -477,10 +540,9 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
         mode = runtime_mode,
         model = %cli.model,
         data_dir = %cli.data_dir.display(),
+        model_cache_dir = %model_cache_dir.display(),
         "memory-mcp starting"
     );
-
-    let model: ModelType = cli.model.parse().map_err(|e: String| anyhow::anyhow!(e))?;
 
     if model.requires_license_agreement() {
         tracing::warn!(
@@ -495,7 +557,7 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
         cache_size: cli.cache_size,
         batch_size: cli.batch_size,
         mrl_dim: cli.mrl_dim,
-        cache_dir: Some(cli.data_dir.join("models")),
+        cache_dir: Some(model_cache_dir),
     };
 
     embedding_config
@@ -1132,4 +1194,82 @@ async fn run_http_mode(
         config.port
     );
     serve_http_sse(move || Ok(server.clone()), config, state).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn native_model_cache_defaults_to_shared_cache_outside_data_dir() {
+        let data_dir = PathBuf::from("/tmp/memory-mcp-test-data");
+        let cache_dir = default_model_cache_dir_for(&data_dir, false);
+
+        assert_ne!(cache_dir, data_dir.join("models"));
+        assert!(cache_dir.ends_with("memory-mcp/models"));
+    }
+
+    #[test]
+    fn container_model_cache_defaults_to_data_dir_models() {
+        let data_dir = PathBuf::from("/data");
+
+        assert_eq!(
+            default_model_cache_dir_for(&data_dir, true),
+            PathBuf::from("/data/models")
+        );
+    }
+
+    #[test]
+    fn explicit_model_cache_dir_overrides_default() {
+        let data_dir = PathBuf::from("/tmp/memory-mcp-test-data");
+        let override_dir = PathBuf::from("/tmp/shared-memory-mcp-models");
+
+        assert_eq!(
+            resolve_model_cache_dir(&data_dir, ModelType::Gemma, Some(override_dir.clone())),
+            override_dir
+        );
+    }
+
+    #[test]
+    fn existing_legacy_data_dir_model_cache_is_reused() {
+        let temp_dir = tempfile::tempdir().expect("create temp data dir");
+        let legacy_repo_dir = temp_dir
+            .path()
+            .join("models")
+            .join("models--unsloth--embeddinggemma-300m-qat-q4_0-unquantized");
+        std::fs::create_dir_all(legacy_repo_dir.join("refs"))
+            .expect("create legacy model cache refs");
+        std::fs::create_dir_all(legacy_repo_dir.join("snapshots").join("abc123"))
+            .expect("create legacy model cache snapshot");
+        std::fs::write(legacy_repo_dir.join("refs").join("main"), "abc123")
+            .expect("write legacy model cache ref");
+        std::fs::write(
+            legacy_repo_dir
+                .join("snapshots")
+                .join("abc123")
+                .join("model.safetensors"),
+            "",
+        )
+        .expect("write legacy model cache weight marker");
+
+        assert_eq!(
+            resolve_model_cache_dir(temp_dir.path(), ModelType::Gemma, None),
+            temp_dir.path().join("models")
+        );
+    }
+
+    #[test]
+    fn incomplete_legacy_data_dir_model_cache_is_not_reused() {
+        let temp_dir = tempfile::tempdir().expect("create temp data dir");
+        let legacy_repo_dir = temp_dir
+            .path()
+            .join("models")
+            .join("models--unsloth--embeddinggemma-300m-qat-q4_0-unquantized");
+        std::fs::create_dir_all(&legacy_repo_dir).expect("create incomplete legacy cache dir");
+
+        assert_ne!(
+            resolve_model_cache_dir(temp_dir.path(), ModelType::Gemma, None),
+            temp_dir.path().join("models")
+        );
+    }
 }

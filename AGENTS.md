@@ -646,8 +646,10 @@ docker run -d \
 | Аспект | Правильно | Неправильно |
 |--------|-----------|-------------|
 | **stdin** | `tail -f /dev/null \| memory-mcp` | `cat /dev/zero \| memory-mcp` (**OOM!** нескінченний бінарний потік) |
-| **Volume для /data** | `-v memory-mcp-data:/data` (named volume, persist між rm/run) | без volume (модель ~800MB качається з мережі щоразу) |
+| **Volume для /data** | `-v memory-mcp-data:/data` (named volume, persist між rm/run; Docker image stores models in `/data/models`) | без volume (модель качається з мережі щоразу) |
 | **Memory limit** | `--memory 4g` (мінімум для Qwen3 1024d) | без ліміту (SurrealKV block cache з'їсть RAM/2-1GB) |
+
+Native binary runs share downloaded HuggingFace model files through the platform app-data directory by default, not the OS cache directory. If the selected model already exists under `${data_dir}/models`, keep using that legacy cache. Use `--model-cache-dir` or `EMBEDDING_MODEL_CACHE_DIR` only when a specific shared model path is required.
 
 ### Моніторинг
 
@@ -829,7 +831,7 @@ Peak:                 ~2100MB  (headroom ~1900MB при 4GB)
 | Проблема | Причина | Рішення |
 |----------|---------|---------|
 | "Previous indexing interrupted" | Попередній контейнер був OOM-killed під час індексації | Нормально — перезапуск індексації |
-| Модель качається з мережі | `/data` volume не збережений | Використовувати named volume `-v memory-mcp-data:/data` |
+| Модель качається з мережі в Docker | `/data` volume не збережений | Використовувати named volume `-v memory-mcp-data:/data` |
 | OOM при 4GB | SurrealKV block cache авто = RAM/2-1GB | ENV `SURREAL_SURREALKV_BLOCK_CACHE_CAPACITY=268435456` (256MB) |
 | Індексація "failed" після 300с | completion_monitor stall timeout занадто короткий | Збільшено до 1800с (30 хв) для Qwen3 CPU |
 | CPU лише 130% | `RAYON_NUM_THREADS` не встановлено | ENV `RAYON_NUM_THREADS=0` (авто-detect всі ядра) |
