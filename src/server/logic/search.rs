@@ -212,20 +212,21 @@ fn extract_retrieval_query_candidate(query: &str) -> (&str, &'static str) {
         return (query, "direct");
     }
 
-    for marker in ["## 1. TASK", "## TASK", "# TASK", "TASK:"] {
-        if let Some(index) = query.rfind(marker) {
-            return (&query[index..], "task_section");
-        }
-    }
-
     if let Some(index) = query.rfind("</Work_Context>") {
         let after_context = index + "</Work_Context>".len();
         if after_context < query.len() {
             let tail = &query[after_context..];
             if !tail.trim().is_empty() {
+                if let Some(task_section) = find_task_section(tail) {
+                    return (task_section, "task_section");
+                }
                 return (tail, "post_work_context");
             }
         }
+    }
+
+    if let Some(task_section) = find_task_section(query) {
+        return (task_section, "task_section");
     }
 
     if let Some(index) = query.rfind("<Work_Context>") {
@@ -233,6 +234,15 @@ fn extract_retrieval_query_candidate(query: &str) -> (&str, &'static str) {
     }
 
     (query, "prompt_context")
+}
+
+fn find_task_section(query: &str) -> Option<&str> {
+    for marker in ["## 1. TASK", "## TASK", "# TASK", "TASK:"] {
+        if let Some(index) = query.rfind(marker) {
+            return Some(&query[index..]);
+        }
+    }
+    None
 }
 
 fn normalize_and_limit_retrieval_query(candidate: &str) -> (String, bool) {
@@ -1428,6 +1438,31 @@ context that should remain searchable when no task section exists
             .text
             .contains("context that should remain searchable"));
         assert!(!effective.text.contains("<system-reminder>"));
+        assert!(effective.original_chars > effective.effective_chars);
+        assert!(!effective.truncated);
+    }
+
+    #[test]
+    fn test_effective_retrieval_query_prefers_post_context_tail_over_stale_task() {
+        let query = r#"<system-reminder>
+noise that should not become a retrieval query
+</system-reminder>
+
+<Work_Context>
+TASK: WP01 stale task from prior memory state.
+
+## Notepad Location
+context that should not shadow the current user request
+</Work_Context>
+What causes recall_code to skip vector search for exact identifiers?"#;
+
+        let effective = effective_retrieval_query(query);
+
+        assert_eq!(effective.source, "post_work_context");
+        assert!(effective.text.starts_with("What causes recall_code"));
+        assert!(effective.text.contains("exact identifiers"));
+        assert!(!effective.text.contains("TASK: WP01 stale task"));
+        assert!(!effective.text.contains("<Work_Context>"));
         assert!(effective.original_chars > effective.effective_chars);
         assert!(!effective.truncated);
     }
