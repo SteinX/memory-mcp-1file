@@ -1,0 +1,43 @@
+{
+  "generated_at": "2026-05-14T11:28:33.127822+00:00",
+  "endpoint": "http://127.0.0.1:23819/mcp",
+  "context": {
+    "project_id": "reddoc_true_dev",
+    "project_stats_skipped": true
+  },
+  "results": [
+    {
+      "name": "memory_recall_unfiltered",
+      "tool": "recall",
+      "arguments": {
+        "query": "code search generated source indexing generation",
+        "limit": 10
+      },
+      "iterations": 5,
+      "warmup": 2,
+      "latency_ms": {
+        "min": 34.096334000000006,
+        "max": 56.3760409999996,
+        "mean": 45.17799999999994,
+        "median": 42.931916999999764,
+        "p95": 56.3760409999996,
+        "samples": [
+          56.3760409999996,
+          34.096334000000006,
+          39.42145800000007,
+          42.931916999999764,
+          53.06425000000026
+        ]
+      },
+      "last_summary": {
+        "count": 10,
+        "is_partial": null,
+        "bm25_hits": 30,
+        "vector_hits": 25,
+        "ppr_hits": 0,
+        "bm25_retrieved_candidates": 548,
+        "vector_retrieved_candidates": 30
+      }
+    }
+  ]
+}

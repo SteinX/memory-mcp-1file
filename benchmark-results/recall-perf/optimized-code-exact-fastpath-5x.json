@@ -1,0 +1,26 @@
+{
+  "generated_at": "2026-05-14T10:56:18.874390+00:00",
+  "endpoint": "http://127.0.0.1:23819/mcp",
+  "context": {
+    "project_id": "reddoc_true_dev",
+    "project_stats_skipped": true
+  },
+  "results": [
+    {
+      "name": "code_recall_exact_symbol",
+      "tool": "recall_code",
+      "arguments": {
+        "project_id": "reddoc_true_dev",
+        "query": "RCChatSearchTabView",
+        "limit": 10
+      },
+      "iterations": 5,
+      "warmup": 2,
+      "elapsed_ms": 25004.362333,
+      "error": {
+        "type": "ScenarioTimeoutError",
+        "message": "scenario exceeded 25.000s wall-clock timeout"
+      }
+    }
+  ]
+}
