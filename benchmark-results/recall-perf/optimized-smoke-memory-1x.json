@@ -1,0 +1,66 @@
+{
+  "generated_at": "2026-05-14T10:53:53.459285+00:00",
+  "endpoint": "http://127.0.0.1:23819/mcp",
+  "context": {
+    "project_id": "reddoc_true_dev",
+    "project_stats": {
+      "status": "completed",
+      "files": {
+        "indexed": 0,
+        "parse_percent": "0.0",
+        "total": 3851
+      },
+      "chunks": {
+        "embedded": 207371,
+        "progress_percent": "92.4",
+        "total": 224372
+      },
+      "symbols": {
+        "embedded": 43790,
+        "progress_percent": "99.9",
+        "total": 43816
+      },
+      "serving": {
+        "bm25": 8,
+        "graph": 8,
+        "indexing": null,
+        "semantic": 8,
+        "structural": 8,
+        "symbols": 8,
+        "vector": 8
+      },
+      "indexing_generation": null
+    }
+  },
+  "results": [
+    {
+      "name": "memory_recall_unfiltered",
+      "tool": "recall",
+      "arguments": {
+        "query": "code search generated source indexing generation",
+        "limit": 10
+      },
+      "iterations": 1,
+      "warmup": 0,
+      "latency_ms": {
+        "min": 1228.5967920000048,
+        "max": 1228.5967920000048,
+        "mean": 1228.5967920000048,
+        "median": 1228.5967920000048,
+        "p95": 1228.5967920000048,
+        "samples": [
+          1228.5967920000048
+        ]
+      },
+      "last_summary": {
+        "count": 10,
+        "is_partial": null,
+        "bm25_hits": 30,
+        "vector_hits": 25,
+        "ppr_hits": 0,
+        "bm25_retrieved_candidates": 547,
+        "vector_retrieved_candidates": 30
+      }
+    }
+  ]
+}
