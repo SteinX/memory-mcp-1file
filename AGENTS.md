@@ -99,7 +99,7 @@ Goal: any agent can continue another agent's work without losing context.
 
 | Situation | Action | Section |
 |-----------|--------|---------|
-| 🚀 Session start | `search_text` → show TASK → AUTO_CONTINUE | [SESSION_START](#-session_start-session-startup-algorithm) |
+| 🚀 Session start | Prefer `memory_bootstrap`; legacy fallback `search_text` → show TASK → AUTO_CONTINUE | [SESSION_START](#-session_start-session-startup-algorithm) |
 | 🔍 Found TASK | Show to user → wait 30 sec | [AUTO_CONTINUE](#-auto_continue-confirmation-protocol-with-timer) |
 | 🆕 Ad-hoc Task | Create TASK (ad_hoc) → SYNC | [AD_HOC_TASK](#-ad_hoc_task-user--external-tasks) |
 | 🧪 Research | Create RESEARCH → Cycle → SYNC | [RESEARCH_PROTOCOL](#-research_protocol-investigation--architecture) |
@@ -530,7 +530,8 @@ EXECUTE when closing all WPs of a feature.
 
 | Situation | Method | Why |
 |-----------|--------|-----|
-| **Session start** | `search_text` | BM25 accurately finds prefixes |
+| **Session start / compact recovery** | `memory_bootstrap` | One read-only call returns active tasks, stable context, recovery details, project readiness, memory health, and contract metadata |
+| **Legacy server session start** | `search_text` | BM25 accurately finds prefixes when `memory_bootstrap` is unavailable |
 | Search by ID | `get_memory` | Direct retrieval |
 | Search decisions | `search_text("DECISION:")` | Exact prefix match |
 | Semantic search | `search` or `recall` | When exact words unknown |
@@ -572,7 +573,8 @@ get_related(entity_id="WP:WP01", depth=2, direction="both")
 ### MUST (REQUIRED)
 
 <must_do>
-- ✅ Call `search_text` at the start of EVERY session
+- ✅ Call `memory_bootstrap` at the start of EVERY session when available; otherwise call `search_text`
+- ✅ Prefer `memory_bootstrap` at session start and compact recovery when the server supports it
 - ✅ Show task state to user BEFORE continuing (AUTO_CONTINUE)
 - ✅ Every entry starts with prefix (PROJECT:/EPIC:/TASK:/DECISION:)
 - ✅ Every TASK/EPIC has `Updated:` field with ISO timestamp
@@ -715,10 +717,11 @@ SurrealDB використовує exclusive LOCK на `/data`. `docker exec` с
 
 ```
 Memory:  store_memory, update_memory, list_memories, get_memory,
-         invalidate, get_valid
+         invalidate, get_valid, memory_bootstrap, memory_observation_create,
+         memory_audit
 Memory Admin: delete_memory (emergency/admin only; routine cleanup uses invalidate + preview/apply purge)
 Search:  recall (hybrid vector+keyword+graph RRF)
-         search_memory (mode: vector|bm25)
+         search_memory (mode: vector|bm25), memory_search_trace
 Code:    recall_code (mode: vector|hybrid, DEFAULT=hybrid)
          search_symbols, symbol_graph (symbol_id, action: callers|callees|related)
          index_project, delete_project, project_info (action: list|index|status|stats)

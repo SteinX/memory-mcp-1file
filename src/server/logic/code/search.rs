@@ -432,9 +432,9 @@ fn is_single_identifier_fast_path_query(query: &str) -> bool {
     let query = query.trim();
     query.len() >= 8
         && !query.chars().any(char::is_whitespace)
-        && query.chars().all(|c| {
-            c.is_ascii_alphanumeric() || matches!(c, '_' | ':' | '.')
-        })
+        && query
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | ':' | '.'))
         && query
             .chars()
             .zip(query.chars().skip(1))
@@ -724,7 +724,10 @@ pub(crate) async fn search_code_with_context(
                     .await
                 {
                     Ok(results) => {
-                        tracing::debug!(hits = results.len(), "search_code: vector search completed");
+                        tracing::debug!(
+                            hits = results.len(),
+                            "search_code: vector search completed"
+                        );
                         results
                     }
                     Err(e) => {
@@ -1168,10 +1171,9 @@ pub(crate) async fn recall_code_with_context(
     let has_filters =
         path_prefix.is_some() || language_filter.is_some() || chunk_type_filter.is_some();
 
-    let lexical_fast_path =
-        fallback_path == RecallCodeFallbackPath::Hybrid
-            && bm25_generation.is_some()
-            && is_single_identifier_fast_path_query(&query);
+    let lexical_fast_path = fallback_path == RecallCodeFallbackPath::Hybrid
+        && bm25_generation.is_some()
+        && is_single_identifier_fast_path_query(&query);
     if lexical_fast_path {
         fallback_path = RecallCodeFallbackPath::Bm25LexicalFastPath;
     }
@@ -1186,11 +1188,7 @@ pub(crate) async fn recall_code_with_context(
         (limit * 8).min(250)
     };
 
-    let freshness_map = match (
-        project_id,
-        structural_generation,
-        indexing_generation,
-    ) {
+    let freshness_map = match (project_id, structural_generation, indexing_generation) {
         (Some(project_id), Some(serving_gen), Some(indexing_gen))
             if indexing_gen != serving_gen =>
         {
@@ -2654,10 +2652,7 @@ mod tests {
         .unwrap();
         let json = response_json(&result);
 
-        assert_eq!(
-            json["summary"]["fallback_path"],
-            "bm25_lexical_fast_path"
-        );
+        assert_eq!(json["summary"]["fallback_path"], "bm25_lexical_fast_path");
         assert_eq!(json["summary"]["partial"]["is_partial"], false);
         assert_eq!(
             json["summary"]["partial"]["reason_code"],

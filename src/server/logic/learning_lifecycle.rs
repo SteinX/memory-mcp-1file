@@ -183,13 +183,19 @@ mod tests {
     #[test]
     fn derive_candidate_is_candidate() {
         let m = memory_with_status("candidate");
-        assert_eq!(derive_lifecycle_state(&m), LearningLifecycleState::Candidate);
+        assert_eq!(
+            derive_lifecycle_state(&m),
+            LearningLifecycleState::Candidate
+        );
     }
 
     #[test]
     fn derive_no_metadata_is_candidate() {
         let m = base_memory();
-        assert_eq!(derive_lifecycle_state(&m), LearningLifecycleState::Candidate);
+        assert_eq!(
+            derive_lifecycle_state(&m),
+            LearningLifecycleState::Candidate
+        );
     }
 
     #[test]
@@ -214,7 +220,10 @@ mod tests {
         m.valid_until = Some(Datetime::from(Utc::now()));
         m.invalidation_reason = Some("superseded".to_string());
         m.superseded_by = Some("mem:other".to_string());
-        assert_eq!(derive_lifecycle_state(&m), LearningLifecycleState::Superseded);
+        assert_eq!(
+            derive_lifecycle_state(&m),
+            LearningLifecycleState::Superseded
+        );
     }
 
     #[test]
@@ -223,7 +232,10 @@ mod tests {
         m.valid_until = Some(Datetime::from(Utc::now()));
         m.invalidation_reason = Some("some_unknown_reason".to_string());
         m.superseded_by = Some("mem:other".to_string());
-        assert_eq!(derive_lifecycle_state(&m), LearningLifecycleState::Superseded);
+        assert_eq!(
+            derive_lifecycle_state(&m),
+            LearningLifecycleState::Superseded
+        );
     }
 
     #[test]
@@ -231,7 +243,10 @@ mod tests {
         let mut m = base_memory();
         m.valid_until = Some(Datetime::from(Utc::now()));
         m.invalidation_reason = Some("some_unknown_reason".to_string());
-        assert_eq!(derive_lifecycle_state(&m), LearningLifecycleState::Invalidated);
+        assert_eq!(
+            derive_lifecycle_state(&m),
+            LearningLifecycleState::Invalidated
+        );
     }
 
     #[test]
@@ -346,7 +361,10 @@ mod tests {
             Some("mem:replacement".to_string()),
         )
         .unwrap();
-        assert_eq!(derive_lifecycle_state(&m), LearningLifecycleState::Superseded);
+        assert_eq!(
+            derive_lifecycle_state(&m),
+            LearningLifecycleState::Superseded
+        );
     }
 
     #[test]
@@ -367,6 +385,9 @@ mod tests {
     fn roundtrip_candidate() {
         let mut m = memory_with_status("candidate");
         apply_status_to_lifecycle(&mut m, LearningStatus::Candidate, None).unwrap();
-        assert_eq!(derive_lifecycle_state(&m), LearningLifecycleState::Candidate);
+        assert_eq!(
+            derive_lifecycle_state(&m),
+            LearningLifecycleState::Candidate
+        );
     }
 }

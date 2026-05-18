@@ -261,6 +261,30 @@ impl MemoryMcpServer {
     }
 
     #[tool(
+        description = "Read-only session bootstrap. Aggregates active TASK candidates, stable PROJECT/DECISION/USER/RESEARCH/CONTEXT context, compact recovery details, project readiness, memory health, and selection diagnostics with contract and summary metadata."
+    )]
+    async fn memory_bootstrap(
+        &self,
+        params: Parameters<MemoryBootstrapParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        logic::bootstrap::memory_bootstrap(&self.state, params.0)
+            .await
+            .map_err(to_rpc_error)
+    }
+
+    #[tool(
+        description = "Create an observation evidence memory from plugin/session hooks. If content has no legal memory prefix, CONTEXT: is added. Stores metadata.observation schema_version=1 and never auto-promotes, auto-consolidates, or silently overwrites existing memory."
+    )]
+    async fn memory_observation_create(
+        &self,
+        params: Parameters<MemoryObservationCreateParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        logic::observation::memory_observation_create(&self.state, params.0)
+            .await
+            .map_err(to_rpc_error)
+    }
+
+    #[tool(
         description = "Agent memory search (query, mode?: vector|bm25) with optional filters. Memory IDs remain the stable public identity; response includes additive contract and summary metadata."
     )]
     async fn search_memory(
@@ -297,6 +321,30 @@ impl MemoryMcpServer {
         )
         .await
         .map_err(to_rpc_error)
+    }
+
+    #[tool(
+        description = "Read-only audit summary for memory lifecycle, purge readiness, observation counts, and operator attention signals. Does not purge, promote, consolidate, or mutate memory."
+    )]
+    async fn memory_audit(
+        &self,
+        params: Parameters<MemoryAuditParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        logic::bootstrap::memory_audit(&self.state, params.0)
+            .await
+            .map_err(to_rpc_error)
+    }
+
+    #[tool(
+        description = "Read-only search explanation for a memory query. Delegates to existing recall/search ranking, then returns effective query diagnostics, result IDs, match channels, lifecycle visibility, and rank explanations with contract and summary metadata."
+    )]
+    async fn memory_search_trace(
+        &self,
+        params: Parameters<MemorySearchTraceParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        logic::search::memory_search_trace(&self.state, params.0)
+            .await
+            .map_err(to_rpc_error)
     }
 
     #[tool(
@@ -880,9 +928,10 @@ impl MemoryMcpServer {
     ) -> Result<CallToolResult, ErrorData> {
         let text = [
             "=== TOOL GROUPS ===",
-            "Memory: store_memory, update_memory, list_memories, get_memory, invalidate, get_valid, preview_purge_memory, purge_memory, export_memory, import_memory",
+            "Memory: memory_bootstrap, store_memory, memory_observation_create, update_memory, list_memories, get_memory, invalidate, get_valid, preview_purge_memory, purge_memory, export_memory, import_memory",
             "Memory admin only: delete_memory requires explicit human confirmation; routine cleanup must use invalidate -> preview_purge_memory -> purge_memory.",
-            "Search: recall, search_memory, recall_code, search_symbols, symbol_graph",
+            "Search: recall, search_memory, memory_search_trace, recall_code, search_symbols, symbol_graph",
+            "Audit/diagnostics: memory_audit, get_status",
             "Project: index_project, delete_project, project_info",
             "System: get_status, how_to_use",
             "System destructive admin only: reset_all_memory requires confirm=true and explicit operator approval.",
@@ -1128,7 +1177,11 @@ mod tests {
         let tools = server.tool_router.list_all();
         let names: BTreeSet<String> = tools.iter().map(|tool| tool.name.to_string()).collect();
 
-        assert_eq!(names.len(), 36, "public MCP tool count changed");
+        assert_eq!(names.len(), 40, "public MCP tool count changed");
+        assert!(names.contains("memory_bootstrap"));
+        assert!(names.contains("memory_observation_create"));
+        assert!(names.contains("memory_audit"));
+        assert!(names.contains("memory_search_trace"));
         assert!(names.contains("export_memory"));
         assert!(names.contains("import_memory"));
         assert!(names.contains("preview_purge_memory"));
@@ -1151,7 +1204,11 @@ mod tests {
         let tools = server.tool_router.list_all();
         let names: BTreeSet<String> = tools.iter().map(|tool| tool.name.to_string()).collect();
 
-        assert_eq!(names.len(), 36, "public MCP tool count changed");
+        assert_eq!(names.len(), 40, "public MCP tool count changed");
+        assert!(names.contains("memory_bootstrap"));
+        assert!(names.contains("memory_observation_create"));
+        assert!(names.contains("memory_audit"));
+        assert!(names.contains("memory_search_trace"));
         assert!(names.contains("recall_code"));
         assert!(names.contains("search_symbols"));
         assert!(names.contains("symbol_graph"));
@@ -1165,6 +1222,47 @@ mod tests {
         assert!(names.contains("purge_memory"));
         assert!(!names.contains("search"));
         assert!(!names.contains("search_code"));
+    }
+
+    #[tokio::test]
+    async fn tool_discovery_bootstrap_observation_audit_trace_have_contract_descriptions() {
+        let ctx = TestContext::new().await;
+        let server = MemoryMcpServer::new(ctx.state.clone());
+        let tools = server.tool_router.list_all();
+        let tool_map: std::collections::HashMap<String, Value> = tools
+            .iter()
+            .map(|tool| (tool.name.to_string(), serde_json::to_value(tool).unwrap()))
+            .collect();
+
+        for name in [
+            "memory_bootstrap",
+            "memory_observation_create",
+            "memory_audit",
+            "memory_search_trace",
+        ] {
+            let tool = tool_map
+                .get(name)
+                .unwrap_or_else(|| panic!("tool '{}' not found", name));
+            let schema = schema_value(tool);
+            assert!(schema != Value::Null, "tool '{}' has null schema", name);
+        }
+
+        assert!(tool_map["memory_bootstrap"]["description"]
+            .as_str()
+            .unwrap()
+            .contains("Read-only"));
+        assert!(tool_map["memory_observation_create"]["description"]
+            .as_str()
+            .unwrap()
+            .contains("never auto-promotes"));
+        assert!(tool_map["memory_audit"]["description"]
+            .as_str()
+            .unwrap()
+            .contains("Read-only"));
+        assert!(tool_map["memory_search_trace"]["description"]
+            .as_str()
+            .unwrap()
+            .contains("Read-only"));
     }
 
     #[tokio::test]

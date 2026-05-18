@@ -56,9 +56,12 @@ fn create_params(content: &str, kind: &str, status: Option<&str>) -> LearningMem
 async fn learning_create_response_has_contract_summary_learning_summary() {
     let ctx = TestContext::new().await;
 
-    let result = learning::create(&ctx.state, create_params("Always use snake_case", "user_preference", None))
-        .await
-        .unwrap();
+    let result = learning::create(
+        &ctx.state,
+        create_params("Always use snake_case", "user_preference", None),
+    )
+    .await
+    .unwrap();
     let json = tool_json(&result);
 
     assert!(json["contract"].is_object(), "contract must be an object");
@@ -97,11 +100,7 @@ async fn learning_create_then_get_returns_same_record() {
         .unwrap();
     let get_json = tool_json(&get_result);
 
-    assert_eq!(
-        extract_id(&get_json),
-        id,
-        "get must return the same id"
-    );
+    assert_eq!(extract_id(&get_json), id, "get must return the same id");
     assert!(
         get_json["contract"].is_object(),
         "get response must have contract"
@@ -165,9 +164,7 @@ async fn candidate_excluded_from_default_search() {
     .unwrap();
     let search_json = tool_json(&search_result);
     let records = search_json["records"].as_array().unwrap();
-    let found = records.iter().any(|r| {
-        extract_id(r) == id
-    });
+    let found = records.iter().any(|r| extract_id(r) == id);
     assert!(
         !found,
         "candidate must NOT appear in default search results"
@@ -498,7 +495,9 @@ async fn supersede_tracks_lineage() {
 
     // Status must be superseded
     assert_eq!(
-        supersede_json["learning_summary"]["status"].as_str().unwrap(),
+        supersede_json["learning_summary"]["status"]
+            .as_str()
+            .unwrap(),
         "superseded"
     );
     assert_eq!(
@@ -688,8 +687,17 @@ async fn search_response_has_contract_and_summary() {
     .unwrap();
     let json = tool_json(&search_result);
 
-    assert!(json["contract"].is_object(), "search response must have contract");
-    assert!(json["summary"].is_object(), "search response must have summary");
-    assert!(json["records"].is_array(), "search response must have records array");
+    assert!(
+        json["contract"].is_object(),
+        "search response must have contract"
+    );
+    assert!(
+        json["summary"].is_object(),
+        "search response must have summary"
+    );
+    assert!(
+        json["records"].is_array(),
+        "search response must have records array"
+    );
     assert!(json["count"].is_number(), "search response must have count");
 }

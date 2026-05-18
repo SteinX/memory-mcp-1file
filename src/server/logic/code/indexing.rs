@@ -1909,6 +1909,10 @@ pub async fn get_project_stats(
                     "Index status metadata is missing while code intelligence rows exist; re-run index_project with force=true and confirm_failed_restart=true to rebuild metadata."
                         .to_string(),
                 );
+            } else if let Some(serving_generation) = early_serving.structural {
+                status.structural_generation = serving_generation;
+                status.semantic_generation = serving_generation;
+                status.serving = Some(early_serving);
             }
             status
         }
@@ -1986,14 +1990,22 @@ pub async fn get_project_stats(
         .await
         .unwrap_or_default();
     let serving_meta = completed_serving_metadata(serving_meta, Some(&status));
-    let (indexing_gen, is_interrupted_stats) = effective_indexing_generation_for_project(
+    let status_hint_for_indexing = if status_metadata_missing {
+        None
+    } else {
+        Some(&status)
+    };
+    let (mut indexing_gen, is_interrupted_stats) = effective_indexing_generation_for_project(
         state,
         &project_id,
         serving_meta.structural,
         serving_meta.structural,
-        Some(&status),
+        status_hint_for_indexing,
     )
     .await;
+    if indexing_gen.is_none() && status_metadata_missing {
+        indexing_gen = serving_meta.structural;
+    }
     let is_indexing_stats = status.status == IndexState::Indexing;
     let capability_block = project_info_capability_block(
         &serving_meta,

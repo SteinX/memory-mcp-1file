@@ -1,0 +1,32 @@
+[
+  {
+    "id": "boot-task-active",
+    "content": "TASK: USER-20260518-bootstrap\nStatus: in_progress\nCurrent: Implement memory_bootstrap server contract\nUpdated: 2026-05-18T09:00:00Z",
+    "memory_type": "episodic",
+    "namespace": "bootstrap-eval"
+  },
+  {
+    "id": "boot-decision-contract",
+    "content": "DECISION: memory_bootstrap is read-only and returns contract plus summary for plugin startup.",
+    "memory_type": "semantic",
+    "namespace": "bootstrap-eval"
+  },
+  {
+    "id": "boot-user-pref",
+    "content": "USER: prefer server-side primitives over plugin-side reconstruction when behavior is shared.",
+    "memory_type": "semantic",
+    "namespace": "bootstrap-eval"
+  },
+  {
+    "id": "boot-research-agentmemory",
+    "content": "RESEARCH: Agent memory systems benefit from bootstrap, observation capture, audit, and trace surfaces.",
+    "memory_type": "semantic",
+    "namespace": "bootstrap-eval"
+  },
+  {
+    "id": "boot-recovery-path",
+    "content": "CONTEXT: Recovery command: cargo test --lib server::logic; Path: src/server/logic/bootstrap.rs",
+    "memory_type": "episodic",
+    "namespace": "bootstrap-eval"
+  }
+]

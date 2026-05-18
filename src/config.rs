@@ -1,8 +1,8 @@
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
+use std::str::FromStr;
 use std::sync::atomic::{AtomicU32, AtomicUsize};
 use std::sync::Arc;
-use std::str::FromStr;
 
 use tokio::sync::{watch, RwLock, Semaphore};
 
@@ -108,23 +108,71 @@ impl CodeIndexConfig {
         let defaults = Self::default();
 
         Self {
-            pipeline_mode: Self::parse_env::<CodeIndexPipelineMode, _>(&lookup, "CODE_INDEX_PIPELINE_MODE")
-                .unwrap_or(defaults.pipeline_mode),
-            read_workers: Self::parse_env_min(&lookup, "CODE_INDEX_READ_WORKERS", 1, defaults.read_workers),
+            pipeline_mode: Self::parse_env::<CodeIndexPipelineMode, _>(
+                &lookup,
+                "CODE_INDEX_PIPELINE_MODE",
+            )
+            .unwrap_or(defaults.pipeline_mode),
+            read_workers: Self::parse_env_min(
+                &lookup,
+                "CODE_INDEX_READ_WORKERS",
+                1,
+                defaults.read_workers,
+            ),
             // Keep parse workers bounded for Docker-sized machines.
-            parse_workers: Self::parse_env_min(&lookup, "CODE_INDEX_PARSE_WORKERS", 2, defaults.parse_workers),
-            commit_batch_size: Self::parse_env_min(&lookup, "CODE_INDEX_COMMIT_BATCH_SIZE", 1, defaults.commit_batch_size),
-            max_inflight_files: Self::parse_env_min(&lookup, "CODE_INDEX_MAX_INFLIGHT_FILES", 1, defaults.max_inflight_files),
-            max_inflight_bytes: Self::parse_env_min(&lookup, "CODE_INDEX_MAX_INFLIGHT_BYTES", 1, defaults.max_inflight_bytes),
-            status_flush_ms: Self::parse_env_min(&lookup, "CODE_INDEX_STATUS_FLUSH_MS", 1, defaults.status_flush_ms),
-            relation_batch_size: Self::parse_env_min(&lookup, "CODE_INDEX_RELATION_BATCH_SIZE", 1, defaults.relation_batch_size),
+            parse_workers: Self::parse_env_min(
+                &lookup,
+                "CODE_INDEX_PARSE_WORKERS",
+                2,
+                defaults.parse_workers,
+            ),
+            commit_batch_size: Self::parse_env_min(
+                &lookup,
+                "CODE_INDEX_COMMIT_BATCH_SIZE",
+                1,
+                defaults.commit_batch_size,
+            ),
+            max_inflight_files: Self::parse_env_min(
+                &lookup,
+                "CODE_INDEX_MAX_INFLIGHT_FILES",
+                1,
+                defaults.max_inflight_files,
+            ),
+            max_inflight_bytes: Self::parse_env_min(
+                &lookup,
+                "CODE_INDEX_MAX_INFLIGHT_BYTES",
+                1,
+                defaults.max_inflight_bytes,
+            ),
+            status_flush_ms: Self::parse_env_min(
+                &lookup,
+                "CODE_INDEX_STATUS_FLUSH_MS",
+                1,
+                defaults.status_flush_ms,
+            ),
+            relation_batch_size: Self::parse_env_min(
+                &lookup,
+                "CODE_INDEX_RELATION_BATCH_SIZE",
+                1,
+                defaults.relation_batch_size,
+            ),
             bm25_mode: Self::parse_env::<CodeIndexBm25Mode, _>(&lookup, "CODE_INDEX_BM25_MODE")
                 .unwrap_or(defaults.bm25_mode),
             include_patterns: lookup("CODE_INDEX_INCLUDE_PATTERNS")
-                .map(|v| v.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect())
+                .map(|v| {
+                    v.split(',')
+                        .map(|s| s.trim().to_string())
+                        .filter(|s| !s.is_empty())
+                        .collect()
+                })
                 .unwrap_or_default(),
             exclude_patterns: lookup("CODE_INDEX_EXCLUDE_PATTERNS")
-                .map(|v| v.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect())
+                .map(|v| {
+                    v.split(',')
+                        .map(|s| s.trim().to_string())
+                        .filter(|s| !s.is_empty())
+                        .collect()
+                })
                 .unwrap_or_default(),
         }
     }
@@ -210,7 +258,13 @@ impl AppConfig {
         lookup(key)?.parse().ok()
     }
 
-    fn parse_env_clamped_usize<F>(lookup: &F, key: &str, min: usize, max: usize, default: usize) -> usize
+    fn parse_env_clamped_usize<F>(
+        lookup: &F,
+        key: &str,
+        min: usize,
+        max: usize,
+        default: usize,
+    ) -> usize
     where
         F: Fn(&str) -> Option<String>,
     {
@@ -240,7 +294,13 @@ impl AppConfig {
     where
         F: Fn(&str) -> Option<String>,
     {
-        Self::parse_env_clamped_usize(&lookup, "MEMORY_MCP_DB_SEMAPHORE", 4, 128, Self::default().db_semaphore_size)
+        Self::parse_env_clamped_usize(
+            &lookup,
+            "MEMORY_MCP_DB_SEMAPHORE",
+            4,
+            128,
+            Self::default().db_semaphore_size,
+        )
     }
 }
 
@@ -446,8 +506,14 @@ mod tests {
         assert_eq!(config.status_flush_ms, 250);
         assert_eq!(config.relation_batch_size, 9000);
         assert_eq!(config.bm25_mode, CodeIndexBm25Mode::Incremental);
-        assert_eq!(config.include_patterns, vec!["src/**/*.rs".to_string(), "tests/**/*.rs".to_string()]);
-        assert_eq!(config.exclude_patterns, vec!["target/**".to_string(), ".git/**".to_string()]);
+        assert_eq!(
+            config.include_patterns,
+            vec!["src/**/*.rs".to_string(), "tests/**/*.rs".to_string()]
+        );
+        assert_eq!(
+            config.exclude_patterns,
+            vec!["target/**".to_string(), ".git/**".to_string()]
+        );
     }
 
     #[test]
@@ -463,13 +529,21 @@ mod tests {
     #[test]
     fn code_index_pattern_env_parsing_trims_and_drops_empty_entries() {
         let config = CodeIndexConfig::from_env_with(|key| match key {
-            "CODE_INDEX_INCLUDE_PATTERNS" => Some("  src/**/*.rs , , tests/**/*.rs ,   ".to_string()),
+            "CODE_INDEX_INCLUDE_PATTERNS" => {
+                Some("  src/**/*.rs , , tests/**/*.rs ,   ".to_string())
+            }
             "CODE_INDEX_EXCLUDE_PATTERNS" => Some("  target/**, ,  .git/**  ".to_string()),
             _ => None,
         });
 
-        assert_eq!(config.include_patterns, vec!["src/**/*.rs".to_string(), "tests/**/*.rs".to_string()]);
-        assert_eq!(config.exclude_patterns, vec!["target/**".to_string(), ".git/**".to_string()]);
+        assert_eq!(
+            config.include_patterns,
+            vec!["src/**/*.rs".to_string(), "tests/**/*.rs".to_string()]
+        );
+        assert_eq!(
+            config.exclude_patterns,
+            vec!["target/**".to_string(), ".git/**".to_string()]
+        );
     }
 
     #[test]
