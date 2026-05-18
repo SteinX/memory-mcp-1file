@@ -1,0 +1,23 @@
+{
+  "code": {
+    "baseline_pair": {
+      "after": "/Users/xiayiming1/Documents/Workspace/memory-mcp-1file/.sisyphus/evidence/evals/code-retrieval-baseline.json",
+      "after_available": true,
+      "before": "/Users/xiayiming1/Documents/Workspace/memory-mcp-1file/.sisyphus/evidence/task-2-recall-code-baseline.json",
+      "before_available": true
+    },
+    "json": "/Users/xiayiming1/Documents/Workspace/memory-mcp-1file/.sisyphus/evidence/evals/code-retrieval-baseline-diff.json",
+    "markdown": "/Users/xiayiming1/Documents/Workspace/memory-mcp-1file/.sisyphus/evidence/evals/code-retrieval-baseline-diff.md"
+  },
+  "memory": {
+    "baseline_pair": {
+      "after": "/Users/xiayiming1/Documents/Workspace/memory-mcp-1file/.sisyphus/evidence/evals/memory-retrieval-baseline.json",
+      "after_available": true,
+      "before": "/Users/xiayiming1/Documents/Workspace/memory-mcp-1file/.sisyphus/evidence/evals/memory-retrieval-baseline-pre-remap-20260427172553.json",
+      "before_available": true
+    },
+    "json": "/Users/xiayiming1/Documents/Workspace/memory-mcp-1file/.sisyphus/evidence/evals/memory-retrieval-baseline-diff.json",
+    "markdown": "/Users/xiayiming1/Documents/Workspace/memory-mcp-1file/.sisyphus/evidence/evals/memory-retrieval-baseline-diff.md"
+  }
+}
+OK: diff JSON structure validated for memory+code

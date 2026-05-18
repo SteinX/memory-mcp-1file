@@ -1,0 +1,75 @@
+Task 11 Command Bundle
+Workspace: /Users/xiayiming1/Documents/Workspace/memory-mcp-1file
+Started: 2026-04-27T17:51:36.068421+00:00
+
+====================================================================================================
+[1/5] COMMAND: python3 -m evals.lib.metrics --self-test
+Start (UTC): 2026-04-27T17:51:36.068618+00:00
+Exit code: 0
+Duration seconds: 0.055
+--- STDOUT ---
+self-test passed
+--- STDERR ---
+
+
+====================================================================================================
+[2/5] COMMAND: python3 evals/memory_retrieval_benchmark.py --self-test
+Start (UTC): 2026-04-27T17:51:36.123542+00:00
+Exit code: 0
+Duration seconds: 0.060
+--- STDOUT ---
+self-test passed (fixtures=15 memories, queries=10, negative_queries=2, mini_fixtures=10 memories, mini_queries=7)
+{"fixture_summary": {"caps": {"graph_entity_max": 5, "graph_relation_max": 8, "memory_count_max": 30, "memory_count_min": 15}, "graph_entity_count": 5, "graph_relation_count": 8, "memory_count": 15, "memory_unique_ids": 15, "query_count": 10, "query_expected_id_total": 24, "query_unique_ids": 10}, "mini_fixture_summary": {"caps": {"memory_count_max": 30, "query_count_max": 20}, "coverage": {"namespace": true, "negative": true, "person_project_topic": true, "temporal": true}, "fixture_paths": {"golden_queries": "evals/golden/memory_retrieval_queries_mini_long_memory.json", "memory_corpus": "evals/fixtures/memory_corpus_mini_long_memory.json"}, "memory_count": 10, "query_count": 7}, "negative_query_summary": {"aggregate_metrics": {"hit_rate": 0.0, "latency_summary": {"count": 2, "max_latency_ms": 0.04283399999999854, "mean_latency_ms": 0.03264600000000076, "p95_latency_ms": 0.04283399999999854}, "max_latency_ms": 0.04283399999999854, "mean_expected_rank": null, "mean_latency_ms": 0.03264600000000076, "mrr": 0.0, "ndcg_at_10": 0.0, "ndcg_at_5": 0.0, "p95_latency_ms": 0.04283399999999854, "precision_at_10": 0.0, "precision_at_5": 0.0, "query_count": 2, "recall_at_10": 0.0, "recall_at_5": 0.0}, "query_count": 2}, "query_summary": {"observed_query_types": ["get_valid_filtered", "get_valid_temporal", "negative_no_match", "recall_fusion", "search_bm25", "search_vector"], "query_count": 10, "required_query_types": ["get_valid_filtered", "get_valid_temporal", "negative_no_match", "recall_fusion", "search_bm25", "search_vector"]}, "report_generation": "validated"}
+--- STDERR ---
+
+
+====================================================================================================
+[3/5] COMMAND: python3 evals/memory_retrieval_benchmark.py
+Start (UTC): 2026-04-27T17:51:36.184066+00:00
+Exit code: 0
+Duration seconds: 22.785
+--- STDOUT ---
+{
+  "output_json": "/Users/xiayiming1/Documents/Workspace/memory-mcp-1file/.sisyphus/evidence/evals/memory-retrieval-baseline.json",
+  "output_md": "/Users/xiayiming1/Documents/Workspace/memory-mcp-1file/.sisyphus/evidence/evals/memory-retrieval-baseline.md",
+  "query_count": 10,
+  "ran_queries": 10,
+  "blocker_count": 0,
+  "observed_reason_codes": []
+}
+--- STDERR ---
+
+
+====================================================================================================
+[4/5] COMMAND: python3 evals/code_retrieval_benchmark.py --self-test
+Start (UTC): 2026-04-27T17:51:58.968982+00:00
+Exit code: 0
+Duration seconds: 0.063
+--- STDOUT ---
+self-test: loaded baseline query count=15 from .sisyphus/evidence/task-2-recall-code-baseline.json
+self-test passed
+--- STDERR ---
+
+
+====================================================================================================
+[5/5] COMMAND: python3 evals/code_retrieval_benchmark.py
+Start (UTC): 2026-04-27T17:51:59.031712+00:00
+Exit code: 0
+Duration seconds: 57.851
+--- STDOUT ---
+{
+  "output_json": "/Users/xiayiming1/Documents/Workspace/memory-mcp-1file/.sisyphus/evidence/evals/code-retrieval-baseline.json",
+  "output_md": "/Users/xiayiming1/Documents/Workspace/memory-mcp-1file/.sisyphus/evidence/evals/code-retrieval-baseline.md",
+  "query_count": 15,
+  "ran_queries": 15,
+  "blocker_count": 0,
+  "observed_reason_codes": [
+    "partial"
+  ]
+}
+--- STDERR ---
+
+
+====================================================================================================
+Finished: 2026-04-27T17:52:56.882690+00:00
+Total duration seconds: 80.814

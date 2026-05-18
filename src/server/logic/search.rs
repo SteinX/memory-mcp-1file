@@ -1,5 +1,6 @@
 use std::collections::HashSet;
 use std::sync::Arc;
+use std::time::Instant;
 
 use rmcp::model::CallToolResult;
 use serde_json::json;
@@ -16,13 +17,33 @@ use crate::graph::{
 };
 use crate::server::params::{RecallParams, SearchParams};
 use crate::storage::StorageBackend;
-use crate::types::{record_key_to_string, ExportIdentity, MemoryQuery, MemoryType, ScoredMemory, SearchResult};
+use crate::types::{ExportIdentity, Memory, MemoryQuery, MemoryType, ScoredMemory, SearchResult};
 
 use super::contracts::{export_contract_meta, summary_collection_response, with_surface_guidance};
+use super::memory_lifecycle::{derive_memory_lifecycle, RetentionPolicy};
 use super::{error_response, normalize_limit, success_json};
 
 fn consolidation_trace_from_result(result: &SearchResult) -> serde_json::Value {
     let invalidated = result.valid_until.is_some() || result.invalidation_reason.is_some();
+    let lifecycle_memory = Memory {
+        content: result.content.clone(),
+        memory_type: result.memory_type.clone(),
+        user_id: result.user_id.clone(),
+        agent_id: result.agent_id.clone(),
+        run_id: result.run_id.clone(),
+        namespace: result.namespace.clone(),
+        metadata: result.metadata.clone(),
+        importance_score: result.importance_score,
+        valid_until: result.valid_until.clone(),
+        invalidation_reason: result.invalidation_reason.clone(),
+        superseded_by: result.superseded_by.clone(),
+        ..Memory::new(result.content.clone())
+    };
+    let lifecycle = derive_memory_lifecycle(
+        &lifecycle_memory,
+        chrono::Utc::now(),
+        &RetentionPolicy::default(),
+    );
     let status = match (invalidated, result.superseded_by.as_ref()) {
         (true, Some(_)) => "superseded",
         (true, None) => "invalidated",
@@ -36,6 +57,12 @@ fn consolidation_trace_from_result(result: &SearchResult) -> serde_json::Value {
         "invalidation_reason": result.invalidation_reason,
         "superseded_by": result.superseded_by,
         "has_replacement": result.superseded_by.is_some(),
+        "lifecycle_state": lifecycle.lifecycle_state,
+        "default_search_visible": lifecycle.default_search_visible,
+        "purge_eligible": lifecycle.purge_eligible,
+        "retention_reason": lifecycle.retention_reason,
+        "eligible_after": lifecycle.eligible_after.map(crate::types::Datetime::from),
+        "pinned": lifecycle.pinned,
     })
 }
 
@@ -139,6 +166,140 @@ fn memory_search_contract_json() -> serde_json::Value {
 
 fn normalize_memory_content(content: &str) -> String {
     content.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+const MAX_MEMORY_RETRIEVAL_QUERY_CHARS: usize = 4096;
+
+#[derive(Debug, Clone)]
+struct EffectiveRetrievalQuery {
+    text: String,
+    original_chars: usize,
+    effective_chars: usize,
+    truncated: bool,
+    source: &'static str,
+}
+
+impl EffectiveRetrievalQuery {
+    fn diagnostics(&self) -> serde_json::Value {
+        json!({
+            "source": self.source,
+            "original_chars": self.original_chars,
+            "effective_chars": self.effective_chars,
+            "truncated": self.truncated,
+            "max_chars": MAX_MEMORY_RETRIEVAL_QUERY_CHARS,
+        })
+    }
+
+    fn log_if_adjusted(&self, surface: &'static str) {
+        if self.source != "direct" || self.truncated {
+            tracing::warn!(
+                surface,
+                source = self.source,
+                original_chars = self.original_chars,
+                effective_chars = self.effective_chars,
+                truncated = self.truncated,
+                "memory retrieval query adjusted before search"
+            );
+        }
+    }
+}
+
+fn extract_retrieval_query_candidate(query: &str) -> (&str, &'static str) {
+    let looks_like_prompt_context = query.contains("<system-reminder")
+        || query.contains("<Work_Context>")
+        || query.contains("<!-- MEMORY_MCP_INTERNAL_INITIATOR -->");
+    if !looks_like_prompt_context {
+        return (query, "direct");
+    }
+
+    if let Some(index) = query.rfind("</Work_Context>") {
+        let after_context = index + "</Work_Context>".len();
+        if after_context < query.len() {
+            let tail = &query[after_context..];
+            if !tail.trim().is_empty() {
+                if let Some(task_section) = find_task_section(tail) {
+                    return (task_section, "task_section");
+                }
+                return (tail, "post_work_context");
+            }
+        }
+    }
+
+    if let Some(task_section) = find_task_section(query) {
+        return (task_section, "task_section");
+    }
+
+    if let Some(index) = query.rfind("<Work_Context>") {
+        return (&query[index..], "work_context");
+    }
+
+    (query, "prompt_context")
+}
+
+fn find_task_section(query: &str) -> Option<&str> {
+    for marker in ["## 1. TASK", "## TASK", "# TASK", "TASK:"] {
+        if let Some(index) = query.rfind(marker) {
+            return Some(&query[index..]);
+        }
+    }
+    None
+}
+
+fn normalize_and_limit_retrieval_query(candidate: &str) -> (String, bool) {
+    let mut text = String::with_capacity(candidate.len().min(MAX_MEMORY_RETRIEVAL_QUERY_CHARS));
+    let mut chars = candidate.chars().peekable();
+    let mut previous_was_space = false;
+    let mut truncated = false;
+    let mut written_chars = 0usize;
+
+    while let Some(ch) = chars.next() {
+        let next = if ch.is_whitespace() {
+            if text.is_empty() || previous_was_space {
+                continue;
+            }
+            previous_was_space = true;
+            ' '
+        } else {
+            previous_was_space = false;
+            ch
+        };
+
+        if written_chars >= MAX_MEMORY_RETRIEVAL_QUERY_CHARS {
+            truncated = !ch.is_whitespace() || chars.any(|remaining| !remaining.is_whitespace());
+            break;
+        }
+        text.push(next);
+        written_chars += 1;
+    }
+
+    if text.ends_with(' ') {
+        text.pop();
+    }
+
+    (text, truncated)
+}
+
+fn effective_retrieval_query(query: &str) -> EffectiveRetrievalQuery {
+    let original_chars = query.chars().count();
+    let (candidate, source) = extract_retrieval_query_candidate(query);
+    let (mut text, mut truncated) = normalize_and_limit_retrieval_query(candidate);
+    let mut effective_source = source;
+
+    if text.is_empty() && !query.trim().is_empty() {
+        let fallback = normalize_and_limit_retrieval_query(query);
+        text = fallback.0;
+        truncated = fallback.1;
+        effective_source = "direct_fallback";
+    }
+
+    let effective_chars = text.chars().count();
+    EffectiveRetrievalQuery {
+        text,
+        original_chars,
+        effective_chars,
+        truncated,
+        source: effective_source,
+    }
 }
 
 fn dedup_key(r: &SearchResult) -> String {
@@ -356,17 +517,26 @@ async fn lexical_memory_search(
     filters: &MemoryQuery,
     limit: usize,
 ) -> ChannelResults {
+    if filters.is_unfiltered() {
+        let scored = state.memory_search.search(query, None, limit).await;
+        return ChannelResults {
+            retrieved_candidates: state.memory_search.document_count().await,
+            post_filter_hits: scored.len(),
+            results: dedup_memory_results(scored, limit),
+        };
+    }
+
     let mut prefilter_filters = filters.clone();
     prefilter_filters.metadata_filter = None;
 
-    let memories = state
+    let ids = state
         .storage
-        .list_memories(&prefilter_filters, overfetch_limit(limit, filters), 0)
+        .list_memory_ids(&prefilter_filters)
         .await
         .unwrap_or_default();
 
-    let retrieved_candidates = memories.len();
-    if memories.is_empty() {
+    let retrieved_candidates = ids.len();
+    if ids.is_empty() {
         return ChannelResults {
             retrieved_candidates,
             post_filter_hits: 0,
@@ -374,15 +544,9 @@ async fn lexical_memory_search(
         };
     }
 
-    let mut allowed_ids = HashSet::with_capacity(memories.len());
-    for memory in memories {
-        if let Some(id) = memory
-            .id
-            .as_ref()
-            .map(|record| record_key_to_string(&record.key))
-        {
-            allowed_ids.insert(id);
-        }
+    let mut allowed_ids = HashSet::with_capacity(ids.len());
+    for id in ids {
+        allowed_ids.insert(id);
     }
 
     let scored = state
@@ -392,7 +556,9 @@ async fn lexical_memory_search(
 
     let post_filtered: Vec<SearchResult> = scored
         .into_iter()
-        .filter(|result| metadata_matches(result.metadata.as_ref(), filters.metadata_filter.as_ref()))
+        .filter(|result| {
+            metadata_matches(result.metadata.as_ref(), filters.metadata_filter.as_ref())
+        })
         .collect();
     let post_filter_hits = post_filtered.len();
     let results = dedup_memory_results(post_filtered, limit);
@@ -408,7 +574,9 @@ fn apply_metadata_post_filter(results: Vec<SearchResult>, filters: &MemoryQuery)
     let retrieved_candidates = results.len();
     let filtered: Vec<SearchResult> = results
         .into_iter()
-        .filter(|result| metadata_matches(result.metadata.as_ref(), filters.metadata_filter.as_ref()))
+        .filter(|result| {
+            metadata_matches(result.metadata.as_ref(), filters.metadata_filter.as_ref())
+        })
         .collect();
     let post_filter_hits = filtered.len();
     ChannelResults {
@@ -423,18 +591,27 @@ async fn search_impl(
     params: SearchParams,
     access_tracker: Option<&AccessTracker>,
 ) -> anyhow::Result<CallToolResult> {
+    let total_start = Instant::now();
+    let query_len = params.query.len();
+    let effective_query = effective_retrieval_query(&params.query);
+    effective_query.log_if_adjusted("search_memory_vector");
+    let query_diagnostics = effective_query.diagnostics();
+    let query = effective_query.text.as_str();
     crate::ensure_embedding_ready!(state);
     let filters = match params.to_memory_query() {
         Ok(filters) => filters,
         Err(e) => return Ok(error_response(e)),
     };
 
-    let query_embedding = state.embedding.embed(&params.query).await?;
+    let embed_start = Instant::now();
+    let query_embedding = state.embedding.embed(query).await?;
+    let embed_elapsed = embed_start.elapsed();
 
     let limit = normalize_limit(params.limit);
     let fetch_limit = overfetch_limit(limit, &filters);
     let mut prefilter_filters = filters.clone();
     prefilter_filters.metadata_filter = None;
+    let vector_start = Instant::now();
     let vector_raw = match state
         .storage
         .vector_search(&query_embedding, &prefilter_filters, fetch_limit)
@@ -443,6 +620,7 @@ async fn search_impl(
         Ok(r) => r,
         Err(e) => return Ok(error_response(e)),
     };
+    let vector_elapsed = vector_start.elapsed();
     let vector_channel = apply_metadata_post_filter(vector_raw, &filters);
     let results = apply_min_score_scored(
         score_single_mode_results(
@@ -453,17 +631,36 @@ async fn search_impl(
         params.min_score,
     );
     emit_access_events(access_tracker, &results);
+    state.metrics.record_duration(
+        "query.memory_vector",
+        total_start.elapsed(),
+        json!({
+            "query_len": query_len,
+            "effective_query_len": effective_query.effective_chars,
+            "query_truncated": effective_query.truncated,
+            "query_source": effective_query.source,
+            "limit": limit,
+            "fetch_limit": fetch_limit,
+            "result_count": results.len(),
+            "vector_retrieved_candidates": vector_channel.retrieved_candidates,
+            "vector_post_filter_hits": vector_channel.post_filter_hits,
+            "metadata_filter": filters.uses_metadata_post_filter(),
+            "embedding_ms": embed_elapsed.as_secs_f64() * 1000.0,
+            "vector_search_ms": vector_elapsed.as_secs_f64() * 1000.0,
+        }),
+    );
 
     Ok(success_json(json!({
         "results": results,
         "summary": summary_collection_response("collection", results.len(), Some(results.len()), false, None),
         "contract": memory_search_contract_json(),
         "count": results.len(),
-        "query": params.query,
+        "query": effective_query.text,
         "filters": filters.describe(),
         "vector_hits": results.len(),
         "metadata_filter_diagnostics": metadata_filter_diagnostics(&filters),
         "diagnostics": {
+            "query": query_diagnostics,
             "vector_retrieved_candidates": vector_channel.retrieved_candidates,
             "vector_post_filter_hits": vector_channel.post_filter_hits,
             "returned_hits": results.len(),
@@ -489,13 +686,21 @@ async fn search_text_impl(
     params: SearchParams,
     access_tracker: Option<&AccessTracker>,
 ) -> anyhow::Result<CallToolResult> {
+    let total_start = Instant::now();
+    let query_len = params.query.len();
+    let effective_query = effective_retrieval_query(&params.query);
+    effective_query.log_if_adjusted("search_memory_bm25");
+    let query_diagnostics = effective_query.diagnostics();
+    let query = effective_query.text.as_str();
     let limit = normalize_limit(params.limit);
     let filters = match params.to_memory_query() {
         Ok(filters) => filters,
         Err(e) => return Ok(error_response(e)),
     };
     let fetch_limit = overfetch_limit(limit, &filters);
-    let bm25_channel = lexical_memory_search(state, &params.query, &filters, fetch_limit).await;
+    let bm25_start = Instant::now();
+    let bm25_channel = lexical_memory_search(state, query, &filters, fetch_limit).await;
+    let bm25_elapsed = bm25_start.elapsed();
     let results = apply_min_score_scored(
         score_single_mode_results(
             enrich_results_truth(dedup_memory_results(bm25_channel.results, fetch_limit)),
@@ -505,17 +710,35 @@ async fn search_text_impl(
         params.min_score,
     );
     emit_access_events(access_tracker, &results);
+    state.metrics.record_duration(
+        "query.memory_bm25",
+        total_start.elapsed(),
+        json!({
+            "query_len": query_len,
+            "effective_query_len": effective_query.effective_chars,
+            "query_truncated": effective_query.truncated,
+            "query_source": effective_query.source,
+            "limit": limit,
+            "fetch_limit": fetch_limit,
+            "result_count": results.len(),
+            "bm25_retrieved_candidates": bm25_channel.retrieved_candidates,
+            "bm25_post_filter_hits": bm25_channel.post_filter_hits,
+            "metadata_filter": filters.uses_metadata_post_filter(),
+            "bm25_search_ms": bm25_elapsed.as_secs_f64() * 1000.0,
+        }),
+    );
 
     Ok(success_json(json!({
         "results": results,
         "summary": summary_collection_response("collection", results.len(), Some(results.len()), false, None),
         "contract": memory_search_contract_json(),
         "count": results.len(),
-        "query": params.query,
+        "query": effective_query.text,
         "filters": filters.describe(),
         "bm25_hits": results.len(),
         "metadata_filter_diagnostics": metadata_filter_diagnostics(&filters),
         "diagnostics": {
+            "query": query_diagnostics,
             "bm25_retrieved_candidates": bm25_channel.retrieved_candidates,
             "bm25_post_filter_hits": bm25_channel.post_filter_hits,
             "returned_hits": results.len(),
@@ -547,13 +770,16 @@ async fn recall_impl(
     use petgraph::graph::{DiGraph, NodeIndex};
     use std::collections::HashMap;
 
-    crate::ensure_embedding_ready!(state);
+    let total_start = Instant::now();
+    let query_len = params.query.len();
+    let effective_query = effective_retrieval_query(&params.query);
+    effective_query.log_if_adjusted("recall");
+    let query_diagnostics = effective_query.diagnostics();
+    let query = effective_query.text.as_str();
     let filters = match params.to_memory_query() {
         Ok(filters) => filters,
         Err(e) => return Ok(error_response(e)),
     };
-
-    let query_embedding = state.embedding.embed(&params.query).await?;
 
     let limit = normalize_limit(params.limit);
     let fetch_limit = overfetch_limit(limit, &filters);
@@ -564,16 +790,34 @@ async fn recall_impl(
     let bm25_weight = params.bm25_weight.unwrap_or(DEFAULT_BM25_WEIGHT);
     let ppr_weight = params.ppr_weight.unwrap_or(DEFAULT_PPR_WEIGHT);
 
-    let vector_results_raw = state
-        .storage
-        .vector_search(&query_embedding, &prefilter_filters, fetch_limit)
-        .await
-        .unwrap_or_default();
-    let vector_channel = apply_metadata_post_filter(vector_results_raw, &filters);
-    let vector_results = enrich_results_truth(dedup_memory_results(vector_channel.results, fetch_limit));
+    let embedding_ready = state.embedding.is_ready();
+    let embed_start = Instant::now();
+    let query_embedding = if embedding_ready {
+        Some(state.embedding.embed(query).await?)
+    } else {
+        None
+    };
+    let embed_elapsed = embed_start.elapsed();
 
-    let bm25_channel = lexical_memory_search(state, &params.query, &filters, fetch_limit).await;
-    let bm25_results = enrich_results_truth(dedup_memory_results(bm25_channel.results, fetch_limit));
+    let vector_start = Instant::now();
+    let vector_results_raw = match query_embedding.as_ref() {
+        Some(query_embedding) => state
+            .storage
+            .vector_search(query_embedding, &prefilter_filters, fetch_limit)
+            .await
+            .unwrap_or_default(),
+        None => Vec::new(),
+    };
+    let vector_elapsed = vector_start.elapsed();
+    let vector_channel = apply_metadata_post_filter(vector_results_raw, &filters);
+    let vector_results =
+        enrich_results_truth(dedup_memory_results(vector_channel.results, fetch_limit));
+
+    let bm25_start = Instant::now();
+    let bm25_channel = lexical_memory_search(state, query, &filters, fetch_limit).await;
+    let bm25_elapsed = bm25_start.elapsed();
+    let bm25_results =
+        enrich_results_truth(dedup_memory_results(bm25_channel.results, fetch_limit));
 
     let vector_tuples: Vec<_> = vector_results
         .iter()
@@ -599,6 +843,7 @@ async fn recall_impl(
         }
     }
 
+    let ppr_start = Instant::now();
     let ppr_tuples: Vec<(String, f32)> = if !all_ids.is_empty() {
         match state.storage.get_subgraph(&all_ids).await {
             Ok((entities, relations)) if !entities.is_empty() => {
@@ -644,6 +889,7 @@ async fn recall_impl(
     } else {
         vec![]
     };
+    let ppr_elapsed = ppr_start.elapsed();
 
     let merged = rrf_merge(
         &vector_tuples,
@@ -655,10 +901,7 @@ async fn recall_impl(
         limit,
     );
 
-    let mut content_map: std::collections::HashMap<
-        String,
-        (&SearchResult, MemoryType, String),
-    > =
+    let mut content_map: std::collections::HashMap<String, (&SearchResult, MemoryType, String)> =
         std::collections::HashMap::new();
     for r in &vector_results {
         content_map.insert(r.id.clone(), (r, r.memory_type.clone(), dedup_key(r)));
@@ -675,7 +918,8 @@ async fn recall_impl(
     let now = chrono::Utc::now();
     for (id, scores) in merged {
         if let Some((result, mem_type, k)) = content_map.get(&id) {
-            let boosted_score = scores.combined_score * importance_multiplier(result.importance_score);
+            let boosted_score =
+                scores.combined_score * importance_multiplier(result.importance_score);
             let (decay_factor, final_score) = if decay_enabled {
                 let actual_age_days = result
                     .event_time
@@ -747,15 +991,45 @@ async fn recall_impl(
     let fused_candidates = scored_memories.len();
     let scored_memories = apply_min_score_scored(scored_memories, params.min_score);
     emit_access_events(access_tracker, &scored_memories);
+    state.metrics.record_duration(
+        "query.memory_recall",
+        total_start.elapsed(),
+        json!({
+            "query_len": query_len,
+            "effective_query_len": effective_query.effective_chars,
+            "query_truncated": effective_query.truncated,
+            "query_source": effective_query.source,
+            "limit": limit,
+            "fetch_limit": fetch_limit,
+            "result_count": scored_memories.len(),
+            "vector_hits": vector_results.len(),
+            "bm25_hits": bm25_results.len(),
+            "ppr_hits": ppr_tuples.len(),
+            "fused_candidates": fused_candidates,
+            "vector_retrieved_candidates": vector_channel.retrieved_candidates,
+            "vector_post_filter_hits": vector_channel.post_filter_hits,
+            "bm25_retrieved_candidates": bm25_channel.retrieved_candidates,
+            "bm25_post_filter_hits": bm25_channel.post_filter_hits,
+            "metadata_filter": filters.uses_metadata_post_filter(),
+            "embedding_ready": embedding_ready,
+            "embedding_ms": embed_elapsed.as_secs_f64() * 1000.0,
+            "vector_search_ms": vector_elapsed.as_secs_f64() * 1000.0,
+            "bm25_search_ms": bm25_elapsed.as_secs_f64() * 1000.0,
+            "ppr_ms": ppr_elapsed.as_secs_f64() * 1000.0,
+        }),
+    );
 
     Ok(success_json(json!({
         "memories": scored_memories,
         "summary": summary_collection_response("collection", scored_memories.len(), Some(scored_memories.len()), false, None),
         "contract": memory_search_contract_json(),
         "count": scored_memories.len(),
-        "query": params.query,
+        "query": effective_query.text,
         "filters": filters.describe(),
         "diagnostics": {
+            "query": query_diagnostics,
+            "embedding_ready": embedding_ready,
+            "degraded_reason": if embedding_ready { serde_json::Value::Null } else { json!("embedding_model_loading_bm25_only") },
             "vector_hits": vector_results.len(),
             "bm25_hits": bm25_results.len(),
             "ppr_hits": ppr_tuples.len(),
@@ -814,35 +1088,47 @@ mod tests {
         let ctx = TestContext::new().await;
 
         // Seed data
-        let _ = seed_memory(&ctx, Memory {
+        let _ = seed_memory(
+            &ctx,
+            Memory {
                 content: "Rust is a systems programming language".to_string(),
                 embedding: Some(vec![0.1; 768]), // Mock embedding
                 ..Memory::new("Rust is a systems programming language".to_string())
-            })
-            .await;
+            },
+        )
+        .await;
 
-        let _ = seed_memory(&ctx, Memory {
+        let _ = seed_memory(
+            &ctx,
+            Memory {
                 content: "prioritytest low".to_string(),
                 embedding: Some(vec![0.2; 768]),
                 importance_score: 0.5,
                 ..Memory::new("prioritytest low".to_string())
-            })
-            .await;
+            },
+        )
+        .await;
 
-        let _ = seed_memory(&ctx, Memory {
+        let _ = seed_memory(
+            &ctx,
+            Memory {
                 content: "prioritytest high".to_string(),
                 embedding: Some(vec![0.2; 768]),
                 importance_score: 4.0,
                 ..Memory::new("prioritytest high".to_string())
-            })
-            .await;
+            },
+        )
+        .await;
 
-        let _ = seed_memory(&ctx, Memory {
+        let _ = seed_memory(
+            &ctx,
+            Memory {
                 content: "Python is great for scripting".to_string(),
                 embedding: Some(vec![0.9; 768]),
                 ..Memory::new("Python is great for scripting".to_string())
-            })
-            .await;
+            },
+        )
+        .await;
 
         // 1. Vector Search
         let search_params = SearchParams {
@@ -871,9 +1157,14 @@ mod tests {
         // Here we only verify response shape; relevance is asserted below via
         // BM25 and hybrid paths.
         assert!(json["count"].as_u64().is_some());
-        assert!(json["diagnostics"]["vector_retrieved_candidates"].as_u64().is_some());
+        assert!(json["diagnostics"]["vector_retrieved_candidates"]
+            .as_u64()
+            .is_some());
         assert_eq!(json["contract"]["schema_version"], 1);
-        assert_eq!(json["contract"]["identity"]["node_id_semantics"], "stable_public_memory_id");
+        assert_eq!(
+            json["contract"]["identity"]["node_id_semantics"],
+            "stable_public_memory_id"
+        );
         assert_eq!(json["summary"]["result_kind"], "collection");
 
         // 2. BM25 Search
@@ -900,17 +1191,31 @@ mod tests {
         let json: serde_json::Value = serde_json::from_str(text).unwrap();
         let content = json["results"][0]["content"].as_str().unwrap();
         assert!(content.contains("Python"));
-        assert!(json["diagnostics"]["bm25_retrieved_candidates"].as_u64().is_some());
-        assert_eq!(json["contract"]["identity"]["node_id_semantics"], "stable_public_memory_id");
+        assert!(json["diagnostics"]["bm25_retrieved_candidates"]
+            .as_u64()
+            .is_some());
+        assert_eq!(
+            json["contract"]["identity"]["node_id_semantics"],
+            "stable_public_memory_id"
+        );
         assert_eq!(json["contract"]["compatibility"]["mode"], "additive_first");
         assert_eq!(json["summary"]["result_kind"], "collection");
         assert!(json["summary"]["partial"]["reason_code"].is_null());
         assert!(json["summary"]["partial"]["reason"].is_null());
-        assert_eq!(json["results"][0]["consolidation_trace"]["status"], "active");
+        assert_eq!(
+            json["results"][0]["consolidation_trace"]["status"],
+            "active"
+        );
         assert_eq!(json["results"][0]["replacement_lineage"]["depth"], 0);
-        assert_eq!(json["results"][0]["attention_summary"]["requires_operator_attention"], false);
+        assert_eq!(
+            json["results"][0]["attention_summary"]["requires_operator_attention"],
+            false
+        );
         assert_eq!(json["results"][0]["operator_summary"]["stage"], "retrieval");
-        assert_eq!(json["results"][0]["operator_summary"]["primary_signal"], "consolidation_trace");
+        assert_eq!(
+            json["results"][0]["operator_summary"]["primary_signal"],
+            "consolidation_trace"
+        );
 
         // 3. Recall (Hybrid)
         let recall_params = RecallParams {
@@ -939,16 +1244,31 @@ mod tests {
         assert!(json["count"].as_u64().unwrap() > 0);
         assert!(json["diagnostics"]["vector_hits"].as_u64().is_some());
         assert!(json["diagnostics"]["fused_candidates"].as_u64().is_some());
-        assert_eq!(json["contract"]["identity"]["node_id_semantics"], "stable_public_memory_id");
+        assert_eq!(
+            json["contract"]["identity"]["node_id_semantics"],
+            "stable_public_memory_id"
+        );
         assert_eq!(json["contract"]["compatibility"]["mode"], "additive_first");
         assert_eq!(json["summary"]["result_kind"], "collection");
         assert!(json["summary"]["partial"]["reason_code"].is_null());
         assert!(json["summary"]["partial"]["reason"].is_null());
-        assert_eq!(json["memories"][0]["consolidation_trace"]["status"], "active");
+        assert_eq!(
+            json["memories"][0]["consolidation_trace"]["status"],
+            "active"
+        );
         assert_eq!(json["memories"][0]["replacement_lineage"]["depth"], 0);
-        assert_eq!(json["memories"][0]["attention_summary"]["requires_operator_attention"], false);
-        assert_eq!(json["memories"][0]["operator_summary"]["stage"], "retrieval");
-        assert_eq!(json["memories"][0]["operator_summary"]["lifecycle_status"], "active");
+        assert_eq!(
+            json["memories"][0]["attention_summary"]["requires_operator_attention"],
+            false
+        );
+        assert_eq!(
+            json["memories"][0]["operator_summary"]["stage"],
+            "retrieval"
+        );
+        assert_eq!(
+            json["memories"][0]["operator_summary"]["lifecycle_status"],
+            "active"
+        );
 
         let priority_params = RecallParams {
             query: "prioritytest".to_string(),
@@ -994,27 +1314,43 @@ mod tests {
             ingestion_before: None,
         };
 
-        let _ = seed_memory(&ctx, Memory {
+        let _ = seed_memory(
+            &ctx,
+            Memory {
                 content: "prioritytest tagged gold".to_string(),
                 embedding: Some(vec![0.3; 768]),
                 metadata: Some(serde_json::json!({"tier": "gold"})),
                 ..Memory::new("prioritytest tagged gold".to_string())
-            })
-            .await;
+            },
+        )
+        .await;
 
         let result = search_text(&ctx.state, metadata_params).await.unwrap();
         let val = serde_json::to_value(&result).unwrap();
         let text = val["content"][0]["text"].as_str().unwrap();
         let json: serde_json::Value = serde_json::from_str(text).unwrap();
-        assert_eq!(json["diagnostics"]["metadata_filter"]["mode"], "post_query_subset_match");
-        assert!(json["diagnostics"]["bm25_retrieved_candidates"].as_u64().unwrap() >= json["diagnostics"]["bm25_post_filter_hits"].as_u64().unwrap());
+        assert_eq!(
+            json["diagnostics"]["metadata_filter"]["mode"],
+            "post_query_subset_match"
+        );
+        assert!(
+            json["diagnostics"]["bm25_retrieved_candidates"]
+                .as_u64()
+                .unwrap()
+                >= json["diagnostics"]["bm25_post_filter_hits"]
+                    .as_u64()
+                    .unwrap()
+        );
 
-        let superseded_seed = seed_memory(&ctx, Memory {
+        let superseded_seed = seed_memory(
+            &ctx,
+            Memory {
                 content: "retrieval superseded truth".to_string(),
                 embedding: Some(vec![0.4; 768]),
                 ..Memory::new("retrieval superseded truth".to_string())
-            })
-            .await;
+            },
+        )
+        .await;
         let _ = crate::server::logic::memory::invalidate(
             &ctx.state,
             crate::server::params::InvalidateParams {
@@ -1054,31 +1390,195 @@ mod tests {
         assert_eq!(json["count"], 0);
     }
 
+    #[test]
+    fn test_effective_retrieval_query_extracts_task_from_prompt_context() {
+        let query = r#"<system-reminder>
+noise that should not become a retrieval query
+</system-reminder>
+
+<Work_Context>
+## Notepad Location
+irrelevant orchestration details
+</Work_Context>
+## 1. TASK
+F4. Scope Fidelity Check for the Swift 6 strict-concurrency migration.
+
+## 2. EXPECTED OUTCOME
+Produce verdict: APPROVE or REJECT.
+<!-- MEMORY_MCP_INTERNAL_INITIATOR -->"#;
+
+        let effective = effective_retrieval_query(query);
+
+        assert_eq!(effective.source, "task_section");
+        assert!(effective.text.starts_with("## 1. TASK F4."));
+        assert!(effective.text.contains("Scope Fidelity Check"));
+        assert!(!effective.text.contains("<system-reminder>"));
+        assert!(!effective.text.contains("<Work_Context>"));
+        assert!(effective.original_chars > effective.effective_chars);
+        assert!(!effective.truncated);
+    }
+
+    #[test]
+    fn test_effective_retrieval_query_ignores_empty_post_work_context_tail() {
+        let query = r#"<system-reminder>
+noise that should not become a retrieval query
+</system-reminder>
+
+<Work_Context>
+## Notepad Location
+context that should remain searchable when no task section exists
+</Work_Context>
+   "#;
+
+        let effective = effective_retrieval_query(query);
+
+        assert_eq!(effective.source, "work_context");
+        assert!(effective.text.starts_with("<Work_Context>"));
+        assert!(effective
+            .text
+            .contains("context that should remain searchable"));
+        assert!(!effective.text.contains("<system-reminder>"));
+        assert!(effective.original_chars > effective.effective_chars);
+        assert!(!effective.truncated);
+    }
+
+    #[test]
+    fn test_effective_retrieval_query_prefers_post_context_tail_over_stale_task() {
+        let query = r#"<system-reminder>
+noise that should not become a retrieval query
+</system-reminder>
+
+<Work_Context>
+TASK: WP01 stale task from prior memory state.
+
+## Notepad Location
+context that should not shadow the current user request
+</Work_Context>
+What causes recall_code to skip vector search for exact identifiers?"#;
+
+        let effective = effective_retrieval_query(query);
+
+        assert_eq!(effective.source, "post_work_context");
+        assert!(effective.text.starts_with("What causes recall_code"));
+        assert!(effective.text.contains("exact identifiers"));
+        assert!(!effective.text.contains("TASK: WP01 stale task"));
+        assert!(!effective.text.contains("<Work_Context>"));
+        assert!(effective.original_chars > effective.effective_chars);
+        assert!(!effective.truncated);
+    }
+
+    #[test]
+    fn test_effective_retrieval_query_limits_long_direct_query() {
+        let query = "token ".repeat(MAX_MEMORY_RETRIEVAL_QUERY_CHARS + 32);
+        let effective = effective_retrieval_query(&query);
+
+        assert_eq!(effective.source, "direct");
+        assert_eq!(effective.effective_chars, MAX_MEMORY_RETRIEVAL_QUERY_CHARS);
+        assert!(effective.truncated);
+        assert!(!effective.text.ends_with(' '));
+    }
+
+    #[tokio::test]
+    async fn test_recall_uses_effective_query_for_prompt_context() {
+        let ctx = TestContext::new().await;
+        let _ = seed_memory(
+            &ctx,
+            Memory {
+                content: "scope fidelity approve reject migration".to_string(),
+                embedding: Some(vec![0.2; 768]),
+                ..Memory::new("scope fidelity approve reject migration".to_string())
+            },
+        )
+        .await;
+
+        let result = recall(
+            &ctx.state,
+            RecallParams {
+                query: r#"<system-reminder>
+noise that should be stripped before retrieval
+</system-reminder>
+<Work_Context>
+operator-only notepad instructions
+</Work_Context>
+## 1. TASK
+F4. Scope Fidelity Check for migration.
+
+## 2. EXPECTED OUTCOME
+Produce verdict APPROVE or REJECT.
+<!-- MEMORY_MCP_INTERNAL_INITIATOR -->"#
+                    .to_string(),
+                limit: Some(5),
+                vector_weight: None,
+                bm25_weight: None,
+                ppr_weight: None,
+                min_score: None,
+                user_id: None,
+                agent_id: None,
+                run_id: None,
+                namespace: None,
+                memory_type: None,
+                metadata_filter: None,
+                valid_at: None,
+                event_after: None,
+                event_before: None,
+                ingestion_after: None,
+                ingestion_before: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        let val = serde_json::to_value(&result).unwrap();
+        let text = val["content"][0]["text"].as_str().unwrap();
+        let json: serde_json::Value = serde_json::from_str(text).unwrap();
+
+        assert_eq!(json["diagnostics"]["query"]["source"], "task_section");
+        assert_eq!(json["diagnostics"]["query"]["truncated"], false);
+        assert!(json["query"]
+            .as_str()
+            .unwrap()
+            .starts_with("## 1. TASK F4."));
+        assert!(!json["query"]
+            .as_str()
+            .unwrap()
+            .contains("<system-reminder>"));
+        assert!(json["count"].as_u64().unwrap() > 0);
+    }
+
     #[tokio::test]
     async fn test_recall_applies_decay_and_prefers_fresher_episodic_memory() {
         let ctx = TestContext::new().await;
         let now = Utc::now();
 
-        let _ = seed_memory(&ctx, Memory {
+        let namespace = format!("decay-ordering-{}", uuid::Uuid::new_v4().simple());
+        let _ = seed_memory(
+            &ctx,
+            Memory {
                 content: "decay ordering fresh episodic".to_string(),
-                embedding: Some(vec![0.4; 768]),
+                embedding: Some(vec![0.45; 768]),
                 memory_type: MemoryType::Episodic,
+                namespace: Some(namespace.clone()),
                 event_time: Datetime::from(now),
                 ingestion_time: Datetime::from(now),
                 ..Memory::new("decay ordering fresh episodic".to_string())
-            })
-            .await;
+            },
+        )
+        .await;
 
-        let old_time = now - Duration::days(30);
-        let _ = seed_memory(&ctx, Memory {
+        let old_time = now - Duration::days(180);
+        let _ = seed_memory(
+            &ctx,
+            Memory {
                 content: "decay ordering old episodic".to_string(),
                 embedding: Some(vec![0.4; 768]),
                 memory_type: MemoryType::Episodic,
+                namespace: Some(namespace.clone()),
                 event_time: Datetime::from(old_time),
                 ingestion_time: Datetime::from(old_time),
                 ..Memory::new("decay ordering old episodic".to_string())
-            })
-            .await;
+            },
+        )
+        .await;
 
         let recall_params = RecallParams {
             query: "decay ordering episodic".to_string(),
@@ -1105,7 +1605,10 @@ mod tests {
         let text = val["content"][0]["text"].as_str().unwrap();
         let json: serde_json::Value = serde_json::from_str(text).unwrap();
 
-        assert_eq!(json["memories"][0]["content"], "decay ordering fresh episodic");
+        assert_eq!(
+            json["memories"][0]["content"],
+            "decay ordering fresh episodic"
+        );
         assert!(
             json["memories"][0]["score"].as_f64().unwrap()
                 > json["memories"][1]["score"].as_f64().unwrap()
@@ -1119,18 +1622,24 @@ mod tests {
     #[tokio::test]
     async fn test_search_text_tracks_only_returned_results() {
         let ctx = TestContext::new().await;
-        let _ = seed_memory(&ctx, Memory {
+        let _ = seed_memory(
+            &ctx,
+            Memory {
                 content: "track final result one".to_string(),
                 embedding: Some(vec![0.25; 768]),
                 ..Memory::new("track final result one".to_string())
-            })
-            .await;
-        let _ = seed_memory(&ctx, Memory {
+            },
+        )
+        .await;
+        let _ = seed_memory(
+            &ctx,
+            Memory {
                 content: "track final result two".to_string(),
                 embedding: Some(vec![0.26; 768]),
                 ..Memory::new("track final result two".to_string())
-            })
-            .await;
+            },
+        )
+        .await;
 
         let (sender, mut receiver) = mpsc::channel(8);
         let tracker = AccessTracker::new(sender);

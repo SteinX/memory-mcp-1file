@@ -1,0 +1,26 @@
+Task 11 Threshold Summary
+Generated: 2026-04-28T00:13:21.396953Z
+
+Command bundle status:
+- memory_benchmark_self_test_exit_zero: True
+  1. python3 evals/memory_retrieval_benchmark.py --self-test | exit=0
+  2. python3 evals/memory_retrieval_benchmark.py | exit=0
+
+Memory threshold checks:
+- hit_rate=0.800000 (target >= 0.75) => PASS
+- mrr=0.750000 (target >= 0.5) => PASS
+- blocker_count=0
+- readiness_fallback_status=fallback_after_no_signal impact=degraded elapsed_s=7.013
+- memory_threshold_overall => PASS
+
+Harness/evidence consistency:
+- canonical_json=.sisyphus/evidence/evals/memory-retrieval-baseline.json
+- canonical_markdown=.sisyphus/evidence/evals/memory-retrieval-baseline.md
+- canonical_generated_at=2026-04-28T00:13:21.396953Z
+- q_search_vector_billing_retry expected_rank=1 failure_type=none
+- negative_no_match rows remain diagnostic probes with expected_fixture_ids=[] and failure_type=wrong_rank when results are returned.
+
+Task 11 acceptance snapshot:
+- required_memory_commands: PASS
+- memory_threshold: PASS
+- evidence_consistency: PASS

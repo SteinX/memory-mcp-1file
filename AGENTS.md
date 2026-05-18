@@ -1,8 +1,9 @@
-# 🤖 AGENTS.md — AI Agent Master Protocol (MCP + VIDA Thinking)
+# AGENTS.md — Memory MCP Agent Protocol
 
 <identity>
-You are an AI agent operating with the **Memory MCP** and **VIDA Thinking Framework**.
-You must adhere to strict workflows, utilize specialized tools, and maintain context across sessions.
+You are an AI agent operating with the **Memory MCP** project protocol.
+Your job is to preserve context across sessions, follow explicit memory workflows,
+and verify behavior before reporting success.
 </identity>
 
 ---
@@ -14,7 +15,7 @@ You must adhere to strict workflows, utilize specialized tools, and maintain con
 2. **[MUST NOT]** Never perform auto-commits without explicit user permission.
 3. **[MUST NOT]** Never propose or implement "hotfixes". Demand root-cause solutions.
 4. **[MUST NOT]** Never delete files or code blocks without explicit discussion.
-5. **[MUST]** Always use `/vida-think` for architectural decisions, debugging, or complex refactoring.
+5. **[MUST]** Use explicit root-cause analysis and a short written plan for architectural decisions, debugging, or complex refactoring.
 6. **[MUST]** After each implementation step, report progress against the active roadmap/phase to the user.
 7. **[MUST]** Treat stale `README.md` and `AGENTS.md` updates as part of task completion whenever behavior, workflow, or operator-facing semantics change.
 8. **[MUST]** Prefer explicit operator-visible write flows (e.g. dedicated consolidation/supersede actions) over silently changing existing write semantics when evolving memory behavior.
@@ -26,62 +27,50 @@ You must adhere to strict workflows, utilize specialized tools, and maintain con
 
 <!-- SURVIVE_COMPRESSION: This entire section MUST be executed after every compression event -->
 
-### ⛔ THIS IS A HARD STOP. DO NOT RESPOND TO THE USER, DO NOT CONTINUE ANY TASK, DO NOT ANSWER ANY QUESTION UNTIL ALL STEPS BELOW ARE FULLY EXECUTED WITH `Read` TOOL CALLS.
+### ⛔ THIS IS A HARD STOP. DO NOT CONTINUE TASK WORK UNTIL THE STEPS BELOW ARE COMPLETE.
 
 When context is compressed or cleared, you MUST execute this sequence **before ANY other action**.
 **Violation = immediate protocol failure. No shortcuts. No "I already know". No skipping.**
 
 1. **Read `AGENTS.md`** — this file (full, not partial). Re-internalize all L0 invariants and protocols.
-2. **Read all `/vida-think` algorithm files** — required for architectural decisions:
-   - `_vida/algorithms/meta-analysis.md`
-   - `_vida/algorithms/pr-cot.md`
-   - `_vida/algorithms/mar.md`
-   - `_vida/algorithms/5-solutions.md`
-   - `_vida/shared/reasoning-modules.md`
-3. **Read `_vida/shared/beads-protocol.md`** — state management protocol.
-4. **Read the context summary** — if one exists in the compressed context, use it to orient.
-5. **Do NOT continue work** until steps 1-3 are complete.
+2. **Read the context summary** — if one exists in the compressed context, use it to orient.
+3. **Re-check active task state** — search Memory MCP task records before resuming any ongoing work.
+4. **Do NOT continue work** until steps 1-3 are complete.
 
 ### Detection heuristic
 If your first tool call after compression is NOT `Read AGENTS.md` — you are violating this protocol.
-If you skip ANY file from step 2 — you are violating this protocol.
-If you respond to the user before completing step 3 — you are violating this protocol.
+If you continue a prior task before checking the context summary and active task state — you are violating this protocol.
 
-**Why**: Algorithms define HOW to think. Without them, `/vida-think` produces shallow analysis
-that violates L0 #5. Compression strips algorithm knowledge — it must be reloaded explicitly.
+**Why**: Compression strips local project state and recent decisions. The protocol must be reloaded
+before continuing work.
 
-**Anti-pattern**: Proceeding with tasks using "remembered" algorithm steps from pre-compression.
-This leads to incomplete META-analysis, skipped PR-CoT passes, or fabricated MAR scores.
+**Anti-pattern**: Proceeding with tasks using remembered state from before compression.
+This leads to stale task state, skipped memory checks, and incorrect operator guidance.
 
 ---
 
-## 🔀 PHASE TRANSITION ROUTING (⛔ BLOCKING)
+## 🔀 WORK MODE ROUTING
 
-> ⛔ STOP. Before starting ANY new phase of work, you MUST execute the MANDATORY BOOT PROTOCOL.
-> Your output is VOID if this gate is not passed. "I already know how to code" is NOT an excuse.
+Before starting a new phase of work, classify the request and choose the smallest workflow that can
+complete it safely.
 
-### GATE-0: Phase Identification & Loading
+### GATE-0: Work Mode Identification
 
-Before ANY output, when a user requests a phase transition, you MUST:
+Before implementation, when a user requests a phase transition, you MUST:
 
-1. **Classify** the user's message against the `PHASE_ROUTING_TABLE` (see below).
-2. **IF** a phase is identified:
-   - State explicitly: `[ROUTER] Phase detected: vida_{phase_name}`
-   - State explicitly: `[ROUTER] Loading: _vida/commands/vida-{phase}.md`
-   - Call the `Read` tool on `_vida/commands/vida-{phase}.md` as your FIRST action.
-   - **WAIT** for the tool result.
-   - Proceed ONLY after executing the `PROOF-OF-LOAD` requirement.
-3. **IF** no phase is identified but a transition is suspected:
-   - Default to `/vida-status` to orient.
+1. **Classify** the message as advice, investigation, implementation, review, or maintenance.
+2. **If implementation is requested**, confirm scope is concrete enough to execute without guessing.
+3. **If scope is ambiguous or risky**, investigate first or ask one precise question.
+4. **If the request changes operator-facing behavior**, include README and AGENTS updates in completion.
 
-### 🧾 PROOF-OF-LOAD REQUIREMENT (CRITICAL)
+### Planning Gate
 
-After the `Read` tool call, your NEXT output line MUST be:
-```
-[PROOF-OF-LOAD] Loaded: _vida/commands/vida-{phase}.md
-Summary of first 3 lines: {actual content extracted directly from the tool result}
-```
-**⛔ If you cannot produce this exact summary from the tool result — you did NOT load the file. STOP. Do not generate code. Retry the tool call.**
+For non-trivial implementation, create a short plan before editing. The plan must include:
+
+- dependencies and sequencing;
+- parallel exploration opportunities;
+- verification commands;
+- explicit scope exclusions.
 
 ---
 
@@ -590,6 +579,7 @@ get_related(entity_id="WP:WP01", depth=2, direction="both")
 - ✅ TASK has fields: Status, Current, Path, Command, Agent
 - ✅ Keep every relevant `AGENTS.md` and `README.md` aligned with reality; update stale guidance promptly
 - ✅ Use `invalidate` instead of `delete_memory`
+- ✅ For physical memory cleanup, call `preview_purge_memory` first and then `purge_memory` with the returned `plan_fingerprint`
 - ✅ Update TASK on subtask change
 - ✅ Update EPIC on WP completion
 - ✅ Store DECISION with REASON
@@ -604,6 +594,7 @@ get_related(entity_id="WP:WP01", depth=2, direction="both")
 - ❌ Consider user message BEFORE showing task as confirmation
 - ❌ Move to new WP without invalidating old TASK
 - ❌ Use `delete_memory` (only invalidate)
+- ❌ Use `delete_memory` for routine stale-memory cleanup; use preview/apply purge instead
 - ❌ Ignore found active TASK records
 - ❌ Store duplicates — use `update_memory`
 </must_not>
@@ -620,8 +611,10 @@ get_related(entity_id="WP:WP01", depth=2, direction="both")
 | **Memory: completion** | REQUIRED `invalidate` + `store_memory` |
 | **Memory: deletion** | FORBIDDEN `delete_memory`, only `invalidate` |
 | **Docs: maintenance** | REQUIRED to update in-scope `AGENTS.md` and `README.md` files when reality changes |
+| **Boot** | REQUIRED to read `AGENTS.md`, context summary, and active task state after context wipe |
 | **Thinking: Boot** | REQUIRED to read algorithms after context wipe |
 | **Thinking: Routing** | REQUIRED to identify phases and load specific commands |
+| **Work routing** | REQUIRED to classify request mode before implementation |
 
 ---
 
@@ -658,8 +651,10 @@ docker run -d \
 | Аспект | Правильно | Неправильно |
 |--------|-----------|-------------|
 | **stdin** | `tail -f /dev/null \| memory-mcp` | `cat /dev/zero \| memory-mcp` (**OOM!** нескінченний бінарний потік) |
-| **Volume для /data** | `-v memory-mcp-data:/data` (named volume, persist між rm/run) | без volume (модель ~800MB качається з мережі щоразу) |
+| **Volume для /data** | `-v memory-mcp-data:/data` (named volume, persist між rm/run; Docker image stores models in `/data/models`) | без volume (модель качається з мережі щоразу) |
 | **Memory limit** | `--memory 4g` (мінімум для Qwen3 1024d) | без ліміту (SurrealKV block cache з'їсть RAM/2-1GB) |
+
+Native binary runs share downloaded HuggingFace model files through the platform app-data directory by default, not the OS cache directory. If the selected model already exists under `${data_dir}/models`, keep using that legacy cache. Use `--model-cache-dir` or `EMBEDDING_MODEL_CACHE_DIR` only when a specific shared model path is required.
 
 ### Моніторинг
 
@@ -719,20 +714,25 @@ SurrealDB використовує exclusive LOCK на `/data`. `docker exec` с
 #### Правильні назви MCP Tools
 
 ```
-Memory:  store_memory, update_memory, delete_memory, list_memories, get_memory,
+Memory:  store_memory, update_memory, list_memories, get_memory,
          invalidate, get_valid
+Memory Admin: delete_memory (emergency/admin only; routine cleanup uses invalidate + preview/apply purge)
 Search:  recall (hybrid vector+keyword+graph RRF)
          search_memory (mode: vector|bm25)
 Code:    recall_code (mode: vector|hybrid, DEFAULT=hybrid)
          search_symbols, symbol_graph (symbol_id, action: callers|callees|related)
-         index_project, delete_project, project_info (action: list|status|stats)
-System:  get_status, reset_all_memory
+         index_project, delete_project, project_info (action: list|index|status|stats)
+System:  get_status
+System Admin: reset_all_memory (destructive; requires confirm=true and explicit operator approval)
 ```
 
 > ⚠️ **`search_code` — це ВНУТРІШНЯ функція, НЕ MCP tool!**
 > Для пошуку коду використовуй `recall_code`.
 > `recall_code` mode=`vector` → викликає search_code internally.
 > `recall_code` mode=`hybrid` (default) → vector + BM25 + graph RRF.
+> Single identifier lookups may report `fallback_path="bm25_lexical_fast_path"`
+> and intentionally skip vector/PPR so exact symbol searches remain responsive
+> on large persisted indexes.
 
 #### Тестовий скрипт
 
@@ -800,6 +800,22 @@ echo "EXIT_CODE=$?"
 | `bm25_hits: 0` | BM25 не прогрітий (перші секунди після старту) | Збільш sleep між NOTIF та першим запитом |
 | Порожня відповідь + EXIT 124 | timeout занадто короткий | Збільш timeout та sleep між запитами |
 
+### Code index generated-source guard
+
+Code indexing skips common generated sources before parsing. This includes generated directories,
+generated Dart suffixes, Swift protobuf files (`*.pb.swift`), and source files whose header marks them as generated and not intended for
+manual editing, including protoc Java output (`Generated by the protocol buffer compiler. DO NOT EDIT!`) and Swift protoc output.
+Project-specific generated/vendor directories can still be excluded with `CODE_INDEX_EXCLUDE_PATTERNS`
+or per-call `exclude_patterns` when needed.
+
+Full indexing must publish structural code search before vector embedding backfill. BM25, symbols,
+and graph generations should become available without waiting for every chunk/symbol embedding to be
+queued or generated; unembedded rows are expected while `status=embedding_pending`. When embeddings
+complete, publish vector and semantic serving generations after HNSW rebuild succeeds.
+On startup, resume unembedded chunks/symbols for all persisted `embedding_pending` projects even when
+the process was launched without `--project-path`; the optional lifecycle manager is not the only
+embedding recovery path.
+
 ### Memory Budget (Qwen3 1024d, 4GB limit)
 
 ```
@@ -820,7 +836,7 @@ Peak:                 ~2100MB  (headroom ~1900MB при 4GB)
 | Проблема | Причина | Рішення |
 |----------|---------|---------|
 | "Previous indexing interrupted" | Попередній контейнер був OOM-killed під час індексації | Нормально — перезапуск індексації |
-| Модель качається з мережі | `/data` volume не збережений | Використовувати named volume `-v memory-mcp-data:/data` |
+| Модель качається з мережі в Docker | `/data` volume не збережений | Використовувати named volume `-v memory-mcp-data:/data` |
 | OOM при 4GB | SurrealKV block cache авто = RAM/2-1GB | ENV `SURREAL_SURREALKV_BLOCK_CACHE_CAPACITY=268435456` (256MB) |
 | Індексація "failed" після 300с | completion_monitor stall timeout занадто короткий | Збільшено до 1800с (30 хв) для Qwen3 CPU |
 | CPU лише 130% | `RAYON_NUM_THREADS` не встановлено | ENV `RAYON_NUM_THREADS=0` (авто-detect всі ядра) |

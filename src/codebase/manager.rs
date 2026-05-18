@@ -7,12 +7,12 @@ use tracing::{debug, error, info, warn};
 use crate::config::AppState;
 use crate::embedding::{EmbeddingRequest, EmbeddingTarget};
 use crate::storage::StorageBackend;
-use crate::types::IndexState;
+use crate::types::{derive_project_id, IndexState};
 use crate::Result;
 
 use super::index_worker::{IndexJob, IndexJobSender};
 use super::indexer::{index_project, IncrementalResult};
-use super::scanner::scan_directory;
+use super::scanner::{scan_directory_with_filter, IndexFilterConfig};
 use super::watcher::FileWatcher;
 
 /// Bump this when embedding model or pooling strategy changes.
@@ -29,21 +29,60 @@ pub struct CodebaseManager {
     index_tx: IndexJobSender,
 }
 
-impl CodebaseManager {
-    pub fn new(state: Arc<AppState>, project_path: PathBuf, index_tx: IndexJobSender) -> Self {
-        let project_id = project_path
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("unknown")
-            .to_string();
+/// Resume embedding for chunks/symbols that were indexed but not yet embedded.
+/// Used when recovering from an interrupted indexing session or a process
+/// restart after structural search was already published.
+pub async fn resume_embeddings_for_project(
+    state: &Arc<AppState>,
+    project_id: &str,
+) -> Result<usize> {
+    let storage = &state.storage;
+    let queue = &state.embedding_queue;
+    let mut enqueued = 0;
 
-        Self {
+    let unembedded_chunks = storage.get_unembedded_chunks(project_id).await?;
+    for (id, content) in &unembedded_chunks {
+        let req = EmbeddingRequest {
+            text: content.clone(),
+            responder: None,
+            target: Some(EmbeddingTarget::Chunk(id.clone())),
+            retry_count: 0,
+        };
+        queue.send(req).await?;
+        enqueued += 1;
+    }
+
+    let unembedded_symbols = storage.get_unembedded_symbols(project_id).await?;
+    for (id, text) in &unembedded_symbols {
+        let req = EmbeddingRequest {
+            text: text.clone(),
+            responder: None,
+            target: Some(EmbeddingTarget::Symbol(id.clone())),
+            retry_count: 0,
+        };
+        queue.send(req).await?;
+        enqueued += 1;
+    }
+
+    Ok(enqueued)
+}
+
+impl CodebaseManager {
+    pub fn new(
+        state: Arc<AppState>,
+        project_path: PathBuf,
+        index_tx: IndexJobSender,
+    ) -> Result<Self> {
+        let project_id = derive_project_id(&project_path)
+            .map_err(|error| crate::AppError::InvalidPath(error.to_string()))?;
+
+        Ok(Self {
             state,
             project_path,
             project_id,
             watcher: RwLock::new(None),
             index_tx,
-        }
+        })
     }
 
     pub fn project_id(&self) -> &str {
@@ -53,12 +92,15 @@ impl CodebaseManager {
     /// After a successful full index, write every indexed file path into the
     /// `file_manifest` table so future validation can detect deletions.
     pub async fn bootstrap_manifest(&self) -> Result<()> {
+        let compiled_filter = self.active_index_filter().await?;
         let project_path = self.project_path.clone();
-        let file_paths = tokio::task::spawn_blocking(move || scan_directory(&project_path))
-            .await
-            .map_err(|e| {
-                crate::AppError::Internal(format!("bootstrap_manifest scan panicked: {e}").into())
-            })??;
+        let file_paths = tokio::task::spawn_blocking(move || {
+            scan_directory_with_filter(&project_path, &compiled_filter)
+        })
+        .await
+        .map_err(|e| {
+            crate::AppError::Internal(format!("bootstrap_manifest scan panicked: {e}").into())
+        })??;
 
         let path_strings: Vec<String> = file_paths
             .iter()
@@ -93,14 +135,17 @@ impl CodebaseManager {
     /// Returns the number of jobs enqueued.
     pub async fn validate_index_full(&self) -> Result<IncrementalResult> {
         let project_id = &self.project_id;
+        let compiled_filter = self.active_index_filter().await?;
 
         // 1. Scan the current directory.
         let project_path = self.project_path.clone();
-        let current_files = tokio::task::spawn_blocking(move || scan_directory(&project_path))
-            .await
-            .map_err(|e| {
-                crate::AppError::Internal(format!("validate_index_full scan panicked: {e}").into())
-            })??;
+        let current_files = tokio::task::spawn_blocking(move || {
+            scan_directory_with_filter(&project_path, &compiled_filter)
+        })
+        .await
+        .map_err(|e| {
+            crate::AppError::Internal(format!("validate_index_full scan panicked: {e}").into())
+        })??;
 
         let current_set: std::collections::HashSet<String> = current_files
             .iter()
@@ -112,7 +157,8 @@ impl CodebaseManager {
         let manifest_set: std::collections::HashSet<String> =
             manifest.iter().map(|e| e.file_path.clone()).collect();
 
-        // 3. Deleted files: in manifest but not on disk → Delete jobs.
+        // 3. Deleted files: in manifest but no longer in the filtered scan → Delete jobs.
+        //    This covers both files missing from disk and files excluded by the active filter.
         let deleted: Vec<String> = manifest_set.difference(&current_set).cloned().collect();
 
         for path_str in &deleted {
@@ -154,6 +200,24 @@ impl CodebaseManager {
         // Return an empty IncrementalResult — the actual work happens
         // asynchronously inside the IndexWorker.
         Ok(IncrementalResult::default())
+    }
+
+    async fn active_index_filter(&self) -> Result<super::scanner::CompiledIndexFilter> {
+        let status = self
+            .state
+            .storage
+            .get_index_status(&self.project_id)
+            .await?;
+        let filter_config = status
+            .as_ref()
+            .map(|s| IndexFilterConfig {
+                include_patterns: s.include_patterns.clone(),
+                exclude_patterns: s.exclude_patterns.clone(),
+            })
+            .unwrap_or_default();
+        filter_config
+            .compile()
+            .map_err(|e| crate::AppError::Internal(e.into()))
     }
 
     /// Start auto-indexing and file watching
@@ -215,7 +279,10 @@ impl CodebaseManager {
                         };
                         match mgr.resume_embeddings().await {
                             Ok(count) => {
-                                info!(count, "Embedding migration: enqueued items for re-embedding");
+                                info!(
+                                    count,
+                                    "Embedding migration: enqueued items for re-embedding"
+                                );
                             }
                             Err(e) => {
                                 error!("Embedding migration resume failed: {}", e);
@@ -253,10 +320,15 @@ impl CodebaseManager {
                                 info!(count, "Resumed orphaned embeddings from previous run");
                                 // Set status to EmbeddingPending so completion_monitor
                                 // detects when all embeddings finish and rebuilds HNSW.
-                                if let Ok(Some(mut st)) = state.storage.get_index_status(&project_id).await {
+                                if let Ok(Some(mut st)) =
+                                    state.storage.get_index_status(&project_id).await
+                                {
                                     st.status = IndexState::EmbeddingPending;
                                     if let Err(e) = state.storage.update_index_status(st).await {
-                                        error!("Failed to set EmbeddingPending after resume: {}", e);
+                                        error!(
+                                            "Failed to set EmbeddingPending after resume: {}",
+                                            e
+                                        );
                                     }
                                 }
                             }
@@ -300,7 +372,9 @@ impl CodebaseManager {
                             }
                             // Set to EmbeddingPending so completion_monitor picks it up
                             resume_status.status = IndexState::EmbeddingPending;
-                            if let Err(e) = mgr.state.storage.update_index_status(resume_status).await {
+                            if let Err(e) =
+                                mgr.state.storage.update_index_status(resume_status).await
+                            {
                                 error!("Failed to update index status: {}", e);
                             }
                         }
@@ -330,43 +404,7 @@ impl CodebaseManager {
     /// Resume embedding for chunks/symbols that were indexed but not yet embedded.
     /// Used when recovering from an interrupted indexing session.
     async fn resume_embeddings(&self) -> Result<usize> {
-        let storage = &self.state.storage;
-        let queue = &self.state.embedding_queue;
-        let mut enqueued = 0;
-
-        // Re-enqueue unembedded chunks
-        let unembedded_chunks = storage.get_unembedded_chunks(&self.project_id).await?;
-        for (id, content) in &unembedded_chunks {
-            let req = EmbeddingRequest {
-                text: content.clone(),
-                responder: None,
-                target: Some(EmbeddingTarget::Chunk(id.clone())),
-                retry_count: 0,
-            };
-            if let Err(e) = queue.send(req).await {
-                tracing::warn!(chunk_id = %id, error = %e, "Failed to enqueue chunk embedding during resume");
-            } else {
-                enqueued += 1;
-            }
-        }
-
-        // Re-enqueue unembedded symbols
-        let unembedded_symbols = storage.get_unembedded_symbols(&self.project_id).await?;
-        for (id, text) in &unembedded_symbols {
-            let req = EmbeddingRequest {
-                text: text.clone(),
-                responder: None,
-                target: Some(EmbeddingTarget::Symbol(id.clone())),
-                retry_count: 0,
-            };
-            if let Err(e) = queue.send(req).await {
-                tracing::warn!(symbol_id = %id, error = %e, "Failed to enqueue symbol embedding during resume");
-            } else {
-                enqueued += 1;
-            }
-        }
-
-        Ok(enqueued)
+        resume_embeddings_for_project(&self.state, &self.project_id).await
     }
 
     fn spawn_full_index(&self) {
@@ -446,5 +484,88 @@ impl CodebaseManager {
             watcher.stop();
             info!("Codebase manager stopped");
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::storage::StorageBackend;
+    use crate::test_utils::TestContext;
+    use crate::types::IndexStatus;
+    use std::fs;
+    use std::sync::atomic::AtomicUsize;
+    use std::sync::Arc;
+    use tokio::sync::mpsc;
+
+    fn write_file(path: &std::path::Path, contents: &str) {
+        fs::write(path, contents).unwrap();
+    }
+
+    async fn manager_for(
+        ctx: &TestContext,
+        project_path: PathBuf,
+    ) -> (CodebaseManager, mpsc::UnboundedReceiver<IndexJob>) {
+        let (tx, rx) = mpsc::unbounded_channel();
+        let index_tx = IndexJobSender::new(tx, Arc::new(AtomicUsize::new(0)));
+        let manager = CodebaseManager::new(ctx.state.clone(), project_path, index_tx).unwrap();
+        (manager, rx)
+    }
+
+    #[tokio::test]
+    async fn validate_index_full_excludes_filtered_files() {
+        let ctx = TestContext::new().await;
+        let project_dir = ctx._temp_dir.path().join("filtered_validation_project");
+        fs::create_dir_all(&project_dir).unwrap();
+        let excluded_file = project_dir.join("excluded.rs");
+        write_file(&excluded_file, "fn excluded() {}\n");
+
+        let (manager, mut rx) = manager_for(&ctx, project_dir.clone()).await;
+        let excluded_file_string = excluded_file.to_string_lossy().to_string();
+        ctx.state
+            .storage
+            .upsert_manifest_entries(manager.project_id(), &[excluded_file_string.clone()])
+            .await
+            .unwrap();
+
+        let mut status = IndexStatus::new(manager.project_id().to_string());
+        status.exclude_patterns = vec!["excluded.rs".to_string()];
+        ctx.state.storage.update_index_status(status).await.unwrap();
+
+        manager.validate_index_full().await.unwrap();
+
+        let job = rx.try_recv().expect("Delete job should be enqueued");
+        match job {
+            IndexJob::Delete(path) => assert_eq!(path, excluded_file),
+            other => panic!("expected Delete job, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn bootstrap_manifest_uses_active_filter() {
+        let ctx = TestContext::new().await;
+        let project_dir = ctx._temp_dir.path().join("filtered_bootstrap_project");
+        fs::create_dir_all(&project_dir).unwrap();
+        let included_file = project_dir.join("included.rs");
+        let excluded_file = project_dir.join("excluded.rs");
+        write_file(&included_file, "fn included() {}\n");
+        write_file(&excluded_file, "fn excluded() {}\n");
+
+        let (manager, _rx) = manager_for(&ctx, project_dir).await;
+        let mut status = IndexStatus::new(manager.project_id().to_string());
+        status.include_patterns = vec!["included.rs".to_string()];
+        ctx.state.storage.update_index_status(status).await.unwrap();
+
+        manager.bootstrap_manifest().await.unwrap();
+
+        let manifest = ctx
+            .state
+            .storage
+            .get_manifest_entries(manager.project_id())
+            .await
+            .unwrap();
+        let paths: Vec<String> = manifest.into_iter().map(|entry| entry.file_path).collect();
+
+        assert_eq!(paths, vec![included_file.to_string_lossy().to_string()]);
     }
 }

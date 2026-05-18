@@ -1,0 +1,62 @@
+Task 6 code weak query results
+Source report: .sisyphus/evidence/evals/code-retrieval-baseline.json
+
+Aggregate metrics after benchmark-side clarification:
+- query_count: 15
+- baseline_query_count: 15
+- hit_rate: 0.8666666666666667
+- mrr: 0.8666666666666667
+- precision_at_5: 0.7466666666666666
+- precision_at_10: 0.6266666666666666
+- mean_expected_rank: 1.0
+- readiness_timeout: False
+- observed_summary_partial_reason_codes: ['partial']
+
+Clarification summary:
+- nl_recall_code_hybrid: original expected path was too narrow because the query asks for hybrid code search plus vector/BM25/symbol graph/PageRank fusion; valid fixture targets include recall_code orchestration and graph fusion implementation files.
+- code_recall_code_fn: original expected path was too narrow because the exact code-ish query `pub async fn recall_code` matches both the MCP handler wrapper and the logic implementation async functions in the fixture.
+- No ranking algorithm/source changes were made; this is benchmark/golden clarification only.
+
+Query: nl_recall_code_hybrid
+- query: hybrid code search vector BM25 symbol graph PageRank fusion
+- query_type: natural_language
+- expected_paths: ['src/server/logic/code/search.rs', 'src/graph/rrf.rs', 'src/graph/ppr.rs']
+- expected_symbols: ['recall_code']
+- expected_rank: 1
+- mrr: 1.0
+- precision_at_5: 0.6
+- precision_at_10: 0.8
+- summary_partial_reason_code: None
+- top_10_paths:
+  1. /var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-9-code-retrieval-project-o37a2e2x/task-9-code-retrieval-fixture/src/graph/rrf.rs
+  2. /var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-9-code-retrieval-project-o37a2e2x/task-9-code-retrieval-fixture/src/server/logic/code/search.rs
+  3. /var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-9-code-retrieval-project-o37a2e2x/task-9-code-retrieval-fixture/src/server/handler.rs
+  4. /var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-9-code-retrieval-project-o37a2e2x/task-9-code-retrieval-fixture/src/graph/rrf.rs
+  5. /var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-9-code-retrieval-project-o37a2e2x/task-9-code-retrieval-fixture/src/server/handler.rs
+  6. /var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-9-code-retrieval-project-o37a2e2x/task-9-code-retrieval-fixture/src/graph/rrf.rs
+  7. /var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-9-code-retrieval-project-o37a2e2x/task-9-code-retrieval-fixture/src/graph/ppr.rs
+  8. /var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-9-code-retrieval-project-o37a2e2x/task-9-code-retrieval-fixture/src/graph/ppr.rs
+  9. /var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-9-code-retrieval-project-o37a2e2x/task-9-code-retrieval-fixture/src/graph/rrf.rs
+  10. /var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-9-code-retrieval-project-o37a2e2x/task-9-code-retrieval-fixture/src/server/logic/code/search.rs
+
+Query: code_recall_code_fn
+- query: pub async fn recall_code
+- query_type: codeish_symbol
+- expected_paths: ['src/server/logic/code/search.rs', 'src/server/handler.rs']
+- expected_symbols: ['recall_code']
+- expected_rank: 1
+- mrr: 1.0
+- precision_at_5: 1.0
+- precision_at_10: 1.0
+- summary_partial_reason_code: None
+- top_10_paths:
+  1. /var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-9-code-retrieval-project-o37a2e2x/task-9-code-retrieval-fixture/src/server/handler.rs
+  2. /var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-9-code-retrieval-project-o37a2e2x/task-9-code-retrieval-fixture/src/server/handler.rs
+  3. /var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-9-code-retrieval-project-o37a2e2x/task-9-code-retrieval-fixture/src/server/handler.rs
+  4. /var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-9-code-retrieval-project-o37a2e2x/task-9-code-retrieval-fixture/src/server/logic/code/search.rs
+  5. /var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-9-code-retrieval-project-o37a2e2x/task-9-code-retrieval-fixture/src/server/handler.rs
+  6. /var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-9-code-retrieval-project-o37a2e2x/task-9-code-retrieval-fixture/src/server/handler.rs
+  7. /var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-9-code-retrieval-project-o37a2e2x/task-9-code-retrieval-fixture/src/server/handler.rs
+  8. /var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-9-code-retrieval-project-o37a2e2x/task-9-code-retrieval-fixture/src/server/handler.rs
+  9. /var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-9-code-retrieval-project-o37a2e2x/task-9-code-retrieval-fixture/src/server/logic/code/search.rs
+  10. /var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-9-code-retrieval-project-o37a2e2x/task-9-code-retrieval-fixture/src/server/handler.rs

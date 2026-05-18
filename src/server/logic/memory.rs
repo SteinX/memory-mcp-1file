@@ -1,5 +1,6 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
+use std::time::Instant;
 
 use blake3;
 use rmcp::model::CallToolResult;
@@ -8,15 +9,24 @@ use serde_json::json;
 use crate::config::AppState;
 use crate::embedding::ContentHasher;
 use crate::server::params::{
-    ConsolidateMemoryParams, DeleteMemoryParams, GetMemoryParams, GetValidAtParams,
-    GetValidParams, InvalidateParams, ListMemoriesParams, PreviewConsolidateMemoryParams,
-    StoreMemoryParams, UpdateMemoryParams,
+    normalize_project_id, ConsolidateMemoryParams, DeleteMemoryParams, ExportMemoryParams,
+    GetMemoryParams, GetValidAtParams, GetValidParams, ImportMemoryParams, InvalidateParams,
+    ListMemoriesParams, PreviewConsolidateMemoryParams, PreviewPurgeMemoryParams,
+    PurgeMemoryParams, StoreMemoryParams, UpdateMemoryParams,
 };
+use crate::storage::traits::{MemoryExportOptions, MemoryGcFilter, MemoryImportOptions};
 use crate::storage::StorageBackend;
-use crate::types::EmbeddingState;
-use crate::types::{record_key_to_string, ExportIdentity, Memory, MemoryType, MemoryUpdate};
+use crate::types::{
+    record_key_to_string, ExportIdentity, ImportConflictStrategy, ImportError, ImportErrorCode,
+    ImportMemoryResponse, Memory, MemoryType, MemoryUpdate, MigrationMemoryRecord,
+    MigrationRecordType, MigrationSummary, MEMORY_MIGRATION_SCHEMA_VERSION,
+};
+use crate::types::{Datetime, EmbeddingState, MemoryQuery};
 
 use super::contracts::{export_contract_meta, summary_collection_response, with_surface_guidance};
+use super::memory_lifecycle::{
+    derive_memory_lifecycle, MemoryLifecycleView, RetentionPolicy, RETENTION_POLICY_VERSION,
+};
 use super::{error_response, normalize_limit, strip_embedding, strip_embeddings, success_json};
 
 fn normalize_importance_score(value: Option<f32>) -> anyhow::Result<Option<f32>> {
@@ -35,6 +45,264 @@ fn parse_memory_type(value: Option<&str>) -> anyhow::Result<MemoryType> {
             .parse()
             .map_err(|_| anyhow::anyhow!("Invalid memory_type: '{}'", value)),
         None => Ok(MemoryType::default()),
+    }
+}
+
+fn parse_optional_datetime(value: Option<&str>, field: &str) -> anyhow::Result<Option<Datetime>> {
+    match value.map(str::trim).filter(|s| !s.is_empty()) {
+        Some(value) => {
+            let ts: chrono::DateTime<chrono::Utc> = value
+                .parse()
+                .map_err(|_| anyhow::anyhow!("Invalid {} format. Use ISO 8601", field))?;
+            Ok(Some(Datetime::from(ts)))
+        }
+        None => Ok(None),
+    }
+}
+
+fn parse_optional_memory_type(value: Option<&str>) -> anyhow::Result<Option<MemoryType>> {
+    match value.map(str::trim).filter(|s| !s.is_empty()) {
+        Some(value) => value
+            .parse()
+            .map(Some)
+            .map_err(|_| anyhow::anyhow!("Invalid memory_type: '{}'", value)),
+        None => Ok(None),
+    }
+}
+
+impl ExportMemoryParams {
+    fn to_memory_query(&self) -> anyhow::Result<MemoryQuery> {
+        Ok(MemoryQuery {
+            user_id: self.user_id.clone(),
+            agent_id: self.agent_id.clone(),
+            run_id: self.run_id.clone(),
+            namespace: None,
+            memory_type: parse_optional_memory_type(self.memory_type.as_deref())?,
+            metadata_filter: self.metadata_filter.clone(),
+            valid_at: parse_optional_datetime(self.valid_at.as_deref(), "valid_at")?,
+            event_after: parse_optional_datetime(self.event_after.as_deref(), "event_after")?,
+            event_before: parse_optional_datetime(self.event_before.as_deref(), "event_before")?,
+            ingestion_after: parse_optional_datetime(
+                self.ingestion_after.as_deref(),
+                "ingestion_after",
+            )?,
+            ingestion_before: parse_optional_datetime(
+                self.ingestion_before.as_deref(),
+                "ingestion_before",
+            )?,
+        })
+    }
+}
+
+fn parse_import_conflict_strategy(value: Option<&str>) -> anyhow::Result<ImportConflictStrategy> {
+    match value.map(str::trim).filter(|value| !value.is_empty()) {
+        None | Some("remap") => Ok(ImportConflictStrategy::Remap),
+        Some("skip") => Ok(ImportConflictStrategy::Skip),
+        Some("fail") => Ok(ImportConflictStrategy::Fail),
+        Some(value) => Err(anyhow::anyhow!(
+            "Unsupported import conflict_strategy '{}'. Supported values: remap, skip, fail",
+            value
+        )),
+    }
+}
+
+fn import_error_response(
+    dry_run: bool,
+    conflict_strategy: ImportConflictStrategy,
+    total_records: usize,
+    errors: Vec<ImportError>,
+) -> ImportMemoryResponse {
+    ImportMemoryResponse {
+        schema_version: MEMORY_MIGRATION_SCHEMA_VERSION,
+        record_type: MigrationRecordType::Memory,
+        conflict_strategy,
+        dry_run,
+        imported_count: 0,
+        skipped_count: 0,
+        failed_count: errors.len(),
+        summary: MigrationSummary {
+            schema_version: MEMORY_MIGRATION_SCHEMA_VERSION,
+            record_type: MigrationRecordType::Memory,
+            total_records,
+            memory_records: total_records,
+            exported_records: 0,
+            imported_records: 0,
+            skipped_records: 0,
+            failed_records: errors.len(),
+            valid_records: 0,
+            invalidated_records: 0,
+            dry_run,
+        },
+        id_mappings: Vec::new(),
+        errors,
+    }
+}
+
+fn import_validation_error(
+    code: ImportErrorCode,
+    message: impl Into<String>,
+    line_number: Option<usize>,
+    source_id: Option<String>,
+    field: Option<&str>,
+) -> ImportError {
+    ImportError {
+        code,
+        message: message.into(),
+        line_number,
+        source_id,
+        field: field.map(ToOwned::to_owned),
+    }
+}
+
+fn missing_required_field_error(line_number: usize, field: &str) -> ImportError {
+    import_validation_error(
+        ImportErrorCode::MissingRequiredField,
+        format!("Memory migration record field '{field}' is required"),
+        Some(line_number),
+        None,
+        Some(field),
+    )
+}
+
+fn parse_import_jsonl(jsonl: &str) -> (Vec<MigrationMemoryRecord>, Vec<ImportError>, usize) {
+    let mut records = Vec::new();
+    let mut errors = Vec::new();
+    let mut total_records = 0usize;
+    let mut id_lines: HashMap<String, usize> = HashMap::new();
+
+    for (index, line) in jsonl.lines().enumerate() {
+        let line_number = index + 1;
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        total_records += 1;
+
+        let value: serde_json::Value = match serde_json::from_str(trimmed) {
+            Ok(value) => value,
+            Err(error) => {
+                errors.push(import_validation_error(
+                    ImportErrorCode::InvalidJsonl,
+                    format!("Invalid JSONL at line {line_number}: {error}"),
+                    Some(line_number),
+                    None,
+                    None,
+                ));
+                continue;
+            }
+        };
+
+        for field in [
+            "schema_version",
+            "record_type",
+            "id",
+            "content",
+            "memory_type",
+            "importance_score",
+            "created_at",
+            "updated_at",
+            "valid_from",
+            "invalidated",
+        ] {
+            if value.get(field).is_none() {
+                errors.push(missing_required_field_error(line_number, field));
+            }
+        }
+        if errors
+            .last()
+            .is_some_and(|error| error.line_number == Some(line_number))
+        {
+            continue;
+        }
+
+        let source_id = value
+            .get("id")
+            .and_then(|id| id.as_str())
+            .map(ToOwned::to_owned);
+        let schema_version = value
+            .get("schema_version")
+            .and_then(|schema_version| schema_version.as_u64());
+        if let Some(schema_version) = schema_version {
+            if schema_version != MEMORY_MIGRATION_SCHEMA_VERSION as u64 {
+                errors.push(import_validation_error(
+                    ImportErrorCode::UnsupportedSchemaVersion,
+                    format!(
+                        "Unsupported memory migration schema_version {}. Supported schema_version is {}.",
+                        schema_version, MEMORY_MIGRATION_SCHEMA_VERSION
+                    ),
+                    Some(line_number),
+                    source_id,
+                    Some("schema_version"),
+                ));
+                continue;
+            }
+        }
+
+        match serde_json::from_value::<MigrationMemoryRecord>(value) {
+            Ok(record) => {
+                if let Some(first_line) = id_lines.insert(record.id.clone(), line_number) {
+                    errors.push(import_validation_error(
+                        ImportErrorCode::StorageError,
+                        format!(
+                            "Duplicate memory id {} in import payload (first seen at line {})",
+                            record.id, first_line
+                        ),
+                        Some(line_number),
+                        Some(record.id.clone()),
+                        Some("id"),
+                    ));
+                    continue;
+                }
+                records.push(record);
+            }
+            Err(error) => {
+                let message = error.to_string();
+                let (code, field) = if message.contains("unknown variant")
+                    && message.contains("memory_type")
+                {
+                    (ImportErrorCode::InvalidMemoryType, Some("memory_type"))
+                } else if message.contains("unknown variant") && message.contains("record_type") {
+                    (ImportErrorCode::InvalidRecordType, Some("record_type"))
+                } else {
+                    (ImportErrorCode::InvalidJsonl, None)
+                };
+                errors.push(import_validation_error(
+                    code,
+                    format!("Invalid memory migration record at line {line_number}: {message}"),
+                    Some(line_number),
+                    source_id,
+                    field,
+                ));
+            }
+        }
+    }
+
+    (records, errors, total_records)
+}
+
+fn resolve_import_project_id(
+    records: &[MigrationMemoryRecord],
+    target_project_id: Option<String>,
+    preserve_project_id: bool,
+) -> anyhow::Result<String> {
+    if !preserve_project_id {
+        return normalize_project_id(target_project_id)
+            .ok_or_else(|| anyhow::anyhow!("project_id is required for memory import"));
+    }
+
+    let project_ids: HashSet<String> = records
+        .iter()
+        .filter_map(|record| normalize_project_id(record.project_id.clone()))
+        .collect();
+
+    match project_ids.len() {
+        1 => Ok(project_ids.into_iter().next().unwrap()),
+        0 => Err(anyhow::anyhow!(
+            "preserve_project_id=true requires every import record to include project_id"
+        )),
+        _ => Err(anyhow::anyhow!(
+            "preserve_project_id=true only supports one source project_id per import payload"
+        )),
     }
 }
 
@@ -123,7 +391,9 @@ fn build_consolidation_plan_fingerprint(
         }
     });
 
-    blake3::hash(payload.to_string().as_bytes()).to_hex().to_string()
+    blake3::hash(payload.to_string().as_bytes())
+        .to_hex()
+        .to_string()
 }
 
 fn plan_diagnostics(
@@ -236,8 +506,12 @@ async fn find_duplicate_matches(
 
     if matches.is_empty() {
         let total = state.storage.count_memories_filtered(filters).await?;
-        let existing = state.storage.list_memories(filters, total.max(1), 0).await?;
-        matches = exact_duplicate_matches(existing, content, content_hash, "exact_content_fallback");
+        let existing = state
+            .storage
+            .list_memories(filters, total.max(1), 0)
+            .await?;
+        matches =
+            exact_duplicate_matches(existing, content, content_hash, "exact_content_fallback");
         let fallback_match_count = matches.len();
         return Ok((
             matches,
@@ -253,8 +527,13 @@ async fn find_duplicate_matches(
     let mut fallback_match_count = 0;
     if !seen_ids.is_empty() {
         let total = state.storage.count_memories_filtered(filters).await?;
-        let existing = state.storage.list_memories(filters, total.max(1), 0).await?;
-        for candidate in exact_duplicate_matches(existing, content, content_hash, "exact_content_fallback") {
+        let existing = state
+            .storage
+            .list_memories(filters, total.max(1), 0)
+            .await?;
+        for candidate in
+            exact_duplicate_matches(existing, content, content_hash, "exact_content_fallback")
+        {
             if let Some(id) = candidate["id"].as_str() {
                 if seen_ids.insert(id.to_string()) {
                     fallback_match_count += 1;
@@ -382,8 +661,170 @@ fn operator_summary(
     })
 }
 
+#[derive(Clone)]
+struct PurgeCandidate {
+    id: String,
+    memory: Memory,
+    lifecycle: MemoryLifecycleView,
+}
+
+struct PurgePlan {
+    filter: MemoryGcFilter,
+    limit: usize,
+    older_than_days: Option<i64>,
+    candidate_count: usize,
+    total_invalidated_matches: usize,
+    has_more: bool,
+    reason_distribution: Vec<serde_json::Value>,
+    candidates: Vec<PurgeCandidate>,
+    plan_fingerprint: String,
+    retention_summary: serde_json::Value,
+}
+
+fn memory_id(memory: &Memory) -> Option<String> {
+    memory
+        .id
+        .as_ref()
+        .map(|thing| record_key_to_string(&thing.key))
+}
+
+fn purge_operator_summary(stage: &str, retention_summary: &serde_json::Value) -> serde_json::Value {
+    json!({
+        "stage": stage,
+        "primary_signal": if stage == "preview" { "retention_summary" } else { "purge_plan" },
+        "requires_operator_attention": retention_summary["pinned_count"].as_u64().unwrap_or(0) > 0,
+        "attention_flags": if retention_summary["pinned_count"].as_u64().unwrap_or(0) > 0 {
+            json!(["pinned_records_excluded"])
+        } else {
+            json!([])
+        },
+        "available_sections": [
+            "retention_summary",
+            "purge_plan",
+            "attention_summary"
+        ],
+    })
+}
+
+fn build_purge_plan_fingerprint(
+    filter: &MemoryGcFilter,
+    limit: usize,
+    older_than_days: Option<i64>,
+    candidate_ids: &[String],
+) -> String {
+    let payload = json!({
+        "policy_version": RETENTION_POLICY_VERSION,
+        "filters": {
+            "namespace": filter.namespace,
+            "memory_type": filter.memory_type.as_ref().map(|m| match m {
+                MemoryType::Episodic => "episodic",
+                MemoryType::Semantic => "semantic",
+                MemoryType::Procedural => "procedural",
+            }),
+            "invalidation_reason": filter.invalidation_reason,
+            "invalidated_before": filter.invalidated_before.map(crate::types::Datetime::from),
+            "older_than_days": older_than_days,
+        },
+        "limit": limit,
+        "candidate_ids": candidate_ids,
+    });
+    blake3::hash(payload.to_string().as_bytes())
+        .to_hex()
+        .to_string()
+}
+
+async fn build_purge_plan(
+    state: &Arc<AppState>,
+    namespace: Option<String>,
+    memory_type: Option<MemoryType>,
+    invalidation_reason: Option<String>,
+    older_than_days: Option<i64>,
+    limit: usize,
+) -> anyhow::Result<PurgePlan> {
+    let now = chrono::Utc::now();
+    let invalidated_before = older_than_days.map(|days| now - chrono::Duration::days(days.max(0)));
+    let filter = MemoryGcFilter {
+        namespace,
+        memory_type,
+        invalidation_reason,
+        invalidated_before,
+    };
+    let policy = RetentionPolicy::default();
+    let fetch_limit = limit.saturating_mul(5).max(limit).max(1);
+    let memories = state
+        .storage
+        .list_invalidated_memories_for_gc(&filter, fetch_limit, 0)
+        .await?;
+    let total_invalidated_matches = state
+        .storage
+        .count_invalidated_memories_for_gc(&filter)
+        .await?;
+    let reason_distribution = state
+        .storage
+        .count_invalidated_memories_by_reason(&filter)
+        .await?
+        .into_iter()
+        .map(|row| json!({ "reason": row.reason, "count": row.count }))
+        .collect::<Vec<_>>();
+
+    let mut candidates = Vec::new();
+    let mut pinned_count = 0usize;
+    let mut not_yet_eligible_count = 0usize;
+    for memory in memories {
+        let lifecycle = derive_memory_lifecycle(&memory, now, &policy);
+        if lifecycle.pinned {
+            pinned_count += 1;
+        } else if !lifecycle.purge_eligible {
+            not_yet_eligible_count += 1;
+        }
+        if lifecycle.purge_eligible {
+            if let Some(id) = memory_id(&memory) {
+                candidates.push(PurgeCandidate {
+                    id,
+                    memory,
+                    lifecycle,
+                });
+            }
+        }
+        if candidates.len() >= limit {
+            break;
+        }
+    }
+
+    let candidate_ids = candidates
+        .iter()
+        .map(|candidate| candidate.id.clone())
+        .collect::<Vec<_>>();
+    let plan_fingerprint =
+        build_purge_plan_fingerprint(&filter, limit, older_than_days, &candidate_ids);
+    let has_more = total_invalidated_matches > candidate_ids.len();
+    let retention_summary = json!({
+        "policy_version": RETENTION_POLICY_VERSION,
+        "candidate_count": candidate_ids.len(),
+        "total_invalidated_matches": total_invalidated_matches,
+        "pinned_count": pinned_count,
+        "not_yet_eligible_count": not_yet_eligible_count,
+        "reason_distribution": reason_distribution,
+    });
+
+    Ok(PurgePlan {
+        filter,
+        limit,
+        older_than_days,
+        candidate_count: candidate_ids.len(),
+        total_invalidated_matches,
+        has_more,
+        reason_distribution,
+        candidates,
+        plan_fingerprint,
+        retention_summary,
+    })
+}
+
 fn consolidation_trace(memory: &Memory) -> serde_json::Value {
     let invalidated = memory.valid_until.is_some() || memory.invalidation_reason.is_some();
+    let lifecycle =
+        derive_memory_lifecycle(memory, chrono::Utc::now(), &RetentionPolicy::default());
     let replacement_kind = match (invalidated, memory.superseded_by.as_ref()) {
         (true, Some(_)) => "superseded",
         (true, None) => "invalidated",
@@ -397,6 +838,12 @@ fn consolidation_trace(memory: &Memory) -> serde_json::Value {
         "invalidation_reason": memory.invalidation_reason,
         "superseded_by": memory.superseded_by,
         "has_replacement": memory.superseded_by.is_some(),
+        "lifecycle_state": lifecycle.lifecycle_state,
+        "default_search_visible": lifecycle.default_search_visible,
+        "purge_eligible": lifecycle.purge_eligible,
+        "retention_reason": lifecycle.retention_reason,
+        "eligible_after": lifecycle.eligible_after.map(crate::types::Datetime::from),
+        "pinned": lifecycle.pinned,
     })
 }
 
@@ -460,14 +907,7 @@ async fn memory_with_trace(state: &Arc<AppState>, memory: &Memory) -> serde_json
         map.insert("attention_summary".to_string(), attention.clone());
         map.insert(
             "operator_summary".to_string(),
-            operator_summary(
-                "read",
-                &attention,
-                None,
-                None,
-                Some(&trace),
-                Some(&lineage),
-            ),
+            operator_summary("read", &attention, None, None, Some(&trace), Some(&lineage)),
         );
     }
     value
@@ -546,10 +986,11 @@ pub async fn consolidate_memory(
     };
     let content_hash = ContentHasher::hash(&params.content);
 
-    let (duplicate_matches, lookup_diagnostics) = match find_duplicate_matches(state, &filters, &params.content, &content_hash).await {
-        Ok(value) => value,
-        Err(e) => return Ok(error_response(e)),
-    };
+    let (duplicate_matches, lookup_diagnostics) =
+        match find_duplicate_matches(state, &filters, &params.content, &content_hash).await {
+            Ok(value) => value,
+            Err(e) => return Ok(error_response(e)),
+        };
     let duplicate_ids = duplicate_ids_from_matches(&duplicate_matches);
 
     let reason = resolved_consolidation_reason(params.reason.as_deref());
@@ -635,7 +1076,9 @@ pub async fn consolidate_memory(
             skipped_ids.push(duplicate_id);
             continue;
         }
-        match invalidate_and_sync_memory(state, &duplicate_id, Some(reason), Some(&replacement_id)).await {
+        match invalidate_and_sync_memory(state, &duplicate_id, Some(reason), Some(&replacement_id))
+            .await
+        {
             Ok(true) => superseded_ids.push(duplicate_id),
             Ok(false) => {}
             Err(e) => return Ok(error_response(e)),
@@ -698,10 +1141,11 @@ pub async fn preview_consolidate_memory(
         Err(e) => return Ok(error_response(e)),
     };
     let content_hash = ContentHasher::hash(&params.content);
-    let (matched_summary, lookup_diagnostics) = match find_duplicate_matches(state, &filters, &params.content, &content_hash).await {
-        Ok(value) => value,
-        Err(e) => return Ok(error_response(e)),
-    };
+    let (matched_summary, lookup_diagnostics) =
+        match find_duplicate_matches(state, &filters, &params.content, &content_hash).await {
+            Ok(value) => value,
+            Err(e) => return Ok(error_response(e)),
+        };
     let matched_ids = duplicate_ids_from_matches(&matched_summary);
     let reason = resolved_consolidation_reason(params.reason.as_deref());
     let plan_fingerprint = build_consolidation_plan_fingerprint(
@@ -772,6 +1216,172 @@ pub async fn preview_consolidate_memory(
     })))
 }
 
+pub async fn preview_purge_memory(
+    state: &Arc<AppState>,
+    params: PreviewPurgeMemoryParams,
+) -> anyhow::Result<CallToolResult> {
+    let limit = normalize_limit(params.limit);
+    let memory_type = match params.memory_type_filter() {
+        Ok(value) => value,
+        Err(e) => return Ok(error_response(e)),
+    };
+    let plan = match build_purge_plan(
+        state,
+        params.namespace,
+        memory_type,
+        params.invalidation_reason,
+        params.older_than_days,
+        limit,
+    )
+    .await
+    {
+        Ok(plan) => plan,
+        Err(e) => return Ok(error_response(e)),
+    };
+
+    let sample_ids = plan
+        .candidates
+        .iter()
+        .take(20)
+        .map(|candidate| candidate.id.clone())
+        .collect::<Vec<_>>();
+    let sample_records = plan
+        .candidates
+        .iter()
+        .take(10)
+        .map(|candidate| {
+            json!({
+                "id": candidate.id,
+                "invalidation_reason": candidate.memory.invalidation_reason,
+                "valid_until": candidate.memory.valid_until,
+                "lifecycle": candidate.lifecycle.to_json(),
+            })
+        })
+        .collect::<Vec<_>>();
+    let attention = json!({
+        "requires_operator_attention": plan.retention_summary["pinned_count"].as_u64().unwrap_or(0) > 0,
+        "attention_flags": if plan.retention_summary["pinned_count"].as_u64().unwrap_or(0) > 0 {
+            json!(["pinned_records_excluded"])
+        } else {
+            json!([])
+        },
+        "fingerprint_checked": false,
+    });
+
+    Ok(success_json(json!({
+        "mode": "preview",
+        "candidate_count": plan.candidate_count,
+        "total_invalidated_matches": plan.total_invalidated_matches,
+        "has_more": plan.has_more,
+        "reason_distribution": plan.reason_distribution,
+        "sample_ids": sample_ids,
+        "sample_records": sample_records,
+        "plan_fingerprint": plan.plan_fingerprint,
+        "retention_summary": plan.retention_summary,
+        "purge_plan": {
+            "policy_version": RETENTION_POLICY_VERSION,
+            "limit": plan.limit,
+            "older_than_days": plan.older_than_days,
+            "filters": {
+                "namespace": plan.filter.namespace,
+                "memory_type": plan.filter.memory_type.as_ref().map(|m| match m {
+                    MemoryType::Episodic => "episodic",
+                    MemoryType::Semantic => "semantic",
+                    MemoryType::Procedural => "procedural",
+                }),
+                "invalidation_reason": plan.filter.invalidation_reason,
+                "invalidated_before": plan.filter.invalidated_before.map(crate::types::Datetime::from),
+            }
+        },
+        "attention_summary": attention,
+        "operator_summary": purge_operator_summary("preview", &plan.retention_summary),
+        "notes": [
+            "Preview does not delete data.",
+            "Only invalidated records that are purge_eligible under the retention policy are candidates.",
+            "Pass plan_fingerprint as expected_plan_fingerprint to purge_memory."
+        ]
+    })))
+}
+
+pub async fn purge_memory(
+    state: &Arc<AppState>,
+    params: PurgeMemoryParams,
+) -> anyhow::Result<CallToolResult> {
+    let expected = params.expected_plan_fingerprint.trim();
+    if expected.is_empty() {
+        return Ok(error_response(
+            "expected_plan_fingerprint is required; run preview_purge_memory first",
+        ));
+    }
+
+    let limit = normalize_limit(params.limit);
+    let memory_type = match params.memory_type_filter() {
+        Ok(value) => value,
+        Err(e) => return Ok(error_response(e)),
+    };
+    let plan = match build_purge_plan(
+        state,
+        params.namespace,
+        memory_type,
+        params.invalidation_reason,
+        params.older_than_days,
+        limit,
+    )
+    .await
+    {
+        Ok(plan) => plan,
+        Err(e) => return Ok(error_response(e)),
+    };
+
+    if expected != plan.plan_fingerprint {
+        return Ok(error_response(format!(
+            "Purge preview is stale. expected_plan_fingerprint does not match current plan (expected={}, current={}). Re-run preview_purge_memory.",
+            expected, plan.plan_fingerprint
+        )));
+    }
+
+    let ids = plan
+        .candidates
+        .iter()
+        .map(|candidate| candidate.id.clone())
+        .collect::<Vec<_>>();
+    let deleted_ids = match state.storage.delete_memories_batch(&ids).await {
+        Ok(ids) => ids,
+        Err(e) => return Ok(error_response(e)),
+    };
+    for id in &deleted_ids {
+        state.memory_search.remove_memory(id).await;
+    }
+
+    let deleted_set = deleted_ids.iter().cloned().collect::<HashSet<_>>();
+    let failed_ids = ids
+        .iter()
+        .filter(|id| !deleted_set.contains(*id))
+        .cloned()
+        .collect::<Vec<_>>();
+    let attention = json!({
+        "requires_operator_attention": !failed_ids.is_empty(),
+        "attention_flags": if failed_ids.is_empty() { json!([]) } else { json!(["partial_delete_failure"]) },
+        "fingerprint_checked": true,
+    });
+
+    Ok(success_json(json!({
+        "mode": "apply",
+        "deleted_count": deleted_ids.len(),
+        "deleted_ids": deleted_ids,
+        "failed_ids": failed_ids,
+        "has_more": plan.has_more,
+        "plan_fingerprint": plan.plan_fingerprint,
+        "retention_summary": plan.retention_summary,
+        "execution_summary": {
+            "attempted_count": ids.len(),
+            "used_plan_fingerprint": expected,
+        },
+        "attention_summary": attention,
+        "operator_summary": purge_operator_summary("apply", &plan.retention_summary),
+    })))
+}
+
 pub async fn get_memory(
     state: &Arc<AppState>,
     params: GetMemoryParams,
@@ -786,10 +1396,9 @@ pub async fn get_memory(
                 "contract": memory_contract_json(Some(&params.id))
             });
 
-            if let (Some(response_map), Some(memory_map)) = (
-                response.as_object_mut(),
-                memory_json.as_object(),
-            ) {
+            if let (Some(response_map), Some(memory_map)) =
+                (response.as_object_mut(), memory_json.as_object())
+            {
                 for (key, value) in memory_map {
                     response_map.insert(key.clone(), value.clone());
                 }
@@ -875,6 +1484,7 @@ pub async fn list_memories(
     state: &Arc<AppState>,
     params: ListMemoriesParams,
 ) -> anyhow::Result<CallToolResult> {
+    let total_start = Instant::now();
     let limit = normalize_limit(params.limit);
     let offset = params.offset.unwrap_or(0);
     let filters = match params.to_memory_query() {
@@ -882,18 +1492,38 @@ pub async fn list_memories(
         Err(e) => return Ok(error_response(e)),
     };
 
+    let list_start = Instant::now();
     let mut memories = match state.storage.list_memories(&filters, limit, offset).await {
         Ok(m) => m,
         Err(e) => return Ok(error_response(e)),
     };
+    let list_elapsed = list_start.elapsed();
 
     strip_embeddings(&mut memories);
+    let count_start = Instant::now();
     let total = state
         .storage
         .count_memories_filtered(&filters)
         .await
         .unwrap_or(0);
+    let count_elapsed = count_start.elapsed();
+    let trace_start = Instant::now();
     let memories_json = memories_with_trace(state, &memories).await;
+    let trace_elapsed = trace_start.elapsed();
+    state.metrics.record_duration(
+        "query.memory_list",
+        total_start.elapsed(),
+        json!({
+            "limit": limit,
+            "offset": offset,
+            "result_count": memories.len(),
+            "total": total,
+            "metadata_filter": filters.uses_metadata_post_filter(),
+            "list_ms": list_elapsed.as_secs_f64() * 1000.0,
+            "count_ms": count_elapsed.as_secs_f64() * 1000.0,
+            "trace_ms": trace_elapsed.as_secs_f64() * 1000.0,
+        }),
+    );
 
     Ok(success_json(json!({
         "memories": memories_json,
@@ -986,6 +1616,105 @@ pub async fn get_valid_at(
     }
 }
 
+pub async fn export_memory(
+    state: &Arc<AppState>,
+    params: ExportMemoryParams,
+) -> anyhow::Result<CallToolResult> {
+    let project_id_value = params.project_id.clone();
+    let project_id = match normalize_project_id(Some(project_id_value)) {
+        Some(project_id) => project_id,
+        None => return Ok(error_response("project_id is required for memory export")),
+    };
+    let valid_only = params.valid_only.unwrap_or(true);
+    let include_invalidated = params.include_invalidated.unwrap_or(false);
+    if valid_only && include_invalidated {
+        return Ok(error_response(
+            "include_invalidated=true requires valid_only=false for archival memory export",
+        ));
+    }
+
+    let filters = match params.to_memory_query() {
+        Ok(filters) => filters,
+        Err(e) => return Ok(error_response(e)),
+    };
+    let options = MemoryExportOptions {
+        project_id: project_id.clone(),
+        filters,
+        valid_only,
+        include_invalidated,
+        limit: params.limit,
+    };
+
+    match state.storage.export_memories(&options).await {
+        Ok(response) => Ok(success_json(
+            serde_json::to_value(response).unwrap_or_default(),
+        )),
+        Err(e) => Ok(error_response(e)),
+    }
+}
+
+pub async fn import_memory(
+    state: &Arc<AppState>,
+    params: ImportMemoryParams,
+) -> anyhow::Result<CallToolResult> {
+    let dry_run = params.dry_run.unwrap_or(false);
+    let allow_invalidated = params.allow_invalidated.unwrap_or(false);
+    let preserve_project_id = params.preserve_project_id.unwrap_or(false);
+    let conflict_strategy =
+        match parse_import_conflict_strategy(params.conflict_strategy.as_deref()) {
+            Ok(strategy) => strategy,
+            Err(e) => return Ok(error_response(e)),
+        };
+    let (records, errors, total_records) = parse_import_jsonl(&params.jsonl);
+
+    if !errors.is_empty() {
+        return Ok(success_json(
+            serde_json::to_value(import_error_response(
+                dry_run,
+                conflict_strategy,
+                total_records,
+                errors,
+            ))
+            .unwrap_or_default(),
+        ));
+    }
+
+    let project_id =
+        match resolve_import_project_id(&records, Some(params.project_id), preserve_project_id) {
+            Ok(project_id) => project_id,
+            Err(e) => return Ok(error_response(e)),
+        };
+    let options = MemoryImportOptions {
+        project_id,
+        conflict_strategy,
+        dry_run,
+        allow_invalidated,
+    };
+    let source_ids: Vec<String> = records.iter().map(|record| record.id.clone()).collect();
+
+    match state.storage.import_memories(records, &options).await {
+        Ok(response) => {
+            if !response.dry_run && response.imported_count > 0 && response.errors.is_empty() {
+                let remapped_ids: HashMap<String, String> = response
+                    .id_mappings
+                    .iter()
+                    .map(|mapping| (mapping.old_id.clone(), mapping.new_id.clone()))
+                    .collect();
+                for source_id in source_ids {
+                    let imported_id = remapped_ids.get(&source_id).unwrap_or(&source_id);
+                    if let Ok(Some(memory)) = state.storage.get_memory(imported_id).await {
+                        state.memory_search.upsert_memory(memory).await;
+                    }
+                }
+            }
+            Ok(success_json(
+                serde_json::to_value(response).unwrap_or_default(),
+            ))
+        }
+        Err(e) => Ok(error_response(e)),
+    }
+}
+
 pub async fn invalidate(
     state: &Arc<AppState>,
     params: InvalidateParams,
@@ -998,9 +1727,7 @@ pub async fn invalidate(
     )
     .await
     {
-        Ok(success) => {
-            Ok(success_json(json!({ "invalidated": success })))
-        }
+        Ok(success) => Ok(success_json(json!({ "invalidated": success }))),
         Err(e) => Ok(error_response(e)),
     }
 }
@@ -1020,6 +1747,192 @@ mod tests {
                     .collect()
             })
             .unwrap_or_default()
+    }
+
+    fn tool_json(result: &CallToolResult) -> serde_json::Value {
+        let val = serde_json::to_value(result).unwrap();
+        let text = val["content"][0]["text"].as_str().unwrap();
+        serde_json::from_str(text).unwrap()
+    }
+
+    fn stored_id(result: &CallToolResult) -> String {
+        tool_json(result)["id"].as_str().unwrap().to_string()
+    }
+
+    fn import_record(id: &str, content: &str) -> MigrationMemoryRecord {
+        let now = Datetime::default();
+        MigrationMemoryRecord {
+            schema_version: MEMORY_MIGRATION_SCHEMA_VERSION,
+            record_type: MigrationRecordType::Memory,
+            id: id.to_string(),
+            content: content.to_string(),
+            memory_type: MemoryType::Semantic,
+            user_id: Some("import-user".to_string()),
+            agent_id: None,
+            run_id: None,
+            namespace: Some("source-project".to_string()),
+            project_id: Some("source-project".to_string()),
+            metadata: None,
+            importance_score: 1.0,
+            created_at: now,
+            updated_at: now,
+            valid_from: now,
+            valid_until: None,
+            superseded_by: None,
+            invalidated: false,
+            invalidation_reason: None,
+        }
+    }
+
+    fn import_jsonl(records: &[MigrationMemoryRecord]) -> String {
+        records
+            .iter()
+            .map(serde_json::to_string)
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap()
+            .join("\n")
+    }
+
+    async fn seed_invalidated_memory(
+        ctx: &TestContext,
+        content: &str,
+        reason: &str,
+        invalidated_at: chrono::DateTime<chrono::Utc>,
+    ) -> String {
+        let id = ctx
+            .state
+            .storage
+            .create_memory(Memory {
+                content: content.to_string(),
+                namespace: Some("gc-project".to_string()),
+                valid_until: Some(Datetime::from(invalidated_at)),
+                invalidation_reason: Some(reason.to_string()),
+                content_hash: Some(ContentHasher::hash(content)),
+                ..Memory::new(content.to_string())
+            })
+            .await
+            .unwrap();
+        if let Ok(Some(memory)) = ctx.state.storage.get_memory(&id).await {
+            ctx.state.memory_search.upsert_memory(memory).await;
+        }
+        id
+    }
+
+    #[tokio::test]
+    async fn preview_and_apply_purge_memory_deletes_only_eligible_invalidated_records() {
+        let ctx = TestContext::new().await;
+        let old_id = seed_invalidated_memory(
+            &ctx,
+            "old purge candidate",
+            crate::forgetting::capacity::CAPACITY_CONTROLLER_INVALIDATION_REASON,
+            chrono::Utc::now() - chrono::Duration::days(31),
+        )
+        .await;
+        let fresh_id = seed_invalidated_memory(
+            &ctx,
+            "fresh archive not eligible",
+            crate::forgetting::capacity::CAPACITY_CONTROLLER_INVALIDATION_REASON,
+            chrono::Utc::now() - chrono::Duration::days(2),
+        )
+        .await;
+
+        let preview = preview_purge_memory(
+            &ctx.state,
+            PreviewPurgeMemoryParams {
+                namespace: Some("gc-project".to_string()),
+                memory_type: None,
+                invalidation_reason: Some(
+                    crate::forgetting::capacity::CAPACITY_CONTROLLER_INVALIDATION_REASON
+                        .to_string(),
+                ),
+                older_than_days: None,
+                limit: Some(10),
+            },
+        )
+        .await
+        .unwrap();
+        let preview_json = tool_json(&preview);
+        assert_eq!(preview_json["candidate_count"], 1);
+        assert_eq!(preview_json["sample_ids"][0], old_id);
+
+        let fingerprint = preview_json["plan_fingerprint"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let apply = purge_memory(
+            &ctx.state,
+            PurgeMemoryParams {
+                namespace: Some("gc-project".to_string()),
+                memory_type: None,
+                invalidation_reason: Some(
+                    crate::forgetting::capacity::CAPACITY_CONTROLLER_INVALIDATION_REASON
+                        .to_string(),
+                ),
+                older_than_days: None,
+                limit: Some(10),
+                expected_plan_fingerprint: fingerprint,
+            },
+        )
+        .await
+        .unwrap();
+        let apply_json = tool_json(&apply);
+        assert_eq!(apply_json["deleted_count"], 1);
+        assert!(ctx
+            .state
+            .storage
+            .get_memory(&old_id)
+            .await
+            .unwrap()
+            .is_none());
+        assert!(ctx
+            .state
+            .storage
+            .get_memory(&fresh_id)
+            .await
+            .unwrap()
+            .is_some());
+        let bm25_after_purge = ctx
+            .state
+            .memory_search
+            .search("old purge candidate", None, 10)
+            .await;
+        assert!(
+            bm25_after_purge.iter().all(|result| result.id != old_id),
+            "purged memory must be removed from BM25 index"
+        );
+    }
+
+    #[tokio::test]
+    async fn purge_memory_rejects_stale_fingerprint() {
+        let ctx = TestContext::new().await;
+        seed_invalidated_memory(
+            &ctx,
+            "old purge candidate",
+            crate::forgetting::capacity::CAPACITY_CONTROLLER_INVALIDATION_REASON,
+            chrono::Utc::now() - chrono::Duration::days(31),
+        )
+        .await;
+
+        let result = purge_memory(
+            &ctx.state,
+            PurgeMemoryParams {
+                namespace: Some("gc-project".to_string()),
+                memory_type: None,
+                invalidation_reason: Some(
+                    crate::forgetting::capacity::CAPACITY_CONTROLLER_INVALIDATION_REASON
+                        .to_string(),
+                ),
+                older_than_days: None,
+                limit: Some(10),
+                expected_plan_fingerprint: "stale".to_string(),
+            },
+        )
+        .await
+        .unwrap();
+        assert!(tool_json(&result)["error"]
+            .as_str()
+            .unwrap()
+            .contains("Purge preview is stale"));
     }
 
     #[tokio::test]
@@ -1053,16 +1966,31 @@ mod tests {
         assert_eq!(memory_json["memory"]["agent_id"], "agent-a");
         assert_eq!(memory_json["memory"]["namespace"], "project-alpha");
         assert_eq!(memory_json["memory"]["importance_score"], 2.5);
-        assert_eq!(memory_json["memory"]["consolidation_trace"]["status"], "active");
+        assert_eq!(
+            memory_json["memory"]["consolidation_trace"]["status"],
+            "active"
+        );
         assert_eq!(memory_json["memory"]["operator_summary"]["stage"], "read");
-        assert_eq!(memory_json["memory"]["operator_summary"]["primary_signal"], "consolidation_trace");
-        assert_eq!(memory_json["contract"]["compatibility"]["mode"], "additive_first");
-        assert_eq!(memory_json["contract"]["compatibility"]["clients_must_ignore_unknown_fields"], true);
+        assert_eq!(
+            memory_json["memory"]["operator_summary"]["primary_signal"],
+            "consolidation_trace"
+        );
+        assert_eq!(
+            memory_json["contract"]["compatibility"]["mode"],
+            "additive_first"
+        );
+        assert_eq!(
+            memory_json["contract"]["compatibility"]["clients_must_ignore_unknown_fields"],
+            true
+        );
         assert_eq!(memory_json["summary"]["result_kind"], "memory");
         assert!(memory_json["summary"]["partial"]["reason_code"].is_null());
         assert!(memory_json["summary"]["partial"]["reason"].is_null());
         assert_eq!(memory_json["contract"]["identity"]["stable_memory_id"], id);
-        assert_eq!(memory_json["contract"]["identity"]["node_id_semantics"], "stable_public_memory_id");
+        assert_eq!(
+            memory_json["contract"]["identity"]["node_id_semantics"],
+            "stable_public_memory_id"
+        );
 
         // 2.1 Invalidate with superseded_by and verify read model preserves it
         let invalidate_params = InvalidateParams {
@@ -1072,20 +2000,52 @@ mod tests {
         };
         let _ = invalidate(&ctx.state, invalidate_params).await.unwrap();
 
-        let result = get_memory(&ctx.state, GetMemoryParams { id: id.clone() }).await.unwrap();
+        let result = get_memory(&ctx.state, GetMemoryParams { id: id.clone() })
+            .await
+            .unwrap();
         let val = serde_json::to_value(&result).unwrap();
         let text = val["content"][0]["text"].as_str().unwrap();
         let invalidated_json: serde_json::Value = serde_json::from_str(text).unwrap();
-        assert_eq!(invalidated_json["memory"]["superseded_by"], "replacement-123");
-        assert_eq!(invalidated_json["memory"]["consolidation_trace"]["status"], "superseded");
-        assert_eq!(invalidated_json["memory"]["consolidation_trace"]["has_replacement"], true);
-        assert_eq!(invalidated_json["memory"]["replacement_lineage"]["depth"], 1);
-        assert_eq!(invalidated_json["memory"]["replacement_lineage"]["terminal_replacement_id"], "replacement-123");
-        assert_eq!(invalidated_json["memory"]["attention_summary"]["lineage_depth"], 1);
-        assert_eq!(invalidated_json["memory"]["attention_summary"]["requires_operator_attention"], false);
-        assert_eq!(invalidated_json["memory"]["operator_summary"]["stage"], "read");
-        assert_eq!(invalidated_json["memory"]["operator_summary"]["lifecycle_status"], "superseded");
-        assert_eq!(lineage_ids(&invalidated_json["memory"]), vec!["replacement-123".to_string()]);
+        assert_eq!(
+            invalidated_json["memory"]["superseded_by"],
+            "replacement-123"
+        );
+        assert_eq!(
+            invalidated_json["memory"]["consolidation_trace"]["status"],
+            "superseded"
+        );
+        assert_eq!(
+            invalidated_json["memory"]["consolidation_trace"]["has_replacement"],
+            true
+        );
+        assert_eq!(
+            invalidated_json["memory"]["replacement_lineage"]["depth"],
+            1
+        );
+        assert_eq!(
+            invalidated_json["memory"]["replacement_lineage"]["terminal_replacement_id"],
+            "replacement-123"
+        );
+        assert_eq!(
+            invalidated_json["memory"]["attention_summary"]["lineage_depth"],
+            1
+        );
+        assert_eq!(
+            invalidated_json["memory"]["attention_summary"]["requires_operator_attention"],
+            false
+        );
+        assert_eq!(
+            invalidated_json["memory"]["operator_summary"]["stage"],
+            "read"
+        );
+        assert_eq!(
+            invalidated_json["memory"]["operator_summary"]["lifecycle_status"],
+            "superseded"
+        );
+        assert_eq!(
+            lineage_ids(&invalidated_json["memory"]),
+            vec!["replacement-123".to_string()]
+        );
 
         // 3. List
         let list_params = ListMemoriesParams {
@@ -1110,11 +2070,550 @@ mod tests {
         assert_eq!(list_json["memories"].as_array().unwrap().len(), 0);
         assert_eq!(list_json["total"], 0);
         assert_eq!(list_json["filters"]["userId"], "user1");
-        assert_eq!(list_json["contract"]["compatibility"]["mode"], "additive_first");
+        assert_eq!(
+            list_json["contract"]["compatibility"]["mode"],
+            "additive_first"
+        );
         assert_eq!(list_json["summary"]["result_kind"], "collection");
         assert!(list_json["summary"]["partial"]["reason_code"].is_null());
         assert!(list_json["summary"]["partial"]["reason"].is_null());
-        assert_eq!(list_json["contract"]["identity"]["node_id_semantics"], "stable_public_memory_id");
+        assert_eq!(
+            list_json["contract"]["identity"]["node_id_semantics"],
+            "stable_public_memory_id"
+        );
+    }
+
+    #[tokio::test]
+    async fn export_memory_returns_jsonl_for_valid_memories() {
+        let ctx = TestContext::new().await;
+
+        let valid_id = stored_id(
+            &store_memory(
+                &ctx.state,
+                StoreMemoryParams {
+                    content: "export valid line\nwith unicode 雪".to_string(),
+                    memory_type: Some("semantic".to_string()),
+                    user_id: Some("export-user".to_string()),
+                    agent_id: Some("export-agent".to_string()),
+                    run_id: None,
+                    namespace: Some("export-project".to_string()),
+                    importance_score: Some(1.0),
+                    metadata: Some(json!({"kind": "valid"})),
+                },
+            )
+            .await
+            .unwrap(),
+        );
+        let invalid_id = stored_id(
+            &store_memory(
+                &ctx.state,
+                StoreMemoryParams {
+                    content: "export invalidated memory".to_string(),
+                    memory_type: Some("semantic".to_string()),
+                    user_id: Some("export-user".to_string()),
+                    agent_id: Some("export-agent".to_string()),
+                    run_id: None,
+                    namespace: Some("export-project".to_string()),
+                    importance_score: Some(1.0),
+                    metadata: None,
+                },
+            )
+            .await
+            .unwrap(),
+        );
+        store_memory(
+            &ctx.state,
+            StoreMemoryParams {
+                content: "other project memory".to_string(),
+                memory_type: Some("semantic".to_string()),
+                user_id: Some("export-user".to_string()),
+                agent_id: Some("export-agent".to_string()),
+                run_id: None,
+                namespace: Some("other-project".to_string()),
+                importance_score: Some(1.0),
+                metadata: None,
+            },
+        )
+        .await
+        .unwrap();
+        invalidate(
+            &ctx.state,
+            InvalidateParams {
+                id: invalid_id.clone(),
+                reason: Some("archived".to_string()),
+                superseded_by: Some(valid_id.clone()),
+            },
+        )
+        .await
+        .unwrap();
+
+        let result = export_memory(
+            &ctx.state,
+            ExportMemoryParams {
+                project_id: "  export-project  ".to_string(),
+                user_id: Some("export-user".to_string()),
+                agent_id: Some("export-agent".to_string()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        let export_json = tool_json(&result);
+
+        assert_eq!(export_json["schema_version"], 1);
+        assert_eq!(export_json["record_type"], "memory");
+        assert_eq!(export_json["exported_count"], 1);
+        assert_eq!(export_json["truncated"], false);
+        assert_eq!(export_json["summary"]["valid_records"], 1);
+        assert_eq!(export_json["summary"]["invalidated_records"], 0);
+        let jsonl = export_json["jsonl"].as_str().unwrap();
+        assert_eq!(jsonl.lines().count(), 1);
+        assert!(jsonl.contains("\\n"));
+        assert!(jsonl.contains("雪"));
+        assert!(!jsonl.contains("export invalidated memory"));
+        assert!(!jsonl.contains("other project memory"));
+        let record: crate::types::MigrationMemoryRecord = serde_json::from_str(jsonl).unwrap();
+        assert_eq!(record.id, valid_id);
+        assert_eq!(record.project_id.as_deref(), Some("export-project"));
+        assert_eq!(record.namespace.as_deref(), Some("export-project"));
+        assert_eq!(record.content, "export valid line\nwith unicode 雪");
+        assert!(!record.invalidated);
+    }
+
+    #[tokio::test]
+    async fn export_memory_rejects_valid_only_with_include_invalidated() {
+        let ctx = TestContext::new().await;
+
+        let result = export_memory(
+            &ctx.state,
+            ExportMemoryParams {
+                project_id: "export-project".to_string(),
+                valid_only: Some(true),
+                include_invalidated: Some(true),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        let response = tool_json(&result);
+
+        assert_eq!(
+            response["error"],
+            "include_invalidated=true requires valid_only=false for archival memory export"
+        );
+    }
+
+    #[tokio::test]
+    async fn export_memory_archival_includes_invalidated_when_valid_only_false() {
+        let ctx = TestContext::new().await;
+        let valid_id = stored_id(
+            &store_memory(
+                &ctx.state,
+                StoreMemoryParams {
+                    content: "archive valid memory".to_string(),
+                    memory_type: Some("semantic".to_string()),
+                    user_id: None,
+                    agent_id: None,
+                    run_id: None,
+                    namespace: Some("archive-project".to_string()),
+                    importance_score: Some(1.0),
+                    metadata: None,
+                },
+            )
+            .await
+            .unwrap(),
+        );
+        let invalid_id = stored_id(
+            &store_memory(
+                &ctx.state,
+                StoreMemoryParams {
+                    content: "archive invalidated memory".to_string(),
+                    memory_type: Some("semantic".to_string()),
+                    user_id: None,
+                    agent_id: None,
+                    run_id: None,
+                    namespace: Some("archive-project".to_string()),
+                    importance_score: Some(1.0),
+                    metadata: None,
+                },
+            )
+            .await
+            .unwrap(),
+        );
+        invalidate(
+            &ctx.state,
+            InvalidateParams {
+                id: invalid_id.clone(),
+                reason: Some("archived".to_string()),
+                superseded_by: Some(valid_id),
+            },
+        )
+        .await
+        .unwrap();
+
+        let result = export_memory(
+            &ctx.state,
+            ExportMemoryParams {
+                project_id: "archive-project".to_string(),
+                valid_only: Some(false),
+                include_invalidated: Some(true),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        let export_json = tool_json(&result);
+        let records: Vec<crate::types::MigrationMemoryRecord> = export_json["jsonl"]
+            .as_str()
+            .unwrap()
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+
+        assert_eq!(export_json["exported_count"], 2);
+        assert_eq!(export_json["summary"]["valid_records"], 1);
+        assert_eq!(export_json["summary"]["invalidated_records"], 1);
+        assert!(records
+            .iter()
+            .any(|record| record.id == invalid_id && record.invalidated));
+    }
+
+    #[tokio::test]
+    async fn import_memory_dry_run_reports_remap_without_write() {
+        let ctx = TestContext::new().await;
+        let existing_id = stored_id(
+            &store_memory(
+                &ctx.state,
+                StoreMemoryParams {
+                    content: "existing import conflict".to_string(),
+                    memory_type: Some("semantic".to_string()),
+                    user_id: None,
+                    agent_id: None,
+                    run_id: None,
+                    namespace: Some("target-project".to_string()),
+                    importance_score: Some(1.0),
+                    metadata: None,
+                },
+            )
+            .await
+            .unwrap(),
+        );
+        let records = vec![
+            import_record(&existing_id, "incoming conflict"),
+            import_record("incomingtarget", "incoming target"),
+        ];
+        let result = import_memory(
+            &ctx.state,
+            ImportMemoryParams {
+                project_id: "target-project".to_string(),
+                jsonl: import_jsonl(&records),
+                dry_run: Some(true),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        let response = tool_json(&result);
+
+        assert_eq!(response["dry_run"], true);
+        assert_eq!(response["conflict_strategy"], "remap");
+        assert_eq!(response["imported_count"], 0);
+        assert_eq!(response["failed_count"], 0);
+        assert_eq!(response["id_mappings"].as_array().unwrap().len(), 1);
+        assert_eq!(response["id_mappings"][0]["old_id"], existing_id);
+        assert_ne!(response["id_mappings"][0]["new_id"], existing_id);
+        let missing = get_memory(
+            &ctx.state,
+            GetMemoryParams {
+                id: "incomingtarget".to_string(),
+            },
+        )
+        .await
+        .unwrap();
+        assert!(tool_json(&missing)["error"]
+            .as_str()
+            .unwrap()
+            .contains("Memory not found"));
+        let list = list_memories(
+            &ctx.state,
+            ListMemoriesParams {
+                limit: Some(10),
+                offset: None,
+                user_id: None,
+                agent_id: None,
+                run_id: None,
+                namespace: Some("target-project".to_string()),
+                memory_type: None,
+                metadata_filter: None,
+                valid_at: None,
+                event_after: None,
+                event_before: None,
+                ingestion_after: None,
+                ingestion_before: None,
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(tool_json(&list)["total"], 1);
+    }
+
+    #[tokio::test]
+    async fn import_memory_rejects_malformed_jsonl_without_partial_write() {
+        let ctx = TestContext::new().await;
+        let before = list_memories(
+            &ctx.state,
+            ListMemoriesParams {
+                limit: Some(10),
+                offset: None,
+                user_id: None,
+                agent_id: None,
+                run_id: None,
+                namespace: Some("target-project".to_string()),
+                memory_type: None,
+                metadata_filter: None,
+                valid_at: None,
+                event_after: None,
+                event_before: None,
+                ingestion_after: None,
+                ingestion_before: None,
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(tool_json(&before)["total"], 0);
+
+        let valid_line =
+            serde_json::to_string(&import_record("valid-before-bad", "valid before bad")).unwrap();
+        let result = import_memory(
+            &ctx.state,
+            ImportMemoryParams {
+                project_id: "target-project".to_string(),
+                jsonl: format!("{valid_line}\n{{not-json"),
+                dry_run: Some(false),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        let response = tool_json(&result);
+
+        assert_eq!(response["imported_count"], 0);
+        assert_eq!(response["failed_count"], 1);
+        assert_eq!(response["errors"][0]["code"], "invalid_jsonl");
+        let after = list_memories(
+            &ctx.state,
+            ListMemoriesParams {
+                limit: Some(10),
+                offset: None,
+                user_id: None,
+                agent_id: None,
+                run_id: None,
+                namespace: Some("target-project".to_string()),
+                memory_type: None,
+                metadata_filter: None,
+                valid_at: None,
+                event_after: None,
+                event_before: None,
+                ingestion_after: None,
+                ingestion_before: None,
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(tool_json(&after)["total"], 0);
+    }
+
+    #[tokio::test]
+    async fn import_memory_defaults_to_write_mode() {
+        let ctx = TestContext::new().await;
+        let records = vec![import_record("defaultwriteimport", "default write import")];
+
+        let result = import_memory(
+            &ctx.state,
+            ImportMemoryParams {
+                project_id: "target-project".to_string(),
+                jsonl: import_jsonl(&records),
+                dry_run: None,
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        let response = tool_json(&result);
+
+        assert_eq!(response["dry_run"], false);
+        assert_eq!(response["imported_count"], 1);
+        assert_eq!(response["failed_count"], 0);
+
+        let imported = get_memory(
+            &ctx.state,
+            GetMemoryParams {
+                id: "defaultwriteimport".to_string(),
+            },
+        )
+        .await
+        .unwrap();
+        let imported_json = tool_json(&imported);
+        assert_eq!(imported_json["memory"]["content"], "default write import");
+        assert_eq!(imported_json["memory"]["namespace"], "target-project");
+    }
+
+    #[tokio::test]
+    async fn import_memory_rejects_duplicate_ids_without_partial_write() {
+        let ctx = TestContext::new().await;
+        let records = vec![
+            import_record("duplicateimport", "first duplicate"),
+            import_record("duplicateimport", "second duplicate"),
+            import_record("validimport", "valid should not import"),
+        ];
+        let result = import_memory(
+            &ctx.state,
+            ImportMemoryParams {
+                project_id: "target-project".to_string(),
+                jsonl: import_jsonl(&records),
+                dry_run: Some(false),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        let response = tool_json(&result);
+
+        assert_eq!(response["imported_count"], 0);
+        assert_eq!(response["failed_count"], 1);
+        assert_eq!(response["errors"][0]["field"], "id");
+        let list = list_memories(
+            &ctx.state,
+            ListMemoriesParams {
+                limit: Some(10),
+                offset: None,
+                user_id: None,
+                agent_id: None,
+                run_id: None,
+                namespace: Some("target-project".to_string()),
+                memory_type: None,
+                metadata_filter: None,
+                valid_at: None,
+                event_after: None,
+                event_before: None,
+                ingestion_after: None,
+                ingestion_before: None,
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(tool_json(&list)["total"], 0);
+    }
+
+    #[tokio::test]
+    async fn import_memory_rejects_invalidated_unless_allowed() {
+        let ctx = TestContext::new().await;
+        let mut invalidated = import_record("invalidatedimport", "invalidated import");
+        invalidated.invalidated = true;
+        invalidated.valid_until = Some(Datetime::default());
+        invalidated.invalidation_reason = Some("archived".to_string());
+
+        let rejected = import_memory(
+            &ctx.state,
+            ImportMemoryParams {
+                project_id: "target-project".to_string(),
+                jsonl: import_jsonl(&[invalidated.clone()]),
+                dry_run: Some(false),
+                allow_invalidated: Some(false),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        let rejected_json = tool_json(&rejected);
+        assert_eq!(rejected_json["imported_count"], 0);
+        assert_eq!(rejected_json["errors"].as_array().unwrap().len(), 1);
+
+        let allowed = import_memory(
+            &ctx.state,
+            ImportMemoryParams {
+                project_id: "target-project".to_string(),
+                jsonl: import_jsonl(&[invalidated]),
+                dry_run: Some(false),
+                allow_invalidated: Some(true),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        let allowed_json = tool_json(&allowed);
+        assert_eq!(allowed_json["imported_count"], 1);
+
+        let result = get_memory(
+            &ctx.state,
+            GetMemoryParams {
+                id: "invalidatedimport".to_string(),
+            },
+        )
+        .await
+        .unwrap();
+        let memory = tool_json(&result);
+        assert_eq!(memory["memory"]["namespace"], "target-project");
+        assert_eq!(memory["memory"]["invalidation_reason"], "archived");
+    }
+
+    #[tokio::test]
+    async fn import_memory_imports_records_and_rewrites_payload_superseded_by() {
+        let ctx = TestContext::new().await;
+        let mut source = import_record("sourceimport", "source import");
+        source.superseded_by = Some("targetimport".to_string());
+        let records = vec![source, import_record("targetimport", "target import")];
+
+        let result = import_memory(
+            &ctx.state,
+            ImportMemoryParams {
+                project_id: "target-project".to_string(),
+                jsonl: import_jsonl(&records),
+                dry_run: Some(false),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        let response = tool_json(&result);
+        assert_eq!(response["imported_count"], 2);
+        assert_eq!(response["failed_count"], 0);
+
+        let imported = get_memory(
+            &ctx.state,
+            GetMemoryParams {
+                id: "sourceimport".to_string(),
+            },
+        )
+        .await
+        .unwrap();
+        let imported_json = tool_json(&imported);
+        assert_eq!(imported_json["memory"]["content"], "source import");
+        assert_eq!(imported_json["memory"]["namespace"], "target-project");
+        assert_eq!(imported_json["memory"]["superseded_by"], "targetimport");
+        assert!(imported_json["memory"]["embedding"].is_null());
+
+        let list = list_memories(
+            &ctx.state,
+            ListMemoriesParams {
+                limit: Some(10),
+                offset: None,
+                user_id: Some("import-user".to_string()),
+                agent_id: None,
+                run_id: None,
+                namespace: Some("target-project".to_string()),
+                memory_type: None,
+                metadata_filter: None,
+                valid_at: None,
+                event_after: None,
+                event_before: None,
+                ingestion_after: None,
+                ingestion_before: None,
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(tool_json(&list)["total"], 2);
     }
 
     #[tokio::test]
@@ -1141,14 +2640,22 @@ mod tests {
         let store_json: serde_json::Value = serde_json::from_str(store_text).unwrap();
         let id = store_json["id"].as_str().unwrap().to_string();
 
-        let get_result = get_memory(&ctx.state, GetMemoryParams { id: id.clone() }).await.unwrap();
+        let get_result = get_memory(&ctx.state, GetMemoryParams { id: id.clone() })
+            .await
+            .unwrap();
         let get_val = serde_json::to_value(&get_result).unwrap();
         let get_text = get_val["content"][0]["text"].as_str().unwrap();
         let get_json: serde_json::Value = serde_json::from_str(get_text).unwrap();
         assert_eq!(get_json["contract"]["schema_version"], 1);
         assert_eq!(get_json["contract"]["identity"]["stable_memory_id"], id);
-        assert_eq!(get_json["contract"]["identity"]["node_id_semantics"], "stable_public_memory_id");
-        assert_eq!(get_json["contract"]["compatibility"]["mode"], "additive_first");
+        assert_eq!(
+            get_json["contract"]["identity"]["node_id_semantics"],
+            "stable_public_memory_id"
+        );
+        assert_eq!(
+            get_json["contract"]["compatibility"]["mode"],
+            "additive_first"
+        );
         assert!(get_json["summary"]["partial"]["reason_code"].is_null());
         assert!(get_json["summary"]["partial"]["reason"].is_null());
         assert_eq!(get_json["summary"]["result_kind"], "memory");
@@ -1178,9 +2685,18 @@ mod tests {
         let list_json: serde_json::Value = serde_json::from_str(list_text).unwrap();
         assert_eq!(list_json["contract"]["schema_version"], 1);
         assert_eq!(list_json["contract"]["identity"]["stable_node_ids"], true);
-        assert_eq!(list_json["contract"]["identity"]["node_ids_are_project_scoped"], false);
-        assert_eq!(list_json["contract"]["identity"]["node_id_semantics"], "stable_public_memory_id");
-        assert_eq!(list_json["contract"]["compatibility"]["clients_must_ignore_unknown_fields"], true);
+        assert_eq!(
+            list_json["contract"]["identity"]["node_ids_are_project_scoped"],
+            false
+        );
+        assert_eq!(
+            list_json["contract"]["identity"]["node_id_semantics"],
+            "stable_public_memory_id"
+        );
+        assert_eq!(
+            list_json["contract"]["compatibility"]["clients_must_ignore_unknown_fields"],
+            true
+        );
         assert_eq!(list_json["summary"]["result_kind"], "collection");
         assert_eq!(list_json["summary"]["counts"]["results"], 1);
 
@@ -1206,7 +2722,10 @@ mod tests {
         let valid_val = serde_json::to_value(&valid_result).unwrap();
         let valid_text = valid_val["content"][0]["text"].as_str().unwrap();
         let valid_json: serde_json::Value = serde_json::from_str(valid_text).unwrap();
-        assert_eq!(valid_json["contract"]["identity"]["node_id_semantics"], "stable_public_memory_id");
+        assert_eq!(
+            valid_json["contract"]["identity"]["node_id_semantics"],
+            "stable_public_memory_id"
+        );
         assert_eq!(valid_json["summary"]["result_kind"], "collection");
     }
 
@@ -1242,7 +2761,9 @@ mod tests {
             expected_plan_fingerprint: None,
             metadata: Some(json!({"source": "consolidated"})),
         };
-        let result = consolidate_memory(&ctx.state, consolidate_params).await.unwrap();
+        let result = consolidate_memory(&ctx.state, consolidate_params)
+            .await
+            .unwrap();
         let val = serde_json::to_value(&result).unwrap();
         let text = val["content"][0]["text"].as_str().unwrap();
         let consolidate_json: serde_json::Value = serde_json::from_str(text).unwrap();
@@ -1256,10 +2777,7 @@ mod tests {
             consolidate_json["plan_diagnostics"]["content_hash"],
             consolidate_json["content_hash"]
         );
-        assert_eq!(
-            consolidate_json["plan_diagnostics"]["matched_count"],
-            1
-        );
+        assert_eq!(consolidate_json["plan_diagnostics"]["matched_count"], 1);
         assert_eq!(
             consolidate_json["plan_diagnostics"]["matched_ids"][0],
             original_id
@@ -1269,32 +2787,69 @@ mod tests {
             "semantic"
         );
         assert_eq!(consolidate_json["matched_summary"][0]["id"], original_id);
-        assert!(consolidate_json["matched_summary"][0]["matched_by"]
-            .as_array()
-            .unwrap()
-            .len()
-            >= 1);
-        assert_eq!(consolidate_json["execution_summary"]["replacement_id"], replacement_id);
-        assert_eq!(consolidate_json["execution_summary"]["used_plan_fingerprint"], consolidate_json["plan_fingerprint"]);
-        assert_eq!(consolidate_json["attention_summary"]["requires_operator_attention"], false);
-        assert_eq!(consolidate_json["attention_summary"]["fingerprint_checked"], false);
-        assert_eq!(consolidate_json["lookup_diagnostics"]["used_hash_first"], true);
-        assert_eq!(consolidate_json["lookup_diagnostics"]["used_exact_content_fallback"], false);
+        assert!(
+            consolidate_json["matched_summary"][0]["matched_by"]
+                .as_array()
+                .unwrap()
+                .len()
+                >= 1
+        );
+        assert_eq!(
+            consolidate_json["execution_summary"]["replacement_id"],
+            replacement_id
+        );
+        assert_eq!(
+            consolidate_json["execution_summary"]["used_plan_fingerprint"],
+            consolidate_json["plan_fingerprint"]
+        );
+        assert_eq!(
+            consolidate_json["attention_summary"]["requires_operator_attention"],
+            false
+        );
+        assert_eq!(
+            consolidate_json["attention_summary"]["fingerprint_checked"],
+            false
+        );
+        assert_eq!(
+            consolidate_json["lookup_diagnostics"]["used_hash_first"],
+            true
+        );
+        assert_eq!(
+            consolidate_json["lookup_diagnostics"]["used_exact_content_fallback"],
+            false
+        );
         assert_eq!(consolidate_json["operator_summary"]["stage"], "apply");
-        assert_eq!(consolidate_json["operator_summary"]["primary_signal"], "plan_diagnostics");
+        assert_eq!(
+            consolidate_json["operator_summary"]["primary_signal"],
+            "plan_diagnostics"
+        );
 
-        let result = get_memory(&ctx.state, GetMemoryParams { id: original_id.clone() })
-            .await
-            .unwrap();
+        let result = get_memory(
+            &ctx.state,
+            GetMemoryParams {
+                id: original_id.clone(),
+            },
+        )
+        .await
+        .unwrap();
         let val = serde_json::to_value(&result).unwrap();
         let text = val["content"][0]["text"].as_str().unwrap();
         let old_memory_json: serde_json::Value = serde_json::from_str(text).unwrap();
         assert_eq!(old_memory_json["superseded_by"], replacement_id);
         assert_eq!(old_memory_json["invalidation_reason"], "deduplicated");
-        assert_eq!(old_memory_json["consolidation_trace"]["status"], "superseded");
+        assert_eq!(
+            old_memory_json["consolidation_trace"]["status"],
+            "superseded"
+        );
         assert_eq!(old_memory_json["replacement_lineage"]["depth"], 1);
-        assert_eq!(old_memory_json["replacement_lineage"]["terminal_replacement_id"], replacement_id);
-        assert_eq!(old_memory_json["operator_summary"]["lifecycle_status"], "superseded");
+        assert_eq!(
+            old_memory_json["replacement_lineage"]["terminal_replacement_id"],
+            replacement_id
+        );
+        assert_eq!(
+            old_memory_json["operator_summary"]["lifecycle_status"],
+            "superseded"
+        );
         assert_eq!(lineage_ids(&old_memory_json), vec![replacement_id.clone()]);
 
         let list_params = ListMemoriesParams {
@@ -1324,7 +2879,10 @@ mod tests {
             .or_else(|| memories[0]["id"].as_str())
             .expect("list memory id should be readable");
         assert_eq!(listed_id, replacement_id);
-        assert_eq!(memories[0]["content_hash"], consolidate_json["content_hash"]);
+        assert_eq!(
+            memories[0]["content_hash"],
+            consolidate_json["content_hash"]
+        );
         assert_eq!(memories[0]["consolidation_trace"]["status"], "active");
         assert_eq!(memories[0]["replacement_lineage"]["depth"], 0);
         assert_eq!(memories[0]["operator_summary"]["stage"], "read");
@@ -1362,7 +2920,9 @@ mod tests {
             metadata: Some(json!({"source": "preview"})),
         };
 
-        let result = preview_consolidate_memory(&ctx.state, preview_params).await.unwrap();
+        let result = preview_consolidate_memory(&ctx.state, preview_params)
+            .await
+            .unwrap();
         let val = serde_json::to_value(&result).unwrap();
         let text = val["content"][0]["text"].as_str().unwrap();
         let preview_json: serde_json::Value = serde_json::from_str(text).unwrap();
@@ -1374,22 +2934,48 @@ mod tests {
         let matched_by = preview_json["matched_summary"][0]["matched_by"]
             .as_array()
             .unwrap();
-        assert!(matched_by.iter().any(|value| value == "content_hash" || value == "exact_content"));
+        assert!(matched_by
+            .iter()
+            .any(|value| value == "content_hash" || value == "exact_content"));
         assert_eq!(preview_json["reason"], "deduplicated");
-        let fingerprint = preview_json["plan_fingerprint"].as_str().unwrap().to_string();
+        let fingerprint = preview_json["plan_fingerprint"]
+            .as_str()
+            .unwrap()
+            .to_string();
         assert_eq!(preview_json["lookup_diagnostics"]["used_hash_first"], true);
-        assert_eq!(preview_json["lookup_diagnostics"]["used_exact_content_fallback"], false);
-        assert_eq!(preview_json["plan_diagnostics"]["content_hash"], preview_json["content_hash"]);
+        assert_eq!(
+            preview_json["lookup_diagnostics"]["used_exact_content_fallback"],
+            false
+        );
+        assert_eq!(
+            preview_json["plan_diagnostics"]["content_hash"],
+            preview_json["content_hash"]
+        );
         assert_eq!(preview_json["plan_diagnostics"]["matched_count"], 1);
-        assert_eq!(preview_json["plan_diagnostics"]["matched_ids"][0], original_id);
-        assert_eq!(preview_json["plan_diagnostics"]["replacement"]["memory_type"], "semantic");
-        assert_eq!(preview_json["plan_diagnostics"]["replacement"]["importance_score"], 2.0);
+        assert_eq!(
+            preview_json["plan_diagnostics"]["matched_ids"][0],
+            original_id
+        );
+        assert_eq!(
+            preview_json["plan_diagnostics"]["replacement"]["memory_type"],
+            "semantic"
+        );
+        assert_eq!(
+            preview_json["plan_diagnostics"]["replacement"]["importance_score"],
+            2.0
+        );
         assert_eq!(preview_json["replacement"]["memory_type"], "semantic");
         assert_eq!(preview_json["replacement"]["importance_score"], 2.0);
-        assert_eq!(preview_json["attention_summary"]["requires_operator_attention"], false);
+        assert_eq!(
+            preview_json["attention_summary"]["requires_operator_attention"],
+            false
+        );
         assert_eq!(preview_json["attention_summary"]["multiple_matches"], false);
         assert_eq!(preview_json["operator_summary"]["stage"], "preview");
-        assert_eq!(preview_json["operator_summary"]["primary_signal"], "plan_diagnostics");
+        assert_eq!(
+            preview_json["operator_summary"]["primary_signal"],
+            "plan_diagnostics"
+        );
 
         let preview_list_result = list_memories(
             &ctx.state,
@@ -1416,16 +3002,29 @@ mod tests {
         let preview_list_json: serde_json::Value = serde_json::from_str(preview_list_text).unwrap();
         assert_eq!(preview_list_json["total"], 1);
 
-        let preview_get_result =
-            get_memory(&ctx.state, GetMemoryParams { id: original_id.clone() }).await.unwrap();
+        let preview_get_result = get_memory(
+            &ctx.state,
+            GetMemoryParams {
+                id: original_id.clone(),
+            },
+        )
+        .await
+        .unwrap();
         let preview_get_val = serde_json::to_value(&preview_get_result).unwrap();
         let preview_get_text = preview_get_val["content"][0]["text"].as_str().unwrap();
-        let original_after_preview: serde_json::Value = serde_json::from_str(preview_get_text).unwrap();
+        let original_after_preview: serde_json::Value =
+            serde_json::from_str(preview_get_text).unwrap();
         assert!(original_after_preview["superseded_by"].is_null());
         assert!(original_after_preview["invalidation_reason"].is_null());
-        assert_eq!(original_after_preview["consolidation_trace"]["status"], "active");
+        assert_eq!(
+            original_after_preview["consolidation_trace"]["status"],
+            "active"
+        );
         assert_eq!(original_after_preview["replacement_lineage"]["depth"], 0);
-        assert_eq!(original_after_preview["operator_summary"]["lifecycle_status"], "active");
+        assert_eq!(
+            original_after_preview["operator_summary"]["lifecycle_status"],
+            "active"
+        );
 
         let execute_result = consolidate_memory(
             &ctx.state,
@@ -1448,12 +3047,27 @@ mod tests {
         let execute_text = execute_val["content"][0]["text"].as_str().unwrap();
         let execute_json: serde_json::Value = serde_json::from_str(execute_text).unwrap();
         assert_eq!(execute_json["plan_fingerprint"], fingerprint);
-        assert_eq!(execute_json["execution_summary"]["used_plan_fingerprint"], fingerprint);
-        assert_eq!(execute_json["execution_summary"]["superseded_ids"][0], original_id);
-        assert_eq!(execute_json["attention_summary"]["fingerprint_checked"], true);
-        assert_eq!(execute_json["attention_summary"]["requires_operator_attention"], false);
+        assert_eq!(
+            execute_json["execution_summary"]["used_plan_fingerprint"],
+            fingerprint
+        );
+        assert_eq!(
+            execute_json["execution_summary"]["superseded_ids"][0],
+            original_id
+        );
+        assert_eq!(
+            execute_json["attention_summary"]["fingerprint_checked"],
+            true
+        );
+        assert_eq!(
+            execute_json["attention_summary"]["requires_operator_attention"],
+            false
+        );
         assert_eq!(execute_json["operator_summary"]["stage"], "apply");
-        assert_eq!(execute_json["operator_summary"]["primary_signal"], "plan_diagnostics");
+        assert_eq!(
+            execute_json["operator_summary"]["primary_signal"],
+            "plan_diagnostics"
+        );
 
         let stale_result = consolidate_memory(
             &ctx.state,
@@ -1501,16 +3115,30 @@ mod tests {
         let list_json: serde_json::Value = serde_json::from_str(text).unwrap();
         assert_eq!(list_json["total"], 1);
 
-        let result = get_memory(&ctx.state, GetMemoryParams { id: original_id }).await.unwrap();
+        let result = get_memory(&ctx.state, GetMemoryParams { id: original_id })
+            .await
+            .unwrap();
         let val = serde_json::to_value(&result).unwrap();
         let text = val["content"][0]["text"].as_str().unwrap();
         let original_after_preview: serde_json::Value = serde_json::from_str(text).unwrap();
         assert!(original_after_preview["superseded_by"].is_string());
-        assert_eq!(original_after_preview["invalidation_reason"], "deduplicated");
-        assert_eq!(original_after_preview["consolidation_trace"]["status"], "superseded");
+        assert_eq!(
+            original_after_preview["invalidation_reason"],
+            "deduplicated"
+        );
+        assert_eq!(
+            original_after_preview["consolidation_trace"]["status"],
+            "superseded"
+        );
         assert_eq!(original_after_preview["replacement_lineage"]["depth"], 1);
-        assert_eq!(original_after_preview["replacement_lineage"]["terminal_replacement_id"], execute_json["id"]);
-        assert_eq!(original_after_preview["operator_summary"]["lifecycle_status"], "superseded");
+        assert_eq!(
+            original_after_preview["replacement_lineage"]["terminal_replacement_id"],
+            execute_json["id"]
+        );
+        assert_eq!(
+            original_after_preview["operator_summary"]["lifecycle_status"],
+            "superseded"
+        );
     }
 
     #[tokio::test]
@@ -1587,7 +3215,10 @@ mod tests {
         let preview_val = serde_json::to_value(&preview_result).unwrap();
         let preview_text = preview_val["content"][0]["text"].as_str().unwrap();
         let preview_json: serde_json::Value = serde_json::from_str(preview_text).unwrap();
-        let fingerprint = preview_json["plan_fingerprint"].as_str().unwrap().to_string();
+        let fingerprint = preview_json["plan_fingerprint"]
+            .as_str()
+            .unwrap()
+            .to_string();
         assert_eq!(preview_json["content_hash"], updated_hash);
         assert_eq!(preview_json["matched_count"], 1);
         assert_eq!(preview_json["matched_ids"][0], id);
@@ -1641,7 +3272,9 @@ mod tests {
             ..Default::default()
         };
 
-        let legacy_id = create_and_sync_memory(&ctx.state, legacy_memory).await.unwrap();
+        let legacy_id = create_and_sync_memory(&ctx.state, legacy_memory)
+            .await
+            .unwrap();
 
         let result = consolidate_memory(
             &ctx.state,
@@ -1667,19 +3300,36 @@ mod tests {
 
         assert_eq!(consolidate_json["superseded_count"], 1);
         assert_eq!(consolidate_json["superseded_ids"][0], legacy_id);
-        assert_eq!(consolidate_json["lookup_diagnostics"]["used_hash_first"], false);
-        assert_eq!(consolidate_json["lookup_diagnostics"]["used_exact_content_fallback"], true);
-        assert_eq!(consolidate_json["lookup_diagnostics"]["exact_content_fallback_match_count"], 1);
-        assert_eq!(consolidate_json["operator_summary"]["primary_signal"], "plan_diagnostics");
+        assert_eq!(
+            consolidate_json["lookup_diagnostics"]["used_hash_first"],
+            false
+        );
+        assert_eq!(
+            consolidate_json["lookup_diagnostics"]["used_exact_content_fallback"],
+            true
+        );
+        assert_eq!(
+            consolidate_json["lookup_diagnostics"]["exact_content_fallback_match_count"],
+            1
+        );
+        assert_eq!(
+            consolidate_json["operator_summary"]["primary_signal"],
+            "plan_diagnostics"
+        );
         assert!(consolidate_json["matched_summary"][0]["matched_by"]
             .as_array()
             .unwrap()
             .iter()
             .any(|value| value == "exact_content"));
 
-        let legacy_after = get_memory(&ctx.state, GetMemoryParams { id: legacy_id.clone() })
-            .await
-            .unwrap();
+        let legacy_after = get_memory(
+            &ctx.state,
+            GetMemoryParams {
+                id: legacy_id.clone(),
+            },
+        )
+        .await
+        .unwrap();
         let legacy_after_val = serde_json::to_value(&legacy_after).unwrap();
         let legacy_after_text = legacy_after_val["content"][0]["text"].as_str().unwrap();
         let legacy_after_json: serde_json::Value = serde_json::from_str(legacy_after_text).unwrap();
@@ -1717,23 +3367,36 @@ mod tests {
 
         assert_ne!(first_id, second_id);
 
-        let first_get = get_memory(&ctx.state, GetMemoryParams { id: first_id.clone() })
-            .await
-            .unwrap();
+        let first_get = get_memory(
+            &ctx.state,
+            GetMemoryParams {
+                id: first_id.clone(),
+            },
+        )
+        .await
+        .unwrap();
         let first_get_val = serde_json::to_value(&first_get).unwrap();
         let first_get_text = first_get_val["content"][0]["text"].as_str().unwrap();
         let first_memory_json: serde_json::Value = serde_json::from_str(first_get_text).unwrap();
 
-        let second_get = get_memory(&ctx.state, GetMemoryParams { id: second_id.clone() })
-            .await
-            .unwrap();
+        let second_get = get_memory(
+            &ctx.state,
+            GetMemoryParams {
+                id: second_id.clone(),
+            },
+        )
+        .await
+        .unwrap();
         let second_get_val = serde_json::to_value(&second_get).unwrap();
         let second_get_text = second_get_val["content"][0]["text"].as_str().unwrap();
         let second_memory_json: serde_json::Value = serde_json::from_str(second_get_text).unwrap();
 
         assert_eq!(first_memory_json["content"], "store duplicate behavior");
         assert_eq!(second_memory_json["content"], "store duplicate behavior");
-        assert_eq!(first_memory_json["content_hash"], second_memory_json["content_hash"]);
+        assert_eq!(
+            first_memory_json["content_hash"],
+            second_memory_json["content_hash"]
+        );
 
         let list_result = list_memories(
             &ctx.state,
@@ -1833,7 +3496,13 @@ mod tests {
 
         assert_eq!(consolidate_json["superseded_count"], 1);
         assert_eq!(consolidate_json["superseded_ids"][0], original_id);
-        assert_eq!(consolidate_json["lookup_diagnostics"]["used_hash_first"], true);
-        assert_eq!(consolidate_json["lookup_diagnostics"]["used_exact_content_fallback"], false);
+        assert_eq!(
+            consolidate_json["lookup_diagnostics"]["used_hash_first"],
+            true
+        );
+        assert_eq!(
+            consolidate_json["lookup_diagnostics"]["used_exact_content_fallback"],
+            false
+        );
     }
 }

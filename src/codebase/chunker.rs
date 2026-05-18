@@ -11,6 +11,15 @@ const MAX_CHUNK_LINES: usize = 150;
 const MIN_OTHER_CHUNK_LINES: usize = 3;
 
 pub fn chunk_file(path: &Path, content: &str, project_id: &str) -> Vec<CodeChunk> {
+    chunk_file_for_generation(path, content, project_id, None)
+}
+
+pub fn chunk_file_for_generation(
+    path: &Path,
+    content: &str,
+    project_id: &str,
+    generation: Option<u64>,
+) -> Vec<CodeChunk> {
     let language = detect_language(path);
     let file_path = path.to_string_lossy().to_string();
 
@@ -19,15 +28,23 @@ pub fn chunk_file(path: &Path, content: &str, project_id: &str) -> Vec<CodeChunk
     }
 
     if let Some(support) = get_language_support(language.clone()) {
-        chunk_by_ast(
+        let mut chunks = chunk_by_ast(
             content,
             &file_path,
             project_id,
             language,
             support.get_language(),
-        )
+        );
+        for chunk in &mut chunks {
+            chunk.generation = generation;
+        }
+        chunks
     } else {
-        chunk_by_structure(content, &file_path, project_id, language)
+        let mut chunks = chunk_by_structure(content, &file_path, project_id, language);
+        for chunk in &mut chunks {
+            chunk.generation = generation;
+        }
+        chunks
     }
 }
 
@@ -378,6 +395,7 @@ fn create_chunk(
         embedding: None,
         content_hash,
         project_id: Some(project_id.to_string()),
+        generation: None,
         indexed_at: crate::types::Datetime::default(),
     }
 }

@@ -1,9 +1,12 @@
 pub mod code;
+pub mod code_intelligence;
+pub mod learning;
 pub mod embedding_state;
 pub mod entity;
 pub mod error;
 pub mod export;
 pub mod memory;
+pub mod project_id;
 pub mod safe_thing;
 pub mod search;
 pub mod symbol;
@@ -72,6 +75,9 @@ impl_string_surreal_value!(
     ChunkType,
     Language,
     IndexState,
+    IndexJobState,
+    IndexJobPhase,
+    IndexJobReasonCode,
     StructuralState,
     SemanticState,
     ProjectionState,
@@ -94,29 +100,35 @@ pub fn record_key_to_string(key: &RecordIdKey) -> String {
 }
 
 pub use code::{
-    ChunkType, CodeChunk, IndexState, IndexStatus, Language, ManifestEntry, ProjectionState,
-    SemanticState, StructuralState,
+    CapabilityFreshness, CapabilityKind, CapabilityReadiness, ChunkType, CodeChunk,
+    IndexFileCheckpoint, IndexJobPhase, IndexJobReasonCode, IndexJobRecord, IndexJobState,
+    IndexState, IndexStatus, Language, ManifestEntry, ProjectionState, SemanticState,
+    ServingGenerationMetadata, StructuralState,
 };
+pub use code_intelligence::{CodeIntelligenceDiagnostic, CodeIntelligenceDiagnosticCode};
 pub use embedding_state::{EmbedResult, EmbedTarget, EmbeddingState};
+pub use entity::{ConfidenceClass, RelationClass, RelationProvenance, StalenessState};
 pub use entity::{Direction, Entity, Relation};
 pub use error::{AppError, Result};
 pub use export::{
-    CompatibilityPolicy, ContractReasonCode, CountSummary, ExportContractMeta,
-    ExportIdentity, ExportResponseSummary, ExportedGraphEdge, ExportedGraphNode,
+    CompatibilityPolicy, ContractReasonCode, CountSummary, ExportContractMeta, ExportIdentity,
+    ExportMemoryResponse, ExportResponseSummary, ExportedGraphEdge, ExportedGraphNode,
     ExportedProjectProjection, ExportedSymbolEdge, ExportedSymbolNode, FrontierSummary,
-    GenerationBasis, LifecycleView, PartialSummary, ProjectProjectionInputs,
-    ProjectProjectionRequest, ProjectionContractState, ProjectionEnvelope,
-    ProjectionLifecycleView, ProjectionLocatorLifecycle, ProjectionLocatorLookup,
-    ProjectionLocatorLookupState, ProjectionLocatorRecord, ProjectionMaterializationEnvelope,
-    ProjectionShapingSummary, SemanticLifecycleView, StructuralLifecycleView,
-    SurfaceGuidance, TraversalDefaults, TraversalSummary,
+    GenerationBasis, ImportConflictStrategy, ImportError, ImportErrorCode, ImportIdMapping,
+    ImportMemoryResponse, LifecycleView, MigrationMemoryRecord, MigrationRecordType,
+    MigrationSummary, PartialSummary, ProjectProjectionInputs, ProjectProjectionRequest,
+    ProjectionContractState, ProjectionEnvelope, ProjectionLifecycleView,
+    ProjectionLocatorLifecycle, ProjectionLocatorLookup, ProjectionLocatorLookupState,
+    ProjectionLocatorRecord, ProjectionMaterializationEnvelope, ProjectionShapingSummary,
+    SemanticLifecycleView, StructuralLifecycleView, SurfaceGuidance, TraversalDefaults,
+    TraversalSummary, MEMORY_MIGRATION_RECORD_TYPE, MEMORY_MIGRATION_SCHEMA_VERSION,
 };
 pub use memory::{Memory, MemoryType, MemoryUpdate};
+pub use project_id::{derive_project_id, derive_project_id_with_existing, ProjectIdError};
 pub use search::{
     CodeSearchResult, MemoryQuery, RecallResult, ScoredCodeChunk, ScoredMemory, SearchResult,
 };
 pub use symbol::{
     CodeReference, CodeRelationType, CodeSymbol, ScoredSymbol, SymbolRelation, SymbolType,
 };
-pub use entity::{ConfidenceClass, RelationClass, RelationProvenance, StalenessState};
 pub use thing_id::ThingId;

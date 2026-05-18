@@ -19,10 +19,11 @@ from evals.lib.metrics import aggregate_metrics, classify_reason_code, classify_
 
 
 ROOT = PROJECT_ROOT
+BENCHMARK_RESULTS_DIR = ROOT / "benchmark-results"
 CODE_GOLDEN_V2_JSON = ROOT / "evals" / "golden" / "code_retrieval_queries_v2.json"
-LEGACY_BASELINE_JSON = ROOT / ".sisyphus" / "evidence" / "task-2-recall-code-baseline.json"
-EVIDENCE_DIR = ROOT / ".sisyphus" / "evidence" / "evals"
-V2_EVIDENCE_DIR = ROOT / ".sisyphus" / "evidence" / "benchmark-v2"
+LEGACY_BASELINE_JSON = BENCHMARK_RESULTS_DIR / "legacy" / "task-2-recall-code-baseline.json"
+EVIDENCE_DIR = BENCHMARK_RESULTS_DIR / "evals"
+V2_EVIDENCE_DIR = BENCHMARK_RESULTS_DIR / "benchmark-v2"
 OUTPUT_JSON = EVIDENCE_DIR / "code-retrieval-baseline.json"
 OUTPUT_MD = EVIDENCE_DIR / "code-retrieval-baseline.md"
 BENCHMARK_NAME = "code_retrieval_baseline"
@@ -1102,7 +1103,7 @@ def run_benchmark(args: argparse.Namespace) -> int:
     if _is_canonical_target_pair(output_json, output_md):
         effective_output_json, effective_output_md = _non_refresh_report_paths(BENCHMARK_NAME, args.fixture_tier)
         warnings.append(
-            "canonical code baseline targets are protected for normal runs; output was redirected to benchmark-v2 runs"
+                "canonical code baseline targets are protected for normal runs; output was redirected to benchmark-results/benchmark-v2 runs"
         )
 
     write_json_report(

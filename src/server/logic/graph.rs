@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::time::Instant;
 
 use rmcp::model::CallToolResult;
 use serde_json::json;
@@ -11,15 +12,18 @@ use crate::server::params::{
 };
 use crate::storage::StorageBackend;
 use crate::types::{
-    ConfidenceClass, Datetime, Direction, Entity, ExportIdentity, RecordId, Relation, RelationClass,
-    RelationProvenance, StalenessState, ThingId,
+    ConfidenceClass, Datetime, Direction, Entity, ExportIdentity, RecordId, Relation,
+    RelationClass, RelationProvenance, StalenessState, ThingId,
 };
 
-use super::{error_response, strip_entity_embeddings, success_json};
 use super::contracts::{
     export_contract_meta, exported_graph_edges, exported_graph_nodes, summary_graph_response,
     with_frontier_contract, with_surface_guidance, with_traversal_defaults,
 };
+use super::{error_response, strip_entity_embeddings, success_json};
+
+const ENTITY_ID_GUIDANCE: &str =
+    "Pass the entity id returned by create_entity, not the entity display name.";
 
 fn graph_contract_json(entity_id: Option<&str>) -> serde_json::Value {
     let contract = with_traversal_defaults(
@@ -59,8 +63,7 @@ fn graph_contract_json(entity_id: Option<&str>) -> serde_json::Value {
         false,
     );
 
-    serde_json::to_value(contract)
-    .unwrap_or_else(|_| json!({}))
+    serde_json::to_value(contract).unwrap_or_else(|_| json!({}))
 }
 
 pub async fn create_entity(
@@ -100,14 +103,21 @@ pub async fn create_relation(
         Ok(id) => id,
         Err(e) => {
             return Ok(error_response(anyhow::anyhow!(
-                "Invalid from_entity: {}",
-                e
+                "Invalid from_entity: {}. {}",
+                e,
+                ENTITY_ID_GUIDANCE
             )))
         }
     };
     let to_id = match ThingId::new("entities", &params.to_entity) {
         Ok(id) => id,
-        Err(e) => return Ok(error_response(anyhow::anyhow!("Invalid to_entity: {}", e))),
+        Err(e) => {
+            return Ok(error_response(anyhow::anyhow!(
+                "Invalid to_entity: {}. {}",
+                e,
+                ENTITY_ID_GUIDANCE
+            )))
+        }
     };
 
     let relation = Relation {
@@ -173,54 +183,114 @@ pub async fn detect_communities(
     use petgraph::graph::DiGraph;
     use std::collections::HashMap;
 
-    let entities = match state.storage.get_all_entities().await {
-        Ok(e) => e,
-        Err(e) => return Ok(error_response(e)),
-    };
+    let total_start = Instant::now();
+    let cache_hit = state.community_cache.get(&()).await.is_some();
 
-    let relations = match state.storage.get_all_relations().await {
-        Ok(r) => r,
-        Err(e) => return Ok(error_response(e)),
-    };
+    let result = state
+        .community_cache
+        .try_get_with((), async {
+            let entities = state
+                .storage
+                .get_all_entities()
+                .await
+                .map_err(|e| anyhow::anyhow!("{}", e))?;
 
-    let mut graph: DiGraph<String, f32> = DiGraph::new();
-    let mut node_map = HashMap::new();
+            let relations = state
+                .storage
+                .get_all_relations()
+                .await
+                .map_err(|e| anyhow::anyhow!("{}", e))?;
 
-    for entity in &entities {
-        if let Some(ref id) = entity.id {
-            let id_str = crate::types::record_key_to_string(&id.key);
-            let idx = graph.add_node(id_str.clone());
-            node_map.insert(id_str, idx);
-        }
-    }
+            let mut graph: DiGraph<String, f32> = DiGraph::new();
+            let mut node_map = HashMap::new();
 
-    for relation in &relations {
-        let from_str = crate::types::record_key_to_string(&relation.from_entity.key);
-        let to_str = crate::types::record_key_to_string(&relation.to_entity.key);
-        if let (Some(&from_idx), Some(&to_idx)) = (node_map.get(&from_str), node_map.get(&to_str)) {
-            graph.add_edge(from_idx, to_idx, relation.weight);
-        }
-    }
+            for entity in &entities {
+                if let Some(ref id) = entity.id {
+                    let id_str = crate::types::record_key_to_string(&id.key);
+                    let idx = graph.add_node(id_str.clone());
+                    node_map.insert(id_str, idx);
+                }
+            }
 
-    let communities = detect_communities_algo(&graph);
+            for relation in &relations {
+                let from_str = crate::types::record_key_to_string(&relation.from_entity.key);
+                let to_str = crate::types::record_key_to_string(&relation.to_entity.key);
+                if let (Some(&from_idx), Some(&to_idx)) =
+                    (node_map.get(&from_str), node_map.get(&to_str))
+                {
+                    graph.add_edge(from_idx, to_idx, relation.weight);
+                }
+            }
 
-    let reverse_map: HashMap<petgraph::graph::NodeIndex, String> =
-        node_map.into_iter().map(|(id, idx)| (idx, id)).collect();
+            let start = std::time::Instant::now();
+            let communities = detect_communities_algo(&graph);
+            let elapsed = start.elapsed().as_millis();
 
-    let result_communities: Vec<Vec<String>> = communities
-        .into_iter()
-        .map(|comm| {
-            comm.into_iter()
-                .filter_map(|idx| reverse_map.get(&idx).cloned())
-                .collect()
+            let reverse_map: HashMap<petgraph::graph::NodeIndex, String> =
+                node_map.into_iter().map(|(id, idx)| (idx, id)).collect();
+
+            let result_communities: Vec<Vec<String>> = communities
+                .into_iter()
+                .map(|comm| {
+                    comm.into_iter()
+                        .filter_map(|idx| reverse_map.get(&idx).cloned())
+                        .collect()
+                })
+                .collect();
+
+            if result_communities.is_empty() {
+                return Err(anyhow::anyhow!("empty_graph"));
+            }
+
+            tracing::debug!("Community detection: computed in {}ms", elapsed);
+            Ok(result_communities)
         })
-        .collect();
+        .await;
 
-    Ok(success_json(json!({
-        "communities": result_communities,
-        "community_count": result_communities.len(),
-        "entity_count": entities.len()
-    })))
+    match result {
+        Ok(result_communities) => {
+            if cache_hit {
+                tracing::debug!("Community detection: cache hit");
+            }
+            let entity_count = result_communities.iter().map(|c| c.len()).sum::<usize>();
+            state.metrics.record_duration(
+                "query.graph_detect_communities",
+                total_start.elapsed(),
+                json!({
+                    "cache_hit": cache_hit,
+                    "community_count": result_communities.len(),
+                    "entity_count": entity_count,
+                }),
+            );
+            Ok(success_json(json!({
+                "communities": result_communities,
+                "community_count": result_communities.len(),
+                "entity_count": entity_count
+            })))
+        }
+        Err(e) => {
+            let msg = e.to_string();
+            if msg == "empty_graph" {
+                state.metrics.record_duration(
+                    "query.graph_detect_communities",
+                    total_start.elapsed(),
+                    json!({"cache_hit": cache_hit, "community_count": 0, "entity_count": 0, "empty": true}),
+                );
+                Ok(success_json(json!({
+                    "communities": [],
+                    "community_count": 0,
+                    "entity_count": 0
+                })))
+            } else {
+                state.metrics.record_duration(
+                    "query.graph_detect_communities",
+                    total_start.elapsed(),
+                    json!({"cache_hit": cache_hit, "ok": false, "error": msg}),
+                );
+                Ok(error_response(anyhow::anyhow!("{}", msg)))
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -279,20 +349,59 @@ mod tests {
 
         assert_eq!(json_related["contract"]["schema_version"], 1);
         assert_eq!(json_related["contract"]["identity"]["entity_id"], id1);
-        assert_eq!(json_related["contract"]["identity"]["stable_node_ids"], true);
-        assert_eq!(json_related["contract"]["identity"]["node_ids_are_project_scoped"], false);
-        assert_eq!(json_related["contract"]["identity"]["edge_ids_are_local_only"], true);
-        assert_eq!(json_related["contract"]["identity"]["node_id_semantics"], "stable_public_node_id");
-        assert_eq!(json_related["contract"]["identity"]["edge_id_semantics"], "local_only_edge_reference");
+        assert_eq!(
+            json_related["contract"]["identity"]["stable_node_ids"],
+            true
+        );
+        assert_eq!(
+            json_related["contract"]["identity"]["node_ids_are_project_scoped"],
+            false
+        );
+        assert_eq!(
+            json_related["contract"]["identity"]["edge_ids_are_local_only"],
+            true
+        );
+        assert_eq!(
+            json_related["contract"]["identity"]["node_id_semantics"],
+            "stable_public_node_id"
+        );
+        assert_eq!(
+            json_related["contract"]["identity"]["edge_id_semantics"],
+            "local_only_edge_reference"
+        );
         assert_eq!(json_related["contract"]["projection_state"], "missing");
-        assert_eq!(json_related["contract"]["surface_guidance"]["preferred_response_fields"][0], "nodes");
-        assert_eq!(json_related["contract"]["surface_guidance"]["legacy_compatibility_fields"][0], "entities");
-        assert_eq!(json_related["contract"]["surface_guidance"]["forbidden_to_depend_fields"][0], "relations[].id");
-        assert_eq!(json_related["contract"]["traversal_defaults"]["frontier_semantics"], "unexpanded_boundary_for_manual_follow_up");
-        assert_eq!(json_related["contract"]["traversal_defaults"]["frontier_items_identity_basis"], "stable_public_node_id");
-        assert_eq!(json_related["contract"]["traversal_defaults"]["frontier_items_are_stable_node_ids"], true);
-        assert_eq!(json_related["contract"]["traversal_defaults"]["frontier_items_are_project_scoped"], false);
-        assert_eq!(json_related["contract"]["traversal_defaults"]["frontier_is_cursor"], false);
+        assert_eq!(
+            json_related["contract"]["surface_guidance"]["preferred_response_fields"][0],
+            "nodes"
+        );
+        assert_eq!(
+            json_related["contract"]["surface_guidance"]["legacy_compatibility_fields"][0],
+            "entities"
+        );
+        assert_eq!(
+            json_related["contract"]["surface_guidance"]["forbidden_to_depend_fields"][0],
+            "relations[].id"
+        );
+        assert_eq!(
+            json_related["contract"]["traversal_defaults"]["frontier_semantics"],
+            "unexpanded_boundary_for_manual_follow_up"
+        );
+        assert_eq!(
+            json_related["contract"]["traversal_defaults"]["frontier_items_identity_basis"],
+            "stable_public_node_id"
+        );
+        assert_eq!(
+            json_related["contract"]["traversal_defaults"]["frontier_items_are_stable_node_ids"],
+            true
+        );
+        assert_eq!(
+            json_related["contract"]["traversal_defaults"]["frontier_items_are_project_scoped"],
+            false
+        );
+        assert_eq!(
+            json_related["contract"]["traversal_defaults"]["frontier_is_cursor"],
+            false
+        );
         assert_eq!(json_related["entity_count"].as_u64().unwrap(), 1);
         assert_eq!(json_related["nodes"][0]["id"], id2);
         assert_eq!(json_related["edges"][0]["relation_type"], "knows");
@@ -310,5 +419,31 @@ mod tests {
         // Alice and Bob should be in the same community (connected)
         let communities = json_comm["communities"].as_array().unwrap();
         assert!(!communities.is_empty());
+    }
+
+    #[tokio::test]
+    async fn create_relation_explains_entity_ids_are_required() {
+        let ctx = TestContext::new().await;
+
+        let result = create_relation(
+            &ctx.state,
+            CreateRelationParams {
+                from_entity: "Flutter App Layer".to_string(),
+                to_entity: "Backend Service".to_string(),
+                relation_type: "depends_on".to_string(),
+                weight: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        let value = serde_json::to_value(&result).unwrap();
+        let text = value["content"][0]["text"].as_str().unwrap();
+        let json: serde_json::Value = serde_json::from_str(text).unwrap();
+        let error = json["error"].as_str().unwrap();
+
+        assert!(error.contains("Invalid from_entity"));
+        assert!(error.contains("entity id returned by create_entity"));
+        assert!(error.contains("not the entity display name"));
     }
 }

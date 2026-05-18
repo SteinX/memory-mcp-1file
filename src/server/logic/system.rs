@@ -5,7 +5,11 @@ use serde_json::json;
 
 use crate::config::AppState;
 use crate::embedding::EmbeddingStatus;
+use crate::server::logic::memory_lifecycle::{
+    derive_memory_lifecycle, RetentionPolicy, RETENTION_POLICY_VERSION,
+};
 use crate::server::params::{GetStatusParams, ResetAllMemoryParams};
+use crate::storage::traits::MemoryGcFilter;
 use crate::storage::StorageBackend;
 
 use super::{error_response, success_json};
@@ -15,8 +19,47 @@ pub async fn get_status(
     _params: GetStatusParams,
 ) -> anyhow::Result<CallToolResult> {
     let memories_count = state.storage.count_memories().await.unwrap_or(0);
+    let valid_memories_count = state.storage.count_valid_memories().await.unwrap_or(0);
     let db_healthy = state.storage.health_check().await.unwrap_or(false);
     let embedding_status = state.embedding.status().await;
+    let gc_filter = MemoryGcFilter::default();
+    let invalidated_memories_count = state
+        .storage
+        .count_invalidated_memories_for_gc(&gc_filter)
+        .await
+        .unwrap_or(0);
+    let reason_distribution = state
+        .storage
+        .count_invalidated_memories_by_reason(&gc_filter)
+        .await
+        .unwrap_or_default()
+        .into_iter()
+        .map(|row| json!({ "reason": row.reason, "count": row.count }))
+        .collect::<Vec<_>>();
+    let policy = RetentionPolicy::default();
+    let now = chrono::Utc::now();
+    let mut purge_eligible_count = 0usize;
+    let mut offset = 0usize;
+    const PAGE_SIZE: usize = 500;
+    loop {
+        let page = state
+            .storage
+            .list_invalidated_memories_for_gc(&gc_filter, PAGE_SIZE, offset)
+            .await
+            .unwrap_or_default();
+        if page.is_empty() {
+            break;
+        }
+        purge_eligible_count += page
+            .iter()
+            .filter(|memory| derive_memory_lifecycle(memory, now, &policy).purge_eligible)
+            .count();
+        let page_len = page.len();
+        if page_len < PAGE_SIZE {
+            break;
+        }
+        offset += page_len;
+    }
 
     let (overall_status, embedding_json) = match &embedding_status {
         EmbeddingStatus::Ready => (
@@ -70,6 +113,14 @@ pub async fn get_status(
         "version": env!("CARGO_PKG_VERSION"),
         "status": status,
         "memories_count": memories_count,
+        "memory_gc": {
+            "policy_version": RETENTION_POLICY_VERSION,
+            "total": memories_count,
+            "valid": valid_memories_count,
+            "invalidated": invalidated_memories_count,
+            "purge_eligible": purge_eligible_count,
+            "reason_distribution": reason_distribution,
+        },
         "embedding": embedding_json
     })))
 }

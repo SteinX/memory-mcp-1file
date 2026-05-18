@@ -1,0 +1,5 @@
+## 2026-04-27T13:22:38.698445+00:00 - T9 metrics self-test
+
+- Command: `python3 -m evals.lib.metrics --self-test`
+- Result: `self-test passed`
+- Coverage: added deterministic checks for `recall_at_k` and `ndcg_at_k`, plus aggregate/report wiring for `recall_at_5`, `recall_at_10`, `ndcg_at_5`, and `ndcg_at_10`.

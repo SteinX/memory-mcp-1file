@@ -6,7 +6,7 @@ use tokio::sync::watch;
 
 use crate::config::AppState;
 use crate::storage::StorageBackend;
-use crate::types::IndexState;
+use crate::types::{CapabilityKind, IndexState};
 
 const POLL_INTERVAL_SECS: u64 = 10;
 
@@ -98,10 +98,20 @@ async fn check_and_complete_project(
         return Ok(());
     }
 
-    let total_chunks = state.storage.count_chunks(project_id).await?;
-    let total_symbols = state.storage.count_symbols(project_id).await?;
-    let embedded_chunks = state.storage.count_embedded_chunks(project_id).await?;
-    let embedded_symbols = state.storage.count_embedded_symbols(project_id).await?;
+    // Get the active generation so counts are scoped to the generation currently
+    // serving reads, not staged (not-yet-promoted) rows from an in-progress index.
+    let active_gen = state.storage.get_active_generation(project_id).await?;
+
+    let total_chunks = state.storage.count_chunks(project_id, active_gen).await?;
+    let total_symbols = state.storage.count_symbols(project_id, active_gen).await?;
+    let embedded_chunks = state
+        .storage
+        .count_embedded_chunks(project_id, active_gen)
+        .await?;
+    let embedded_symbols = state
+        .storage
+        .count_embedded_symbols(project_id, active_gen)
+        .await?;
     let failed = state.embedding_queue.metrics().get_failed_total() as u32;
 
     let chunks_complete = (embedded_chunks + failed) >= total_chunks;
@@ -186,8 +196,7 @@ async fn check_and_complete_project(
         updated_status.total_chunks = total_chunks;
         updated_status.total_symbols = total_symbols;
         updated_status.failed_embeddings = failed;
-
-        state.storage.update_index_status(updated_status).await?;
+        let semantic_generation = updated_status.semantic_generation;
 
         // Rebuild HNSW vector indices so semantic search works immediately
         let dim = state.embedding.dimensions();
@@ -198,12 +207,27 @@ async fn check_and_complete_project(
                 "Failed to rebuild HNSW indices after completion"
             );
         } else {
+            state
+                .storage
+                .set_serving_generation(project_id, CapabilityKind::Vector, semantic_generation)
+                .await?;
+            state
+                .storage
+                .set_serving_generation(project_id, CapabilityKind::Semantic, semantic_generation)
+                .await?;
             tracing::info!(
                 project_id = %project_id,
                 dim = dim,
+                generation = semantic_generation,
                 "HNSW vector indices rebuilt successfully"
             );
         }
+
+        state
+            .storage
+            .set_indexing_generation(project_id, None)
+            .await?;
+        state.storage.update_index_status(updated_status).await?;
 
         tracing::info!(
             project_id = %project_id,
@@ -215,4 +239,118 @@ async fn check_and_complete_project(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::storage::StorageBackend;
+    use crate::test_utils::TestContext;
+    use crate::types::{
+        ChunkType, CodeChunk, CodeSymbol, Datetime, IndexStatus, Language, SemanticState,
+        SymbolType,
+    };
+
+    #[tokio::test]
+    async fn completion_monitor_publishes_vector_and_semantic_serving_generation() {
+        let ctx = TestContext::new().await;
+        let project_id = "completion-vector-serving";
+        let generation = 4;
+
+        ctx.state
+            .storage
+            .set_active_generation(project_id, generation)
+            .await
+            .unwrap();
+
+        ctx.state
+            .storage
+            .create_code_chunk(CodeChunk {
+                id: None,
+                file_path: "src/searchable.rs".to_string(),
+                content: "pub fn completion_monitor_searchable_marker() { let value = 42; }"
+                    .to_string(),
+                language: Language::Rust,
+                start_line: 1,
+                end_line: 3,
+                chunk_type: ChunkType::Function,
+                name: Some("completion_monitor_searchable_marker".to_string()),
+                context_path: None,
+                embedding: Some(vec![0.1; 768]),
+                content_hash: "completion-monitor-searchable-marker".to_string(),
+                project_id: Some(project_id.to_string()),
+                generation: Some(generation),
+                indexed_at: Datetime::default(),
+            })
+            .await
+            .unwrap();
+
+        let mut symbol = CodeSymbol::new(
+            "completion_monitor_searchable_marker".to_string(),
+            SymbolType::Function,
+            "src/searchable.rs".to_string(),
+            1,
+            3,
+            project_id.to_string(),
+        );
+        symbol.embedding = Some(vec![0.2; 768]);
+        symbol.generation = Some(generation);
+        ctx.state.storage.create_code_symbol(symbol).await.unwrap();
+
+        let mut status = IndexStatus::new(project_id.to_string());
+        status.status = IndexState::EmbeddingPending;
+        status.structural_generation = generation;
+        status.semantic_generation = generation - 1;
+        status.total_files = 1;
+        status.indexed_files = 1;
+        ctx.state.storage.update_index_status(status).await.unwrap();
+        ctx.state
+            .storage
+            .set_indexing_generation(project_id, Some(generation))
+            .await
+            .unwrap();
+
+        let mut progress_map = HashMap::new();
+        check_and_complete_project(&ctx.state, project_id, &mut progress_map)
+            .await
+            .unwrap();
+
+        let status = ctx
+            .state
+            .storage
+            .get_index_status(project_id)
+            .await
+            .unwrap()
+            .expect("status should exist");
+        assert_eq!(status.status, IndexState::Completed);
+        assert_eq!(status.semantic_state, SemanticState::Ready);
+        assert_eq!(status.semantic_generation, generation);
+        assert_eq!(status.total_chunks, 1);
+        assert_eq!(status.total_symbols, 1);
+        assert_eq!(
+            ctx.state
+                .storage
+                .get_indexing_generation(project_id)
+                .await
+                .unwrap(),
+            None
+        );
+
+        assert_eq!(
+            ctx.state
+                .storage
+                .get_serving_generation(project_id, CapabilityKind::Vector)
+                .await
+                .unwrap(),
+            Some(generation)
+        );
+        assert_eq!(
+            ctx.state
+                .storage
+                .get_serving_generation(project_id, CapabilityKind::Semantic)
+                .await
+                .unwrap(),
+            Some(generation)
+        );
+    }
 }

@@ -1,0 +1,311 @@
+Task 4 corrected memory baseline threshold evidence
+Generated: 2026-04-27T11:20:05.075215+00:00
+Benchmark command: python3 evals/memory_retrieval_benchmark.py
+Benchmark output JSON: .sisyphus/evidence/evals/memory-retrieval-baseline.json
+Benchmark output Markdown: .sisyphus/evidence/evals/memory-retrieval-baseline.md
+Command result: exit 0 on retry with 900000 ms timeout; first 300000 ms attempt timed out before stdout.
+
+Environment:
+- data_dir: /var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-8-memory-retrieval-data-ajvurp9t
+- data_dir_strategy: temporary isolated DATA_DIR
+- duration_seconds: 538.3
+- embedding_model: e5_small
+- mode: benchmark
+
+Aggregate metrics observed:
+- query_count: 10
+- baseline_query_count: 10
+- positive_query_count: 8
+- blocker_count: 0
+- seed_completed: True
+- hit_rate: 0.6
+- mrr: 0.6
+- positive_mean_mrr: 0.75
+- precision_at_5: 0.20000000000000004
+- precision_at_10: 0.10000000000000002
+- positive_mean_precision_at_5: 0.25000000000000006
+- positive_mean_precision_at_10: 0.12500000000000003
+- mean_expected_rank: 1.0
+- mean_latency_ms: 13.904304299978776
+- p95_latency_ms: 64.66320799995628
+- max_latency_ms: 64.66320799995628
+- observed_summary_partial_reason_codes: []
+
+Threshold evaluation:
+- blocker_count == 0: PASS
+- hit_rate >= 0.75: FAIL
+- mrr >= 0.5: PASS
+
+Machine-readable threshold summary:
+{
+  "benchmark_exit_zero": true,
+  "blocker_count": 0,
+  "first_attempt_timeout_ms": 300000,
+  "generated_at": "2026-04-27T11:20:05.075215+00:00",
+  "hit_rate": 0.6,
+  "mrr": 0.6,
+  "overall_pass": false,
+  "positive_query_count": 8,
+  "successful_attempt_timeout_ms": 900000,
+  "thresholds": {
+    "blocker_count == 0": true,
+    "hit_rate >= 0.75": false,
+    "mrr >= 0.5": true
+  }
+}
+
+Failing or special rows:
+{
+  "expected_fixture_ids": [
+    "mem_context_namespace_evals",
+    "mem_context_no_private_data",
+    "mem_context_stdio_harness",
+    "mem_decision_cache_ttl",
+    "mem_decision_query_ids",
+    "mem_decision_temporal_utc",
+    "mem_project_benchmark_scope",
+    "mem_research_rrf_fusion",
+    "mem_task_auth_timeout",
+    "mem_task_billing_retry_window",
+    "mem_user_pref_concise_answers",
+    "mem_user_pref_terse_notes"
+  ],
+  "expected_rank": null,
+  "expected_server_ids": [
+    "3df07c756a6bbf9cfdc4",
+    "6fb4e4a7fa60c0e5d9ab",
+    "3862bc3de76e0a14cb9b",
+    "aaf146982d8e8b7db94a",
+    "6daa3956c7895a1631dc",
+    "a0dc59047d4095cb247c",
+    "e429685f7ddacf28af47",
+    "5b2066edd1095a68101d",
+    "93aec863d81aa5e5dfa0",
+    "7fec235c7b15bd23659f",
+    "2cb216a6eecdfddcd565",
+    "cd14a9826472bbe460b1"
+  ],
+  "failure_type": "wrong_rank",
+  "mrr": 0.0,
+  "query_id": "q_get_valid_temporal_checkpoint",
+  "query_type": "get_valid_temporal",
+  "raw_top_k": [
+    {
+      "fixture_id": null,
+      "preview": "CONTEXT: Use namespace evals/memory-retrieval for benchmark runs and fixtures.",
+      "rank": 1,
+      "result_id": "{'key': {'String': '3df07c756a6bbf9cfdc4'}, 'table': 'memories'}"
+    },
+    {
+      "fixture_id": null,
+      "preview": "USER: Prefer terse benchmark notes and short rationale lines.",
+      "rank": 2,
+      "result_id": "{'key': {'String': 'cd14a9826472bbe460b1'}, 'table': 'memories'}"
+    },
+    {
+      "fixture_id": null,
+      "preview": "PROJECT: Recall fusion blends lexical evidence and graph evidence for benchmark queries.",
+      "rank": 3,
+      "result_id": "{'key': {'String': 'dc89f19abd4583e5243b'}, 'table': 'memories'}"
+    },
+    {
+      "fixture_id": null,
+      "preview": "DECISION: Represent temporal windows in ISO 8601 UTC for deterministic parsing.",
+      "rank": 4,
+      "result_id": "{'key': {'String': 'a0dc59047d4095cb247c'}, 'table': 'memories'}"
+    },
+    {
+      "fixture_id": null,
+      "preview": "TASK: This temporary memory expires before the February validity checkpoint.",
+      "rank": 5,
+      "result_id": "{'key': {'String': '85c06b44737f24df2f0f'}, 'table': 'memories'}"
+    },
+    {
+      "fixture_id": null,
+      "preview": "CONTEXT: Never use production, private, or local personal memory content in fixtures.",
+      "rank": 6,
+      "result_id": "{'key': {'String': '6fb4e4a7fa60c0e5d9ab'}, 'table': 'memories'}"
+    },
+    {
+      "fixture_id": null,
+      "preview": "RESEARCH: Temporal validity should be checked with explicit valid_from and valid_until windows.",
+      "rank": 7,
+      "result_id": "{'key': {'String': '995e3bb0f34eb3312e31'}, 'table': 'memories'}"
+    },
+    {
+      "fixture_id": null,
+      "preview": "DECISION: Golden queries must cite stable memory ids exactly as written.",
+      "rank": 8,
+      "result_id": "{'key': {'String': '6daa3956c7895a1631dc'}, 'table': 'memories'}"
+    },
+    {
+      "fixture_id": null,
+      "preview": "TASK: Billing retries stay open for a 15 minute retry window.",
+      "rank": 9,
+      "result_id": "{'key': {'String': '7fec235c7b15bd23659f'}, 'table': 'memories'}"
+    },
+    {
+      "fixture_id": null,
+      "preview": "USER: Keep benchmark notes concise and factual.",
+      "rank": 10,
+      "result_id": "{'key': {'String': '2cb216a6eecdfddcd565'}, 'table': 'memories'}"
+    }
+  ],
+  "result_count": 15
+}
+{
+  "expected_fixture_ids": [
+    "mem_task_auth_timeout",
+    "mem_decision_cache_ttl"
+  ],
+  "expected_rank": null,
+  "expected_server_ids": [
+    "93aec863d81aa5e5dfa0",
+    "aaf146982d8e8b7db94a"
+  ],
+  "failure_type": "wrong_rank",
+  "mrr": 0.0,
+  "query_id": "q_get_valid_filtered_auth_namespace",
+  "query_type": "get_valid_filtered",
+  "raw_top_k": [
+    {
+      "fixture_id": null,
+      "preview": "DECISION: Use a 15 minute cache ttl for auth token refresh state.",
+      "rank": 1,
+      "result_id": "{'key': {'String': 'aaf146982d8e8b7db94a'}, 'table': 'memories'}"
+    },
+    {
+      "fixture_id": null,
+      "preview": "TASK: Retry auth requests for 15 minutes when the token refresh path stalls.",
+      "rank": 2,
+      "result_id": "{'key': {'String': '93aec863d81aa5e5dfa0'}, 'table': 'memories'}"
+    }
+  ],
+  "result_count": 2
+}
+{
+  "expected_fixture_ids": [],
+  "expected_rank": null,
+  "expected_server_ids": [],
+  "failure_type": "wrong_rank",
+  "mrr": 0.0,
+  "query_id": "q_negative_no_match_nonsense",
+  "query_type": "negative_no_match",
+  "raw_top_k": [
+    {
+      "fixture_id": "mem_task_temporal_cutoff",
+      "preview": "TASK: This temporary memory expires before the February validity checkpoint.",
+      "rank": 1,
+      "result_id": "85c06b44737f24df2f0f",
+      "score": 0.0065573640167713165
+    },
+    {
+      "fixture_id": "mem_decision_cache_ttl",
+      "preview": "DECISION: Use a 15 minute cache ttl for auth token refresh state.",
+      "rank": 2,
+      "result_id": "aaf146982d8e8b7db94a",
+      "score": 0.00645161047577858
+    },
+    {
+      "fixture_id": "mem_user_pref_terse_notes",
+      "preview": "USER: Prefer terse benchmark notes and short rationale lines.",
+      "rank": 3,
+      "result_id": "cd14a9826472bbe460b1",
+      "score": 0.006349204573780298
+    },
+    {
+      "fixture_id": "mem_task_auth_timeout",
+      "preview": "TASK: Retry auth requests for 15 minutes when the token refresh path stalls.",
+      "rank": 4,
+      "result_id": "93aec863d81aa5e5dfa0",
+      "score": 0.0062499875202775
+    },
+    {
+      "fixture_id": "mem_user_pref_concise_answers",
+      "preview": "USER: Keep benchmark notes concise and factual.",
+      "rank": 5,
+      "result_id": "2cb216a6eecdfddcd565",
+      "score": 0.006153843831270933
+    },
+    {
+      "fixture_id": "mem_task_billing_retry_window",
+      "preview": "TASK: Billing retries stay open for a 15 minute retry window.",
+      "rank": 6,
+      "result_id": "7fec235c7b15bd23659f",
+      "score": 0.006060594227164984
+    },
+    {
+      "fixture_id": "mem_project_recall_fusion_plan",
+      "preview": "PROJECT: Recall fusion blends lexical evidence and graph evidence for benchmark queries.",
+      "rank": 7,
+      "result_id": "dc89f19abd4583e5243b",
+      "score": 0.00597014743834734
+    },
+    {
+      "fixture_id": "mem_research_rrf_fusion",
+      "preview": "RESEARCH: RRF fusion should combine vector, BM25, and graph signals for recall.",
+      "rank": 8,
+      "result_id": "5b2066edd1095a68101d",
+      "score": 0.005882350727915764
+    },
+    {
+      "fixture_id": "mem_context_stdio_harness",
+      "preview": "CONTEXT: The stdio harness should prefer local binaries before cargo run.",
+      "rank": 9,
+      "result_id": "3862bc3de76e0a14cb9b",
+      "score": 0.0057970997877418995
+    },
+    {
+      "fixture_id": "mem_context_no_private_data",
+      "preview": "CONTEXT: Never use production, private, or local personal memory content in fixtures.",
+      "rank": 10,
+      "result_id": "6fb4e4a7fa60c0e5d9ab",
+      "score": 0.005714283790439367
+    }
+  ],
+  "result_count": 14
+}
+{
+  "expected_fixture_ids": [],
+  "expected_rank": null,
+  "expected_server_ids": [],
+  "failure_type": "wrong_rank",
+  "mrr": 0.0,
+  "query_id": "q_negative_no_match_missing_prefix",
+  "query_type": "negative_no_match",
+  "raw_top_k": [
+    {
+      "fixture_id": "mem_decision_cache_ttl",
+      "preview": "DECISION: Use a 15 minute cache ttl for auth token refresh state.",
+      "rank": 1,
+      "result_id": "aaf146982d8e8b7db94a",
+      "score": 1.0
+    },
+    {
+      "fixture_id": "mem_task_auth_timeout",
+      "preview": "TASK: Retry auth requests for 15 minutes when the token refresh path stalls.",
+      "rank": 2,
+      "result_id": "93aec863d81aa5e5dfa0",
+      "score": 1.0
+    },
+    {
+      "fixture_id": "mem_decision_query_ids",
+      "preview": "DECISION: Golden queries must cite stable memory ids exactly as written.",
+      "rank": 3,
+      "result_id": "6daa3956c7895a1631dc",
+      "score": 1.0
+    },
+    {
+      "fixture_id": "mem_decision_temporal_utc",
+      "preview": "DECISION: Represent temporal windows in ISO 8601 UTC for deterministic parsing.",
+      "rank": 4,
+      "result_id": "a0dc59047d4095cb247c",
+      "score": 1.0
+    }
+  ],
+  "result_count": 4
+}
+
+Server source diff proof:
+- Command: rtk git diff -- src/
+- Result: no output; no server source changes under src/.

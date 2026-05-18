@@ -1,0 +1,17 @@
+{
+  "assertion": "partial classified informational without readiness/query blockers",
+  "blocker_count": 0,
+  "observed_summary_partial_reason_codes": [
+    "partial"
+  ],
+  "readiness_timeout": false,
+  "reason_code_classification": {
+    "partial": {
+      "classification": "informational",
+      "explanation": "The response is intentionally partial; informational when retrieval/readiness succeeded, degraded or blocking only with supporting evidence.",
+      "impact": "informational",
+      "reason_code": "partial"
+    }
+  },
+  "source": ".sisyphus/evidence/evals/code-retrieval-baseline.json"
+}

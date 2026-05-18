@@ -1,5 +1,6 @@
 use std::path::Path;
 use std::sync::Arc;
+use std::time::Instant;
 
 use anyhow::Result;
 use moka::future::Cache;
@@ -21,6 +22,15 @@ pub struct EmbeddingStore {
 impl EmbeddingStore {
     pub fn new(data_dir: &Path, model_name: &str) -> Result<Self> {
         let db_path = data_dir.join("cache.redb");
+        let started_at = Instant::now();
+        let cache_size = std::fs::metadata(&db_path).map(|meta| meta.len()).unwrap_or(0);
+        if cache_size > 256 * 1024 * 1024 {
+            tracing::warn!(
+                path = %db_path.display(),
+                size_mb = cache_size / 1024 / 1024,
+                "Opening large embedding cache"
+            );
+        }
         let disk_cache = Database::create(db_path)?;
 
         let write_txn = disk_cache.begin_write()?;
@@ -31,16 +41,12 @@ impl EmbeddingStore {
             if stored_model.as_deref() != Some(model_name) {
                 if stored_model.is_some() {
                     tracing::warn!(
-                        "Embedding model changed from {:?} to {}, purging stale cache",
+                        "Embedding model changed from {:?} to {}; old cache entries will be ignored by model-scoped keys",
                         stored_model,
                         model_name
                     );
-                    // Drop and recreate cache table to purge stale entries
-                    drop(meta);
-                    write_txn.delete_table(CACHE_TABLE)?;
-                    let _table = write_txn.open_table(CACHE_TABLE)?;
-                    let mut meta = write_txn.open_table(META_TABLE)?;
                     meta.insert(META_KEY_MODEL, model_name)?;
+                    let _table = write_txn.open_table(CACHE_TABLE)?;
                 } else {
                     let _table = write_txn.open_table(CACHE_TABLE)?;
                     meta.insert(META_KEY_MODEL, model_name)?;
@@ -50,6 +56,13 @@ impl EmbeddingStore {
             }
         }
         write_txn.commit()?;
+        let elapsed = started_at.elapsed();
+        if elapsed.as_secs() >= 1 {
+            tracing::warn!(
+                elapsed_sec = format!("{:.1}", elapsed.as_secs_f64()),
+                "Embedding cache opened slowly"
+            );
+        }
 
         Ok(Self {
             ram_cache: Cache::builder().max_capacity(2_000).build(),

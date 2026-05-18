@@ -1,6 +1,4 @@
-use super::entity::{
-    ConfidenceClass, RelationClass, RelationProvenance, StalenessState,
-};
+use super::entity::{ConfidenceClass, RelationClass, RelationProvenance, StalenessState};
 use super::{Datetime, SurrealValue, Thing};
 use serde::{Deserialize, Serialize};
 
@@ -78,6 +76,11 @@ pub struct CodeSymbol {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub embedding: Option<Vec<f32>>,
 
+    /// Structural generation that produced this row. Missing generation means
+    /// a legacy row that belongs to active generation 0.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub generation: Option<u64>,
+
     #[serde(default = "default_datetime")]
     pub indexed_at: Datetime,
 }
@@ -101,6 +104,7 @@ impl CodeSymbol {
             project_id,
             signature: None,
             embedding: None,
+            generation: None,
             indexed_at: Datetime::default(),
         }
     }

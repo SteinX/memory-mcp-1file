@@ -1,5 +1,7 @@
+use std::io::Read;
 use std::path::{Path, PathBuf};
 
+use globset::{Glob, GlobSet, GlobSetBuilder};
 use ignore::{overrides::OverrideBuilder, WalkBuilder};
 
 use crate::types::Language;
@@ -53,15 +55,98 @@ const SKIP_DIRS: &[&str] = &[
     ".svelte-kit",
 ];
 
+const GENERATED_SOURCE_HEADER_BYTES: usize = 8192;
+
 pub fn scan_directory(root: &Path) -> crate::Result<Vec<PathBuf>> {
+    let default_filter = CompiledIndexFilter::default();
+    scan_directory_with_filter(root, &default_filter)
+}
+
+/// Raw include/exclude glob patterns for filtering indexed files.
+#[derive(Debug, Clone, Default)]
+pub struct IndexFilterConfig {
+    pub include_patterns: Vec<String>,
+    pub exclude_patterns: Vec<String>,
+}
+
+impl IndexFilterConfig {
+    /// Compile raw patterns into a `CompiledIndexFilter`.
+    ///
+    /// Rejects patterns containing `\` or starting with `/`.
+    pub fn compile(&self) -> Result<CompiledIndexFilter, String> {
+        fn validate_and_build(patterns: &[String]) -> Result<GlobSet, String> {
+            let mut builder = GlobSetBuilder::new();
+            for pattern in patterns {
+                if pattern.contains('\\') {
+                    return Err(format!(
+                        "invalid glob pattern: {pattern} (use '/' path separators)"
+                    ));
+                }
+                if pattern.starts_with('/') {
+                    return Err(format!(
+                        "invalid glob pattern: {pattern} (patterns must be project-relative, do not start with '/')"
+                    ));
+                }
+                let glob = Glob::new(pattern)
+                    .map_err(|e| format!("invalid glob pattern: {pattern} ({e})"))?;
+                builder.add(glob);
+            }
+            builder
+                .build()
+                .map_err(|e| format!("invalid glob pattern: ({e})"))
+        }
+
+        let include_set = validate_and_build(&self.include_patterns)?;
+        let exclude_set = validate_and_build(&self.exclude_patterns)?;
+        let has_includes = !self.include_patterns.is_empty();
+
+        Ok(CompiledIndexFilter {
+            include_set,
+            exclude_set,
+            has_includes,
+        })
+    }
+}
+
+/// Compiled GlobSet matchers for fast file filtering.
+#[derive(Debug, Default)]
+pub struct CompiledIndexFilter {
+    include_set: GlobSet,
+    exclude_set: GlobSet,
+    has_includes: bool,
+}
+
+impl CompiledIndexFilter {
+    /// Returns `true` if the project-relative slash path should be indexed.
+    ///
+    /// Decision logic:
+    /// 1. If include_set is non-empty AND candidate does NOT match → false
+    /// 2. If candidate matches exclude_set → false
+    /// 3. Otherwise → true
+    pub fn accepts_project_relative(&self, candidate: &str) -> bool {
+        if self.has_includes && !self.include_set.is_match(candidate) {
+            return false;
+        }
+        if self.exclude_set.is_match(candidate) {
+            return false;
+        }
+        true
+    }
+}
+
+pub fn scan_directory_with_filter(
+    root: &Path,
+    filter: &CompiledIndexFilter,
+) -> crate::Result<Vec<PathBuf>> {
     let mut overrides = OverrideBuilder::new(root);
-    // Generated dart files (match at any depth)
+    // Generated files (match at any depth)
     let _ = overrides.add("!**/*.g.dart");
     let _ = overrides.add("!**/*.freezed.dart");
     let _ = overrides.add("!**/*.gr.dart");
     let _ = overrides.add("!**/*.config.dart");
     let _ = overrides.add("!**/*.mocks.dart");
     let _ = overrides.add("!**/*.arb");
+    let _ = overrides.add("!**/*.pb.swift");
 
     // Skip directories at any nesting depth via overrides
     for dir in SKIP_DIRS {
@@ -103,12 +188,72 @@ pub fn scan_directory(root: &Path) -> crate::Result<Vec<PathBuf>> {
     let mut files = Vec::new();
     for entry in walker.filter_map(|e| e.ok()) {
         let path = entry.path();
-        if path.is_file() && !is_ignored_file(path) && is_code_file(path) {
-            files.push(path.to_path_buf());
+        if path.is_file()
+            && !is_ignored_file(path)
+            && is_code_file(path)
+            && !is_generated_source_file(path)
+        {
+            let project_relative = path
+                .strip_prefix(root)
+                .map(|p| p.to_string_lossy().replace('\\', "/"))
+                .unwrap_or_default();
+            if filter.accepts_project_relative(&project_relative) {
+                files.push(path.to_path_buf());
+            }
         }
     }
 
     Ok(files)
+}
+
+pub fn is_generated_source_file(path: &Path) -> bool {
+    let Ok(mut file) = std::fs::File::open(path) else {
+        return false;
+    };
+
+    let mut buffer = vec![0; GENERATED_SOURCE_HEADER_BYTES];
+    let Ok(bytes_read) = file.read(&mut buffer) else {
+        return false;
+    };
+
+    if bytes_read == 0 {
+        return false;
+    }
+
+    generated_source_header_matches(&String::from_utf8_lossy(&buffer[..bytes_read]))
+}
+
+pub fn is_generated_source_content(content: &str) -> bool {
+    let header: String = content
+        .chars()
+        .take(GENERATED_SOURCE_HEADER_BYTES)
+        .collect();
+    generated_source_header_matches(&header)
+}
+
+fn generated_source_header_matches(header: &str) -> bool {
+    let lower = header.to_ascii_lowercase();
+
+    if lower.contains("generated by the protocol buffer compiler")
+        || lower
+            .contains("generated by the swift generator plugin for the protocol buffer compiler")
+        || lower.contains("generated by the swift generator")
+        || lower.contains("@generated")
+    {
+        return true;
+    }
+
+    let has_generated_marker = lower.contains("auto-generated")
+        || lower.contains("automatically generated")
+        || lower.contains("this file was generated")
+        || lower.contains("generated code")
+        || lower.contains("generated file")
+        || lower.contains("code generated");
+    let has_do_not_edit_marker = lower.contains("do not edit")
+        || lower.contains("do not modify")
+        || lower.contains("do not change");
+
+    has_generated_marker && has_do_not_edit_marker
 }
 
 pub fn is_ignored_file(path: &Path) -> bool {
@@ -156,6 +301,7 @@ pub fn is_ignored_file(path: &Path) -> bool {
         || name.ends_with(".config.dart")
         || name.ends_with(".mocks.dart")
         || name.ends_with(".arb")
+        || name.ends_with(".pb.swift")
         || name.ends_with(".min.js")
         || name.ends_with(".min.css")
         || name.ends_with(".bundle.js")
@@ -182,12 +328,19 @@ pub fn is_code_file(path: &Path) -> bool {
             | "dart"
             | "c"
             | "cpp"
+            | "cc"
+            | "cxx"
             | "h"
             | "hpp"
+            | "hh"
+            | "hxx"
+            | "m"
+            | "mm"
             | "rb"
             | "php"
             | "swift"
             | "kt"
+            | "kts"
             | "scala"
             | "sh"
             | "bash"
@@ -196,6 +349,22 @@ pub fn is_code_file(path: &Path) -> bool {
 }
 
 pub fn detect_language(path: &Path) -> Language {
+    detect_language_by_extension(path)
+}
+
+pub fn detect_language_with_content(path: &Path, content: &str) -> Language {
+    let Some(ext) = path.extension().and_then(|e| e.to_str()) else {
+        return Language::Unknown;
+    };
+
+    if ext.eq_ignore_ascii_case("h") {
+        return detect_header_language(content);
+    }
+
+    detect_language_by_extension(path)
+}
+
+fn detect_language_by_extension(path: &Path) -> Language {
     let Some(ext) = path.extension().and_then(|e| e.to_str()) else {
         return Language::Unknown;
     };
@@ -208,6 +377,415 @@ pub fn detect_language(path: &Path) -> Language {
         "go" => Language::Go,
         "java" => Language::Java,
         "dart" => Language::Dart,
+        "c" => Language::C,
+        "cpp" | "cc" | "cxx" | "hpp" | "hh" | "hxx" => Language::Cpp,
+        "swift" => Language::Swift,
+        "kt" | "kts" => Language::Kotlin,
+        "m" | "mm" => Language::ObjectiveC,
         _ => Language::Unknown,
+    }
+}
+
+fn detect_header_language(content: &str) -> Language {
+    let objc_markers = ["@interface", "@protocol", "@class", "@implementation"];
+    if objc_markers.iter().any(|marker| content.contains(marker))
+        || content.contains("#import <Foundation/")
+        || content.contains("#import \"")
+    {
+        return Language::ObjectiveC;
+    }
+
+    let cpp_markers = [
+        "namespace ",
+        "template <",
+        "class ",
+        "std::",
+        "public:",
+        "private:",
+        "protected:",
+    ];
+    if cpp_markers.iter().any(|marker| content.contains(marker)) {
+        return Language::Cpp;
+    }
+
+    Language::C
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashSet;
+    use std::fs;
+
+    #[test]
+    fn mobile_extension_contract() {
+        let cases = [
+            ("main.c", true, Language::C),
+            ("main.cpp", true, Language::Cpp),
+            ("main.cc", true, Language::Cpp),
+            ("main.cxx", true, Language::Cpp),
+            ("main.h", true, Language::Unknown),
+            ("main.hpp", true, Language::Cpp),
+            ("main.hh", true, Language::Cpp),
+            ("main.hxx", true, Language::Cpp),
+            ("main.swift", true, Language::Swift),
+            ("main.kt", true, Language::Kotlin),
+            ("main.kts", true, Language::Kotlin),
+            ("main.m", true, Language::ObjectiveC),
+            ("main.mm", true, Language::ObjectiveC),
+            ("notes.txt", false, Language::Unknown),
+        ];
+
+        for (file_name, expected_code, expected_language) in cases {
+            let path = Path::new(file_name);
+            assert_eq!(is_code_file(path), expected_code, "{file_name}");
+            assert_eq!(detect_language(path), expected_language, "{file_name}");
+        }
+    }
+
+    #[test]
+    fn header_heuristics_contract() {
+        let objc_header = r#"
+@interface ViewController : NSObject
+- (void)loadData;
+@end
+"#;
+        assert_eq!(
+            detect_language_with_content(Path::new("ViewController.h"), objc_header),
+            Language::ObjectiveC
+        );
+
+        let cpp_header = r#"
+namespace demo {
+template <typename T>
+class Box {
+public:
+    T value;
+};
+}
+"#;
+        assert_eq!(
+            detect_language_with_content(Path::new("box.h"), cpp_header),
+            Language::Cpp
+        );
+
+        let c_header = r#"
+typedef struct {
+    int count;
+} Counter;
+
+void counter_init(Counter *counter);
+"#;
+        assert_eq!(
+            detect_language_with_content(Path::new("counter.h"), c_header),
+            Language::C
+        );
+
+        let ambiguous_header = r#"
+struct Token {
+    int id;
+};
+
+void token_init(struct Token *token);
+"#;
+        assert_eq!(
+            detect_language_with_content(Path::new("token.h"), ambiguous_header),
+            Language::C
+        );
+    }
+
+    #[test]
+    fn scanner_ignores_mobile_vendor_and_generated_dirs_regression() {
+        let temp_dir = tempfile::tempdir().expect("create temp dir");
+        let root = temp_dir.path();
+
+        let keep_file = root.join("src").join("App.swift");
+        let keep_header = root.join("include").join("Bridge.h");
+        fs::create_dir_all(keep_file.parent().expect("parent")).expect("create src");
+        fs::create_dir_all(keep_header.parent().expect("parent")).expect("create include");
+        fs::write(&keep_file, "class App { func run() {} }").expect("write keep file");
+        fs::write(&keep_header, "@interface Bridge : NSObject\n@end").expect("write keep header");
+
+        let ignored_files = [
+            root.join("Pods").join("Generated.m"),
+            root.join(".gradle").join("cache").join("Build.kt"),
+            root.join(".android").join("gen").join("MainActivity.kt"),
+            root.join(".symlinks").join("plugins").join("Plugin.swift"),
+            root.join("build").join("intermediates").join("Gen.cpp"),
+            root.join(".generated").join("api").join("generated.mm"),
+            root.join("generated").join("schema").join("generated.c"),
+            root.join("android")
+                .join("lib_sdk_proto")
+                .join("src")
+                .join("main")
+                .join("java")
+                .join("client_request")
+                .join("ClientRequest.java"),
+            root.join("ios")
+                .join("Submodules")
+                .join("common")
+                .join("imsdk")
+                .join("Sources")
+                .join("pb")
+                .join("client_request.pb.swift"),
+            root.join("src").join("api.generated.ts"),
+        ];
+
+        for path in &ignored_files {
+            fs::create_dir_all(path.parent().expect("parent")).expect("create ignored dir");
+            let content = match path.extension().and_then(|ext| ext.to_str()) {
+                Some("java") => {
+                    "// Generated by the protocol buffer compiler.  DO NOT EDIT!\n// source: client_request.proto\npublic final class ClientRequest {}\n"
+                }
+                Some("swift") => {
+                    "// DO NOT EDIT.\n// swift-format-ignore-file\n// swiftlint:disable all\n//\n// Generated by the Swift generator plugin for the protocol buffer compiler.\npublic enum ClientRequest {}\n"
+                }
+                Some("ts") => {
+                    "// This file was generated by codegen. Do not edit.\nexport const generated = true;\n"
+                }
+                _ => "fn ignored() {}",
+            };
+            fs::write(path, content).expect("write ignored file");
+        }
+
+        let scanned = scan_directory(root).expect("scan directory");
+        let scanned_set: HashSet<String> = scanned
+            .iter()
+            .map(|path| {
+                path.strip_prefix(root)
+                    .expect("strip prefix")
+                    .to_string_lossy()
+                    .replace('\\', "/")
+            })
+            .collect();
+
+        assert!(scanned_set.contains("src/App.swift"));
+        assert!(scanned_set.contains("include/Bridge.h"));
+
+        for forbidden in ["Pods/", ".gradle/", ".android/", ".symlinks/", "build/"] {
+            assert!(
+                scanned_set.iter().all(|path| !path.starts_with(forbidden)),
+                "scanner unexpectedly included file under {forbidden}: {:?}",
+                scanned_set
+            );
+        }
+
+        assert!(
+            scanned_set.iter().all(|path| !path.contains("/generated/")),
+            "scanner unexpectedly included generated directory file: {:?}",
+            scanned_set
+        );
+        assert!(
+            scanned_set
+                .iter()
+                .all(|path| !path.starts_with(".generated/")),
+            "scanner unexpectedly included .generated directory file: {:?}",
+            scanned_set
+        );
+        assert!(
+            scanned_set
+                .iter()
+                .all(|path| !path.contains("lib_sdk_proto")),
+            "scanner unexpectedly included generated protobuf Java file: {:?}",
+            scanned_set
+        );
+        assert!(
+            !scanned_set.contains("src/api.generated.ts"),
+            "scanner unexpectedly included generated TypeScript file: {:?}",
+            scanned_set
+        );
+        assert!(
+            scanned_set.iter().all(|path| !path.ends_with(".pb.swift")),
+            "scanner unexpectedly included generated Swift protobuf file: {:?}",
+            scanned_set
+        );
+    }
+
+    #[test]
+    fn generated_source_header_detection_is_conservative() {
+        assert!(is_generated_source_content(
+            "// Generated by the protocol buffer compiler.  DO NOT EDIT!\npublic final class Event {}\n"
+        ));
+        assert!(is_generated_source_content(
+            "// DO NOT EDIT.\n// Generated by the Swift generator plugin for the protocol buffer compiler.\npublic enum ClientRequest {}\n"
+        ));
+        assert!(is_generated_source_content(
+            "// This file was generated by codegen. Do not edit.\nexport const value = 1;\n"
+        ));
+        assert!(is_generated_source_content(
+            "// @generated\nexport const value = 1;\n"
+        ));
+        assert!(!is_generated_source_content(
+            "// generated report for developers\nexport function run() {}\n"
+        ));
+        assert!(!is_generated_source_content(
+            "// do not edit this line manually without review\nexport function run() {}\n"
+        ));
+    }
+
+    #[test]
+    fn default_filter_preserves_existing_scan_behavior() {
+        let temp_dir = tempfile::tempdir().expect("create temp dir");
+        let root = temp_dir.path();
+
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::write(root.join("src/main.rs"), "fn main() {}").unwrap();
+        fs::write(root.join("src/readme.txt"), "not code").unwrap();
+        fs::create_dir_all(root.join("node_modules")).unwrap();
+        fs::write(root.join("node_modules/index.js"), "module.exports = {}").unwrap();
+
+        let result_plain = scan_directory(root).expect("scan_directory");
+        let filter = CompiledIndexFilter::default();
+        let result_filtered =
+            scan_directory_with_filter(root, &filter).expect("scan_directory_with_filter");
+
+        assert_eq!(result_plain.len(), result_filtered.len());
+    }
+
+    #[test]
+    fn include_patterns_whitelist_relative_paths() {
+        let temp_dir = tempfile::tempdir().expect("create temp dir");
+        let root = temp_dir.path();
+
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::create_dir_all(root.join("other")).unwrap();
+        fs::write(root.join("src/main.rs"), "fn main() {}").unwrap();
+        fs::write(root.join("other/main.rs"), "fn other() {}").unwrap();
+
+        let filter = IndexFilterConfig {
+            include_patterns: vec!["src/**".to_string()],
+            exclude_patterns: vec![],
+        }
+        .compile()
+        .expect("compile filter");
+
+        let results = scan_directory_with_filter(root, &filter).expect("scan");
+        let rel_paths: Vec<String> = results
+            .iter()
+            .map(|p| {
+                p.strip_prefix(root)
+                    .unwrap()
+                    .to_string_lossy()
+                    .replace('\\', "/")
+            })
+            .collect();
+
+        assert_eq!(rel_paths.len(), 1);
+        assert!(rel_paths.contains(&"src/main.rs".to_string()));
+    }
+
+    #[test]
+    fn exclude_patterns_override_includes() {
+        let temp_dir = tempfile::tempdir().expect("create temp dir");
+        let root = temp_dir.path();
+
+        fs::create_dir_all(root.join("src/gen")).unwrap();
+        fs::write(root.join("src/main.rs"), "fn main() {}").unwrap();
+        fs::write(root.join("src/gen/out.rs"), "fn gen() {}").unwrap();
+
+        let filter = IndexFilterConfig {
+            include_patterns: vec!["src/**".to_string()],
+            exclude_patterns: vec!["src/gen/**".to_string()],
+        }
+        .compile()
+        .expect("compile filter");
+
+        let results = scan_directory_with_filter(root, &filter).expect("scan");
+        let rel_paths: Vec<String> = results
+            .iter()
+            .map(|p| {
+                p.strip_prefix(root)
+                    .unwrap()
+                    .to_string_lossy()
+                    .replace('\\', "/")
+            })
+            .collect();
+
+        assert_eq!(rel_paths.len(), 1);
+        assert!(rel_paths.contains(&"src/main.rs".to_string()));
+    }
+
+    #[test]
+    fn invalid_glob_pattern_returns_error_with_pattern() {
+        let result = IndexFilterConfig {
+            include_patterns: vec!["[abc".to_string()],
+            exclude_patterns: vec![],
+        }
+        .compile();
+
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.contains("invalid glob pattern"), "error was: {err}");
+        assert!(err.contains("[abc"), "error was: {err}");
+    }
+
+    #[test]
+    fn built_in_skip_dirs_cannot_be_included() {
+        let temp_dir = tempfile::tempdir().expect("create temp dir");
+        let root = temp_dir.path();
+
+        fs::create_dir_all(root.join("node_modules")).unwrap();
+        fs::write(root.join("node_modules/index.js"), "module.exports = {}").unwrap();
+
+        let filter = IndexFilterConfig {
+            include_patterns: vec!["node_modules/**".to_string()],
+            exclude_patterns: vec![],
+        }
+        .compile()
+        .expect("compile filter");
+
+        let results = scan_directory_with_filter(root, &filter).expect("scan");
+        assert!(
+            results.is_empty(),
+            "expected no files from node_modules, got: {:?}",
+            results
+        );
+    }
+
+    #[test]
+    fn paths_are_matched_relative_to_project_root() {
+        let temp_dir = tempfile::tempdir().expect("create temp dir");
+        let root = temp_dir.path();
+
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::write(root.join("src/lib.rs"), "pub fn lib() {}").unwrap();
+
+        let absolute_pattern = format!("{}/src/lib.rs", root.display());
+        let abs_result = IndexFilterConfig {
+            include_patterns: vec![absolute_pattern.clone()],
+            exclude_patterns: vec![],
+        }
+        .compile();
+        if abs_result.is_ok() {
+            let results = scan_directory_with_filter(root, &abs_result.unwrap()).expect("scan");
+            assert!(
+                results.is_empty(),
+                "absolute pattern should not match any project-relative path"
+            );
+        }
+
+        let filter = IndexFilterConfig {
+            include_patterns: vec!["src/lib.rs".to_string()],
+            exclude_patterns: vec![],
+        }
+        .compile()
+        .expect("compile filter");
+
+        let results = scan_directory_with_filter(root, &filter).expect("scan");
+        let rel_paths: Vec<String> = results
+            .iter()
+            .map(|p| {
+                p.strip_prefix(root)
+                    .unwrap()
+                    .to_string_lossy()
+                    .replace('\\', "/")
+            })
+            .collect();
+
+        assert!(
+            rel_paths.contains(&"src/lib.rs".to_string()),
+            "expected src/lib.rs, got: {:?}",
+            rel_paths
+        );
     }
 }

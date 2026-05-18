@@ -1,0 +1,984 @@
+{
+  "fixture_set": "learning_memory_contract",
+  "schema_version": 1,
+  "contract_spec": {
+    "stable_public_contract": {
+      "contract": {
+        "version": "1",
+        "tool": "learning_memory_*",
+        "schema": "learning_memory_v1"
+      },
+      "summary": {
+        "status": "ok",
+        "partial": {
+          "reason_code": null,
+          "affected_fields": []
+        }
+      },
+      "learning_summary": {
+        "schema_version": 1,
+        "kind": "user_preference",
+        "status": "candidate",
+        "lifecycle_state": "candidate",
+        "scope": {
+          "level": "project",
+          "project_id": "memory-plugin",
+          "workspace": null,
+          "mode": null,
+          "user_id": null,
+          "agent_id": null,
+          "run_id": null,
+          "namespace": null
+        },
+        "confidence": 0.8,
+        "importance": 3
+      }
+    },
+    "example_only": [
+      "record.payloads below are compatibility examples, not stable contract fields"
+    ]
+  },
+  "cases": [
+    {
+      "name": "candidate_create_response",
+      "tool": "learning_memory_create",
+      "request": {
+        "content": "Prefer concise Chinese responses without GPT-style filler.",
+        "kind": "user_preference",
+        "status": "candidate",
+        "confidence": 0.8,
+        "importance": 3,
+        "scope": {
+          "level": "project",
+          "project_id": "memory-plugin"
+        }
+      },
+      "response": {
+        "record": {
+          "id": "learning:candidate-create",
+          "content": "Prefer concise Chinese responses without GPT-style filler.",
+          "memory_type": "semantic",
+          "importance_score": 3,
+          "metadata": {
+            "learning": {
+              "schema_version": 1,
+              "kind": "user_preference",
+              "status": "candidate",
+              "confidence": 0.8,
+              "scope": {
+                "level": "project",
+                "project_id": "memory-plugin",
+                "workspace": null,
+                "mode": null,
+                "user_id": null,
+                "agent_id": null,
+                "run_id": null,
+                "namespace": null
+              },
+              "source": {
+                "created_from": "plugin",
+                "client": "opencode-plugin",
+                "source_memory_ids": []
+              },
+              "evidence": ["plugin request"],
+              "applies_to": ["response_style"],
+              "trigger_hints": ["concise", "chinese"],
+              "supersedes": [],
+              "constraints": ["avoid_gpt_filler"]
+            }
+          },
+          "valid_until": null,
+          "invalidation_reason": null,
+          "superseded_by": null
+        },
+        "learning_summary": {
+          "schema_version": 1,
+          "kind": "user_preference",
+          "status": "candidate",
+          "lifecycle_state": "candidate",
+          "scope": {
+            "level": "project",
+            "project_id": "memory-plugin",
+            "workspace": null,
+            "mode": null,
+            "user_id": null,
+            "agent_id": null,
+            "run_id": null,
+            "namespace": null
+          },
+          "confidence": 0.8,
+          "importance": 3,
+          "included_in_default_list": true,
+          "included_in_default_search": false,
+          "injectable_by_default": false
+        },
+        "contract": {
+          "version": "1",
+          "tool": "learning_memory_create",
+          "schema": "learning_memory_v1"
+        },
+        "summary": {
+          "status": "ok",
+          "partial": {
+            "reason_code": null,
+            "affected_fields": []
+          }
+        }
+      }
+    },
+    {
+      "name": "confirmed_get_response",
+      "tool": "learning_memory_get",
+      "request": {
+        "id": "learning:confirmed-get"
+      },
+      "response": {
+        "record": {
+          "id": "learning:confirmed-get",
+          "content": "Prefer concise Chinese responses without GPT-style filler.",
+          "memory_type": "semantic",
+          "importance_score": 3,
+          "metadata": {
+            "learning": {
+              "schema_version": 1,
+              "kind": "user_preference",
+              "status": "confirmed",
+              "confidence": 0.95,
+              "scope": {
+                "level": "project",
+                "project_id": "memory-plugin",
+                "workspace": null,
+                "mode": null,
+                "user_id": null,
+                "agent_id": null,
+                "run_id": null,
+                "namespace": null
+              },
+              "source": {
+                "created_from": "promotion",
+                "client": "opencode-plugin",
+                "source_memory_ids": ["learning:candidate-create"]
+              },
+              "evidence": ["confirmed by user"],
+              "applies_to": ["response_style"],
+              "trigger_hints": ["concise", "direct"],
+              "supersedes": [],
+              "constraints": ["avoid_gpt_filler"]
+            }
+          },
+          "valid_until": null,
+          "invalidation_reason": null,
+          "superseded_by": null
+        },
+        "learning_summary": {
+          "schema_version": 1,
+          "kind": "user_preference",
+          "status": "confirmed",
+          "lifecycle_state": "active",
+          "scope": {
+            "level": "project",
+            "project_id": "memory-plugin",
+            "workspace": null,
+            "mode": null,
+            "user_id": null,
+            "agent_id": null,
+            "run_id": null,
+            "namespace": null
+          },
+          "confidence": 0.95,
+          "importance": 3,
+          "included_in_default_list": true,
+          "included_in_default_search": true,
+          "injectable_by_default": true
+        },
+        "contract": {
+          "version": "1",
+          "tool": "learning_memory_get",
+          "schema": "learning_memory_v1"
+        },
+        "summary": {
+          "status": "ok",
+          "partial": {
+            "reason_code": null,
+            "affected_fields": []
+          }
+        }
+      }
+    },
+    {
+      "name": "rule_search_response",
+      "tool": "learning_memory_search",
+      "request": {
+        "query": "response style",
+        "scope": {
+          "level": "project",
+          "project_id": "memory-plugin"
+        }
+      },
+      "response": {
+        "records": [
+          {
+            "id": "learning:rule-search",
+            "content": "Use concise Chinese for plugin protocol answers.",
+            "memory_type": "procedural",
+            "importance_score": 2,
+            "metadata": {
+              "learning": {
+                "schema_version": 1,
+                "kind": "workflow_rule",
+                "status": "rule",
+                "confidence": 0.9,
+                "scope": {
+                  "level": "project",
+                  "project_id": "memory-plugin",
+                  "workspace": null,
+                  "mode": null,
+                  "user_id": null,
+                  "agent_id": null,
+                  "run_id": null,
+                  "namespace": null
+                },
+                "source": {
+                  "created_from": "manual",
+                  "client": "opencode-plugin",
+                  "source_memory_ids": []
+                },
+                "evidence": ["policy doc"],
+                "applies_to": ["plugin_answers"],
+                "trigger_hints": ["response style"],
+                "supersedes": [],
+                "constraints": ["be_concise"]
+              }
+            },
+            "valid_until": null,
+            "invalidation_reason": null,
+            "superseded_by": null
+          }
+        ],
+        "learning_summary": {
+          "schema_version": 1,
+          "kind": "workflow_rule",
+          "status": "rule",
+          "lifecycle_state": "active",
+          "scope": {
+            "level": "project",
+            "project_id": "memory-plugin",
+            "workspace": null,
+            "mode": null,
+            "user_id": null,
+            "agent_id": null,
+            "run_id": null,
+            "namespace": null
+          },
+          "confidence": 0.9,
+          "importance": 2,
+          "included_in_default_list": true,
+          "included_in_default_search": true,
+          "injectable_by_default": true
+        },
+        "contract": {
+          "version": "1",
+          "tool": "learning_memory_search",
+          "schema": "learning_memory_v1"
+        },
+        "summary": {
+          "status": "ok",
+          "partial": {
+            "reason_code": null,
+            "affected_fields": []
+          }
+        }
+      }
+    },
+    {
+      "name": "update_response",
+      "tool": "learning_memory_update",
+      "request": {
+        "id": "learning:confirmed-get",
+        "content": "Prefer concise Chinese responses.",
+        "confidence": 0.92
+      },
+      "response": {
+        "record": {
+          "id": "learning:confirmed-get",
+          "content": "Prefer concise Chinese responses.",
+          "memory_type": "semantic",
+          "importance_score": 3,
+          "metadata": {
+            "learning": {
+              "schema_version": 1,
+              "kind": "user_preference",
+              "status": "confirmed",
+              "confidence": 0.92,
+              "scope": {
+                "level": "project",
+                "project_id": "memory-plugin",
+                "workspace": null,
+                "mode": null,
+                "user_id": null,
+                "agent_id": null,
+                "run_id": null,
+                "namespace": null
+              },
+              "source": {
+                "created_from": "promotion",
+                "client": "opencode-plugin",
+                "source_memory_ids": ["learning:candidate-create"]
+              },
+              "evidence": ["updated with shorter wording"],
+              "applies_to": ["response_style"],
+              "trigger_hints": ["concise"],
+              "supersedes": [],
+              "constraints": ["avoid_gpt_filler"]
+            }
+          },
+          "valid_until": null,
+          "invalidation_reason": null,
+          "superseded_by": null
+        },
+        "learning_summary": {
+          "schema_version": 1,
+          "kind": "user_preference",
+          "status": "confirmed",
+          "lifecycle_state": "active",
+          "scope": {
+            "level": "project",
+            "project_id": "memory-plugin",
+            "workspace": null,
+            "mode": null,
+            "user_id": null,
+            "agent_id": null,
+            "run_id": null,
+            "namespace": null
+          },
+          "confidence": 0.92,
+          "importance": 3,
+          "included_in_default_list": true,
+          "included_in_default_search": true,
+          "injectable_by_default": true
+        },
+        "contract": {
+          "version": "1",
+          "tool": "learning_memory_update",
+          "schema": "learning_memory_v1"
+        },
+        "summary": {
+          "status": "ok",
+          "partial": {
+            "reason_code": null,
+            "affected_fields": []
+          }
+        }
+      }
+    },
+    {
+      "name": "rejected_audit_response",
+      "tool": "learning_memory_audit",
+      "request": {
+        "scope": {
+          "level": "project",
+          "project_id": "memory-plugin"
+        },
+        "policy": "reject rule with weak evidence"
+      },
+      "response": {
+        "record": {
+          "id": "learning:rejected-audit",
+          "content": "Prefer concise Chinese responses without GPT-style filler.",
+          "memory_type": "semantic",
+          "importance_score": 3,
+          "metadata": {
+            "learning": {
+              "schema_version": 1,
+              "kind": "project_pitfall",
+              "status": "rejected",
+              "confidence": 0.2,
+              "scope": {
+                "level": "project",
+                "project_id": "memory-plugin",
+                "workspace": null,
+                "mode": null,
+                "user_id": null,
+                "agent_id": null,
+                "run_id": null,
+                "namespace": null
+              },
+              "source": {
+                "created_from": "manual",
+                "client": "opencode-plugin",
+                "source_memory_ids": ["learning:candidate-create"]
+              },
+              "evidence": ["audit rejected weak evidence"],
+              "applies_to": [],
+              "trigger_hints": [],
+              "supersedes": ["learning:candidate-create"],
+              "constraints": ["rejected_by_audit"]
+            }
+          },
+          "valid_until": "2026-01-01T00:00:00Z",
+          "invalidation_reason": "learning_rejected",
+          "superseded_by": null
+        },
+        "learning_summary": {
+          "schema_version": 1,
+          "kind": "project_pitfall",
+          "status": "rejected",
+          "lifecycle_state": "rejected",
+          "scope": {
+            "level": "project",
+            "project_id": "memory-plugin",
+            "workspace": null,
+            "mode": null,
+            "user_id": null,
+            "agent_id": null,
+            "run_id": null,
+            "namespace": null
+          },
+          "confidence": 0.2,
+          "importance": 3,
+          "included_in_default_list": false,
+          "included_in_default_search": false,
+          "injectable_by_default": false
+        },
+        "contract": {
+          "version": "1",
+          "tool": "learning_memory_audit",
+          "schema": "learning_memory_v1"
+        },
+        "summary": {
+          "status": "partial",
+          "partial": {
+            "reason_code": "degraded",
+            "affected_fields": ["learning_summary", "record.metadata.learning"]
+          }
+        }
+      }
+    },
+    {
+      "name": "superseded_lineage_response",
+      "tool": "learning_memory_supersede",
+      "request": {
+        "id": "learning:confirmed-get",
+        "superseded_by": "learning:confirmed-get-v2"
+      },
+      "response": {
+        "record": {
+          "id": "learning:confirmed-get",
+          "content": "Prefer concise Chinese responses.",
+          "memory_type": "semantic",
+          "importance_score": 3,
+          "metadata": {
+            "learning": {
+              "schema_version": 1,
+              "kind": "user_preference",
+              "status": "superseded",
+              "confidence": 0.92,
+              "scope": {
+                "level": "project",
+                "project_id": "memory-plugin",
+                "workspace": null,
+                "mode": null,
+                "user_id": null,
+                "agent_id": null,
+                "run_id": null,
+                "namespace": null
+              },
+              "source": {
+                "created_from": "supersede",
+                "client": "opencode-plugin",
+                "source_memory_ids": ["learning:confirmed-get-v2"]
+              },
+              "evidence": ["replaced by better wording"],
+              "applies_to": ["response_style"],
+              "trigger_hints": ["concise"],
+              "supersedes": ["learning:confirmed-get-v2"],
+              "constraints": ["avoid_gpt_filler"]
+            }
+          },
+          "valid_until": "2026-01-02T00:00:00Z",
+          "invalidation_reason": "superseded",
+          "superseded_by": "learning:confirmed-get-v2"
+        },
+        "learning_summary": {
+          "schema_version": 1,
+          "kind": "user_preference",
+          "status": "superseded",
+          "lifecycle_state": "superseded",
+          "scope": {
+            "level": "project",
+            "project_id": "memory-plugin",
+            "workspace": null,
+            "mode": null,
+            "user_id": null,
+            "agent_id": null,
+            "run_id": null,
+            "namespace": null
+          },
+          "confidence": 0.92,
+          "importance": 3,
+          "included_in_default_list": false,
+          "included_in_default_search": false,
+          "injectable_by_default": false
+        },
+        "contract": {
+          "version": "1",
+          "tool": "learning_memory_supersede",
+          "schema": "learning_memory_v1"
+        },
+        "summary": {
+          "status": "ok",
+          "partial": {
+            "reason_code": null,
+            "affected_fields": []
+          }
+        }
+      }
+    },
+    {
+      "name": "migration_dry_run_response",
+      "tool": "learning_memory_migrate_legacy",
+      "request": {
+        "dry_run": true,
+        "source": "legacy user preference notes"
+      },
+      "response": {
+        "records": [
+          {
+            "id": "learning:migration-candidate",
+            "content": "Prefer concise Chinese responses.",
+            "memory_type": "semantic",
+            "importance_score": 2,
+            "metadata": {
+              "learning": {
+                "schema_version": 1,
+                "kind": "user_preference",
+                "status": "candidate",
+                "confidence": 0.75,
+                "scope": {
+                  "level": "project",
+                  "project_id": "memory-plugin",
+                  "workspace": null,
+                  "mode": null,
+                  "user_id": null,
+                  "agent_id": null,
+                  "run_id": null,
+                  "namespace": null
+                },
+                "source": {
+                  "created_from": "migration",
+                  "client": "opencode-plugin",
+                  "source_memory_ids": ["legacy-note-1"]
+                },
+                "evidence": ["legacy note import"],
+                "applies_to": ["response_style"],
+                "trigger_hints": ["concise"],
+                "supersedes": [],
+                "constraints": []
+              }
+            },
+            "valid_until": null,
+            "invalidation_reason": null,
+            "superseded_by": null
+          }
+        ],
+        "learning_summary": {
+          "schema_version": 1,
+          "kind": "user_preference",
+          "status": "candidate",
+          "lifecycle_state": "candidate",
+          "scope": {
+            "level": "project",
+            "project_id": "memory-plugin",
+            "workspace": null,
+            "mode": null,
+            "user_id": null,
+            "agent_id": null,
+            "run_id": null,
+            "namespace": null
+          },
+          "confidence": 0.75,
+          "importance": 2,
+          "included_in_default_list": true,
+          "included_in_default_search": false,
+          "injectable_by_default": false
+        },
+        "contract": {
+          "version": "1",
+          "tool": "learning_memory_migrate_legacy",
+          "schema": "learning_memory_v1"
+        },
+        "summary": {
+          "status": "partial",
+          "partial": {
+            "reason_code": "partial",
+            "affected_fields": ["records"]
+          }
+        }
+      }
+    },
+    {
+      "name": "unsupported_response",
+      "tool": "learning_memory_search",
+      "request": {
+        "query": "binary attachments",
+        "scope": {
+          "level": "project",
+          "project_id": "memory-plugin"
+        }
+      },
+      "response": {
+        "records": [],
+        "learning_summary": {
+          "schema_version": 1,
+          "kind": "project_pitfall",
+          "status": "archived",
+          "lifecycle_state": "unknown",
+          "scope": {
+            "level": "project",
+            "project_id": "memory-plugin",
+            "workspace": null,
+            "mode": null,
+            "user_id": null,
+            "agent_id": null,
+            "run_id": null,
+            "namespace": null
+          },
+          "confidence": 0.1,
+          "importance": 1,
+          "included_in_default_list": false,
+          "included_in_default_search": false,
+          "injectable_by_default": false
+        },
+        "contract": {
+          "version": "1",
+          "tool": "learning_memory_search",
+          "schema": "learning_memory_v1"
+        },
+        "summary": {
+          "status": "partial",
+          "partial": {
+            "reason_code": "unsupported",
+            "affected_fields": ["query"]
+          }
+        }
+      }
+    },
+    {
+      "name": "degraded_response",
+      "tool": "learning_memory_get",
+      "request": {
+        "id": "learning:degraded"
+      },
+      "response": {
+        "record": {
+          "id": "learning:degraded",
+          "content": "Prefer concise Chinese responses.",
+          "memory_type": "semantic",
+          "importance_score": 3,
+          "metadata": {
+            "learning": {
+              "schema_version": 1,
+              "kind": "user_preference",
+              "status": "confirmed",
+              "confidence": 0.6,
+              "scope": {
+                "level": "project",
+                "project_id": "memory-plugin",
+                "workspace": null,
+                "mode": null,
+                "user_id": null,
+                "agent_id": null,
+                "run_id": null,
+                "namespace": null
+              },
+              "source": {
+                "created_from": "plugin",
+                "client": "opencode-plugin",
+                "source_memory_ids": []
+              },
+              "evidence": [],
+              "applies_to": ["response_style"],
+              "trigger_hints": ["concise"],
+              "supersedes": [],
+              "constraints": []
+            }
+          },
+          "valid_until": null,
+          "invalidation_reason": null,
+          "superseded_by": null
+        },
+        "learning_summary": {
+          "schema_version": 1,
+          "kind": "user_preference",
+          "status": "confirmed",
+          "lifecycle_state": "active",
+          "scope": {
+            "level": "project",
+            "project_id": "memory-plugin",
+            "workspace": null,
+            "mode": null,
+            "user_id": null,
+            "agent_id": null,
+            "run_id": null,
+            "namespace": null
+          },
+          "confidence": 0.6,
+          "importance": 3,
+          "included_in_default_list": true,
+          "included_in_default_search": true,
+          "injectable_by_default": true
+        },
+        "contract": {
+          "version": "1",
+          "tool": "learning_memory_get",
+          "schema": "learning_memory_v1"
+        },
+        "summary": {
+          "status": "partial",
+          "partial": {
+            "reason_code": "degraded",
+            "affected_fields": ["record.metadata.learning.evidence"]
+          }
+        }
+      }
+    },
+    {
+      "name": "stale_response",
+      "tool": "learning_memory_get",
+      "request": {
+        "id": "learning:stale"
+      },
+      "response": {
+        "record": {
+          "id": "learning:stale",
+          "content": "Prefer concise Chinese responses.",
+          "memory_type": "semantic",
+          "importance_score": 3,
+          "metadata": {
+            "learning": {
+              "schema_version": 1,
+              "kind": "user_preference",
+              "status": "confirmed",
+              "confidence": 0.7,
+              "scope": {
+                "level": "project",
+                "project_id": "memory-plugin",
+                "workspace": null,
+                "mode": null,
+                "user_id": null,
+                "agent_id": null,
+                "run_id": null,
+                "namespace": null
+              },
+              "source": {
+                "created_from": "promotion",
+                "client": "opencode-plugin",
+                "source_memory_ids": ["learning:candidate-create"]
+              },
+              "evidence": ["old request snapshot"],
+              "applies_to": ["response_style"],
+              "trigger_hints": ["concise"],
+              "supersedes": [],
+              "constraints": []
+            }
+          },
+          "valid_until": null,
+          "invalidation_reason": null,
+          "superseded_by": null
+        },
+        "learning_summary": {
+          "schema_version": 1,
+          "kind": "user_preference",
+          "status": "confirmed",
+          "lifecycle_state": "active",
+          "scope": {
+            "level": "project",
+            "project_id": "memory-plugin",
+            "workspace": null,
+            "mode": null,
+            "user_id": null,
+            "agent_id": null,
+            "run_id": null,
+            "namespace": null
+          },
+          "confidence": 0.7,
+          "importance": 3,
+          "included_in_default_list": true,
+          "included_in_default_search": true,
+          "injectable_by_default": true
+        },
+        "contract": {
+          "version": "1",
+          "tool": "learning_memory_get",
+          "schema": "learning_memory_v1"
+        },
+        "summary": {
+          "status": "partial",
+          "partial": {
+            "reason_code": "stale",
+            "affected_fields": ["record", "learning_summary"]
+          }
+        }
+      }
+    },
+    {
+      "name": "generation_mismatch_response",
+      "tool": "learning_memory_get",
+      "request": {
+        "id": "learning:generation-mismatch"
+      },
+      "response": {
+        "record": {
+          "id": "learning:generation-mismatch",
+          "content": "Prefer concise Chinese responses.",
+          "memory_type": "semantic",
+          "importance_score": 3,
+          "metadata": {
+            "learning": {
+              "schema_version": 1,
+              "kind": "user_preference",
+              "status": "confirmed",
+              "confidence": 0.7,
+              "scope": {
+                "level": "project",
+                "project_id": "memory-plugin",
+                "workspace": null,
+                "mode": null,
+                "user_id": null,
+                "agent_id": null,
+                "run_id": null,
+                "namespace": null
+              },
+              "source": {
+                "created_from": "plugin",
+                "client": "opencode-plugin",
+                "source_memory_ids": []
+              },
+              "evidence": ["projection generation mismatch"],
+              "applies_to": ["response_style"],
+              "trigger_hints": ["concise"],
+              "supersedes": [],
+              "constraints": []
+            }
+          },
+          "valid_until": null,
+          "invalidation_reason": null,
+          "superseded_by": null
+        },
+        "learning_summary": {
+          "schema_version": 1,
+          "kind": "user_preference",
+          "status": "confirmed",
+          "lifecycle_state": "unknown",
+          "scope": {
+            "level": "project",
+            "project_id": "memory-plugin",
+            "workspace": null,
+            "mode": null,
+            "user_id": null,
+            "agent_id": null,
+            "run_id": null,
+            "namespace": null
+          },
+          "confidence": 0.7,
+          "importance": 3,
+          "included_in_default_list": false,
+          "included_in_default_search": false,
+          "injectable_by_default": false
+        },
+        "contract": {
+          "version": "1",
+          "tool": "learning_memory_get",
+          "schema": "learning_memory_v1"
+        },
+        "summary": {
+          "status": "partial",
+          "partial": {
+            "reason_code": "generation_mismatch",
+            "affected_fields": ["learning_summary.lifecycle_state"]
+          }
+        }
+      }
+    },
+    {
+      "name": "delete_shim_response",
+      "tool": "learning_memory_delete",
+      "request": {
+        "id": "learning:confirmed-get",
+        "compatibility_shim": true
+      },
+      "response": {
+        "record": {
+          "id": "learning:confirmed-get",
+          "content": "Prefer concise Chinese responses.",
+          "memory_type": "semantic",
+          "importance_score": 3,
+          "metadata": {
+            "learning": {
+              "schema_version": 1,
+              "kind": "user_preference",
+              "status": "archived",
+              "confidence": 0.92,
+              "scope": {
+                "level": "project",
+                "project_id": "memory-plugin",
+                "workspace": null,
+                "mode": null,
+                "user_id": null,
+                "agent_id": null,
+                "run_id": null,
+                "namespace": null
+              },
+              "source": {
+                "created_from": "manual",
+                "client": "opencode-plugin",
+                "source_memory_ids": ["learning:confirmed-get"]
+              },
+              "evidence": ["delete shim compatibility example"],
+              "applies_to": ["response_style"],
+              "trigger_hints": ["delete"],
+              "supersedes": ["learning:confirmed-get"],
+              "constraints": ["soft_delete_only"]
+            }
+          },
+          "valid_until": "2026-01-03T00:00:00Z",
+          "invalidation_reason": "manual_invalidation",
+          "superseded_by": null
+        },
+        "learning_summary": {
+          "schema_version": 1,
+          "kind": "user_preference",
+          "status": "archived",
+          "lifecycle_state": "archived",
+          "scope": {
+            "level": "project",
+            "project_id": "memory-plugin",
+            "workspace": null,
+            "mode": null,
+            "user_id": null,
+            "agent_id": null,
+            "run_id": null,
+            "namespace": null
+          },
+          "confidence": 0.92,
+          "importance": 3,
+          "included_in_default_list": false,
+          "included_in_default_search": false,
+          "injectable_by_default": false
+        },
+        "contract": {
+          "version": "1",
+          "tool": "learning_memory_delete",
+          "schema": "learning_memory_v1"
+        },
+        "summary": {
+          "status": "ok",
+          "partial": {
+            "reason_code": null,
+            "affected_fields": []
+          }
+        }
+      }
+    }
+  ]
+}

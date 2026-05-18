@@ -1,5 +1,11 @@
 # Recommended: run with --memory 4g
 # Minimum: 2g for small codebases (<1K files), 4g for medium (1-10K files)
+FROM rust:1-bookworm AS builder
+
+WORKDIR /app
+COPY . /app
+RUN cargo build --profile fast
+
 FROM debian:testing-slim
 
 # Install minimal runtime deps
@@ -10,19 +16,18 @@ RUN apt-get update && apt-get install -y \
 
 WORKDIR /app
 
-# Copy the GNU binary built locally (fast profile)
-# Ensure you ran `cargo build --profile fast --target x86_64-unknown-linux-gnu` first
-COPY target/x86_64-unknown-linux-gnu/fast/memory-mcp /usr/local/bin/memory-mcp
+COPY --from=builder /app/target/fast/memory-mcp /usr/local/bin/memory-mcp
 
 # Data directory setup
 RUN mkdir -p /data /project
 ENV DATA_DIR=/data
+ENV EMBEDDING_MODEL_CACHE_DIR=/data/models
 ENV LOG_LEVEL=info
 # SurrealKV WAL recovery needs extra stack. 8MB is sufficient since
 # HNSW indexes use IF NOT EXISTS (no O(n log n) rebuild on startup).
 ENV RUST_MIN_STACK=16777216
 # Limit glibc malloc arenas to reduce memory fragmentation in containers.
-# Without this, glibc can create up to 8×CPU arenas, wasting hundreds of MB.
+# Without this, glibc can create up to 8xCPU arenas, wasting hundreds of MB.
 ENV MALLOC_ARENA_MAX=2
 # Let candle/rayon use all available cores for GEMM during inference
 ENV RAYON_NUM_THREADS=0

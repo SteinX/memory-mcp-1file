@@ -129,9 +129,78 @@ To use this MCP server with any client (**Claude Code**, **OpenCode**, **Cline**
 1.  **Memory Volume**: `-v mcp-data:/data` (Persists your graph, embeddings, **and cached model weights**)
 2.  **Project Volume**: `-v $(pwd):/project:ro` (Allows the server to read and index your code)
 3.  **Init Process**: `--init` (Ensures the server shuts down cleanly)
+4.  **HTTP Server-Visible Paths**: When running in HTTP mode (default), the server can only index paths that are mounted into the container or otherwise visible to the server process. Local paths on the client machine are not automatically accessible.
 
 > [!TIP]
 > **One volume persists everything**: The single `-v mcp-data:/data` mount covers both the SurrealDB database **and** the ~1.2 GB embedding model (stored under `/data/models/`). There is no need for a separate volume for `/data/models` — it is already a subdirectory of `/data` and is preserved automatically. Without a named volume, Docker creates a new anonymous volume on each `docker run`, causing the model to re-download (~1.2 GB) every time.
+
+#### HTTP Mode (Default / Remote)
+
+When using the server over HTTP (e.g., for a remote agent or a containerized backend), ensure your project files are mounted into the container so the server can index them.
+
+**Important Security & Scope Notes:**
+1. **Server-Visible Paths**: The server process must be able to see the paths you request to index. You must mount the project directory and specify its location using `PROJECT_PATH` or `--project-path`.
+2. **No Remote Uploads**: The server does not support uploading client-local files or indexing client-side paths over the network. All indexed code must be visible to the server's local filesystem (or mounted volume).
+3. **No Header/Query Binding**: Project binding is currently only supported via explicit `project_info` tool actions. Binding via HTTP headers or query parameters is not supported.
+
+```bash
+docker run -d \
+  --name memory-mcp \
+  --memory=3g \
+  -p 8080:8080 \
+  -v mcp-data:/data \
+  -v /absolute/path/to/host/project:/project:ro \
+  -e PROJECT_PATH=/project \
+  ghcr.io/pomazanbohdan/memory-mcp-1file:latest
+```
+
+> [!IMPORTANT]
+> **HTTP Server-Visible Paths**: The server process must be able to see the paths you request to index. When running in Docker, you must mount the project directory and specify its location using `PROJECT_PATH` or `--project-path`.
+
+#### Code Intelligence Startup Behavior
+
+The server uses a deterministic priority matrix to establish the primary project root for code intelligence:
+
+1.  **Explicit Configuration**: If `--project-path` or `PROJECT_PATH` is set and the path exists, it is used as the primary root.
+2.  **Missing Root**: If a path is explicitly configured but missing, the server continues startup but reports **missing-root** or **degraded** diagnostics. It will **not** silently fall back to other paths.
+3.  **Default Fallback**: If no path is configured and `/project` exists, the server uses `/project` and preserves the legacy `project_id="project"` for compatibility.
+4.  **Disabled**: If no path is configured and `/project` is missing, code intelligence is disabled (reported in diagnostics), but the server remains functional for other memory tools.
+
+Startup recovery for interrupted code-indexing jobs runs after the HTTP/SSE process has started accepting requests. This keeps MCP initialization and `/health` responsive even when a previous indexing job left a large database state to inspect.
+
+#### Code Intelligence Language Contract
+
+This code intelligence path is static and tree-sitter-based. It does **not** require SourceKit, clangd, Kotlin LSP, Gradle model parsing, Xcode project parsing, or compiler invocation.
+
+It also stays syntactic rather than compiler-accurate: there is no overload resolution, macro expansion, dynamic dispatch resolution, generated-code awareness, build-configuration awareness, type inference, or compiler-accurate call graph construction.
+
+| Language | Status | Contract |
+|---|---|---|
+| Rust | Supported now | AST-based indexing with symbol and relation extraction. |
+| Python | Supported now | AST-based indexing with symbol and relation extraction. |
+| JavaScript | Supported now | AST-based indexing with symbol and relation extraction. |
+| TypeScript | Supported now | AST-based indexing with symbol and relation extraction. |
+| Go | Supported now | AST-based indexing with symbol and relation extraction. |
+| Java | Supported now | AST-based indexing with symbol and relation extraction. |
+| Dart | Supported now | AST-based indexing with symbol and relation extraction. |
+| C | Supported now | tree-sitter-backed syntactic indexing for functions, structs/enums/typedefs, includes, and obvious direct calls; no compiler semantics. |
+| C++ | Supported now | tree-sitter-backed syntactic indexing for namespaces, classes/methods/functions, includes, and obvious direct calls; no compiler semantics. |
+| Swift | Supported now | tree-sitter-backed syntactic indexing for imports, classes/structs/enums/protocols, methods/functions, and obvious direct calls; no compiler semantics. |
+| Kotlin | Supported now | tree-sitter-backed syntactic indexing for package/imports, classes/interfaces/objects, methods/functions, and obvious direct calls; no compiler semantics. |
+| Objective-C | Supported now | tree-sitter-backed syntactic indexing for imports, classes/protocols, methods, C-style calls, and obvious message sends; no compiler semantics. |
+
+For `.h` files, detection is heuristic and ordered exactly as: Objective-C markers first, then C++ markers, then C fallback.
+
+#### Code Intelligence Verification Commands
+
+If you need to validate parser/scanner behavior locally, run:
+
+```bash
+cargo check
+cargo test codebase::scanner -- --nocapture
+cargo test codebase::parser -- --nocapture
+cargo test
+```
 
 #### JSON Configuration (Claude Desktop, etc.)
 
@@ -182,6 +251,12 @@ docker run --init -i --rm --memory=4g \
 
 > [!NOTE]
 > The published Docker image defaults to **HTTP SSE** mode for standalone/server use. When wiring it into MCP desktop or CLI clients, append `--stdio` as shown above so the container speaks the stdio transport the client expects.
+
+#### HTTP Health Checks
+
+In HTTP SSE mode, `GET /health` is a liveness probe for the HTTP process and returns `200 OK` when the server is accepting requests. It intentionally does not query the embedded database, so extension heartbeats remain stable while long code-indexing or embedding jobs are using storage heavily. Use the MCP `get_status` tool when you need database or embedding readiness details.
+
+Embedding cache initialization is also kept out of destructive startup work: cache keys are scoped by model, so switching models ignores old entries instead of synchronously deleting a large `cache.redb` table before the server can listen.
 
 ### NPX / Bunx (No Docker required)
 
@@ -278,6 +353,7 @@ Add to your MCP settings:
 > ```json
 > "args": ["-y", "@steinx/memory-mcp-1file", "--", "--data-dir", "/path/to/data"]
 > ```
+> Downloaded HuggingFace model files are shared across local `--data-dir` values by default. The native default uses the platform's durable app-data location, not the OS cache directory. If the selected model is already present under the legacy `${data_dir}/models` layout, that existing cache is reused. Override `--model-cache-dir` only if you need a custom shared model location.
 
 ### Gemini CLI
 
@@ -316,15 +392,20 @@ Or with Docker:
 
 ## ✨ Key Features
 
-- **Semantic Memory**: Stores text with vector embeddings (`gemma` by default, `qwen3` available) for "vibe-based" retrieval.
+- **Session-Scoped Code Scoping**: The server now supports binding an HTTP MCP session to a specific project. Once bound, code-intelligence tools (`recall_code`, `search_symbols`) automatically scope their operations to that project unless an explicit `project_id` is provided. This state is stored in process memory only and does not survive server restarts.
 - **Governed Memory Retrieval**: Memory APIs now share first-class optional filters for `user_id`, `agent_id`, `run_id`, `namespace`, `memory_type`, metadata, and time windows. `list_memories` uses the same governance path and returns a filtered `total`.
 - **Memory Lexical Engine**: Memory BM25-style retrieval now uses a reusable in-memory lexical index that is warmed from DB at startup and kept in sync by memory CRUD / invalidation flows, instead of rebuilding the lexical model on every request.
-- **Layered Diagnostics**: Memory search/recall diagnostics expose retrieved candidates, post-filter hits, and returned hits; `metadata_filter` is explicitly reported as post-query subset matching.
+- **Layered Diagnostics**: Memory search/recall diagnostics expose retrieved candidates, post-filter hits, returned hits, and effective query metadata; `metadata_filter` is explicitly reported as post-query subset matching.
 - **Importance-aware Recall**: `importance_score` participates in memory ranking, so promoted memories can outrank equally matching low-priority ones.
 - **Replacement Links Preserved**: `invalidate(..., superseded_by=...)` now round-trips on reads, so replacement chains survive retrieval and inspection.
 - **Consolidation Preview**: `preview_consolidate_memory` shows exact-duplicate matches, replacement scope, and supersede reason before any write occurs.
 - **Graph Memory**: Tracks entities (`User`, `Project`, `Tech`) and their relations (`uses`, `likes`). Supports PageRank-based traversal.
-- **Code Intelligence**: Indexes local project directories (AST-based chunking) for Rust, Python, TypeScript, JavaScript, Go, Java, and **Dart/Flutter**. Tracks **calls, imports, extends, implements, and mixin** relationships between symbols.
+- **Code Intelligence**: Indexes local project directories (AST-based chunking) for Rust, Python, TypeScript, JavaScript, Go, Java, **Dart/Flutter**, C, C++, Swift, Kotlin, and Objective-C using static tree-sitter-backed syntactic indexing. Tracks **calls, imports, extends, implements, and mixin** relationships between symbols when the grammar supports them.
+- **Deterministic Code Scoping**: Code intelligence tools use a strict project resolution order:
+  1. **Explicit `project_id`**: Always takes highest priority if provided in the tool arguments.
+  2. **Session Binding**: If no explicit `project_id` is provided, the server uses the project bound to the current HTTP MCP session.
+  3. **Breadth Fallback**: If neither an explicit ID nor a session binding exists, the server performs a cross-project search (if `project_id=None` behavior is supported by the tool).
+  *Note: Stale session bindings (e.g., project deleted) return empty success with `reason_code="stale"` and `binding_state="stale_binding"` without broadening to cross-project search.*
 - **Plugin-Facing Contract Freeze**: Code/project read surfaces expose additive `contract` + `summary` metadata with a machine-readable `reason_code` taxonomy (`missing`, `stale`, `partial`, `degraded`, `invalid_locator`, `generation_mismatch`, `unsupported`) while preserving legacy string `reason` fields for compatibility.
 - **Explicit Projection Locator Lifecycle**: `project_info(action="projection")` returns an ephemeral locator record with typed lifecycle and lookup metadata, and `project_info(action="projection_by_locator")` returns the same contract on resolve/miss without promoting locators to stable public IDs.
 - **Temporal Validity**: Memories can have `valid_from` and `valid_until` dates.
@@ -332,62 +413,581 @@ Or with Docker:
 
 ---
 
+## 🧬 Learning Memory
+
+Learning Memory is not a separate subsystem — it is the existing `Memory` subsystem with `metadata.learning.schema_version=1` set on each record. Any memory entry carrying this metadata field participates in the learning lifecycle.
+
+### Tools
+
+| Tool | Description |
+|------|-------------|
+| `learning_memory_create` | Create a new learning memory entry (status defaults to `candidate`). |
+| `learning_memory_get` | Retrieve a single learning memory by ID. |
+| `learning_memory_list` | List learning memories. Default filter: `candidate`, `confirmed`, and `rule` statuses. |
+| `learning_memory_search` | Search learning memories. Default filter: `confirmed` and `rule` statuses only. |
+| `learning_memory_update` | Update fields on an existing learning memory entry. |
+| `learning_memory_promote` | Promote a `candidate` to `confirmed`, or a `confirmed` to `rule`. |
+| `learning_memory_reject` | Reject a `candidate` or `confirmed` entry (sets status to `rejected`). |
+| `learning_memory_archive` | Archive a `confirmed` or `rule` entry (sets status to `archived`). |
+| `learning_memory_supersede` | Supersede an existing entry with a new one, linking them via replacement chain. |
+| `learning_memory_migrate_legacy` | Migrate legacy memory records into the learning schema. Defaults to `dry_run=true` — zero writes occur during a dry run. |
+| `learning_memory_delete` | **Soft compatibility shim only.** Default mode archives the entry (`mode=archive`). Passing `mode=reject` rejects it instead. This tool never performs a hard delete. |
+
+### Status Lifecycle
+
+| Status | `lifecycle_state` | Description |
+|--------|-------------------|-------------|
+| `candidate` | `candidate` | Newly created; under evaluation. |
+| `confirmed` | `active` | Validated and trusted. |
+| `rule` | `active` | Elevated to a standing rule. |
+| `rejected` | `rejected` | Explicitly rejected; excluded from default search/list. |
+| `superseded` | `superseded` | Replaced by a newer entry via `learning_memory_supersede`. |
+| `archived` | `archived` | Retired; excluded from default search/list. |
+
+### Default Search and List Inclusion
+
+- **`learning_memory_search`** returns `confirmed` and `rule` entries by default.
+- **`learning_memory_list`** returns `candidate`, `confirmed`, and `rule` entries by default.
+- `rejected`, `superseded`, and `archived` entries are excluded from both defaults; pass explicit `status` filters to include them.
+
+### Migration Safety
+
+`learning_memory_migrate_legacy` defaults to `dry_run=true`. In dry-run mode the tool parses, validates, and reports every record that would be migrated, but writes nothing to the database. Pass `dry_run=false` explicitly to commit the migration.
+
+### Capability Discovery
+
+Check `get_status` for the `capabilities.learning_memory` field:
+
+```json
+{
+  "capabilities": {
+    "learning_memory": {
+      "schema_version": 1,
+      "enabled": true
+    }
+  }
+}
+```
+
+If `capabilities.learning_memory` is absent or `enabled` is `false`, the learning memory tools are not available in this deployment.
+
+### Soft-Delete Semantics
+
+`learning_memory_delete` is a **soft compatibility shim**, not a hard delete:
+
+- Default (`mode=archive`): sets status to `archived` and `lifecycle_state` to `archived`.
+- `mode=reject`: sets status to `rejected` and `lifecycle_state` to `rejected`.
+
+No data is permanently removed. Use `learning_memory_archive` or `learning_memory_reject` directly for clarity.
+
+### Contract Reference
+
+The canonical fixture for integration testing is at `tests/fixtures/learning_memory_contract.json`.
+
+---
+
 ## 🛠️ Tools Available
 
-The server exposes **21 tools** to the AI model, organized into logical categories.
+The server exposes **36 tools** to the AI model, organized into logical categories.
 
 ### 🧠 Core Memory Management
 | Tool | Description |
 |------|-------------|
 | `store_memory` | Store a new memory with content, optional scope fields, metadata, and optional `importance_score`. Read/list surfaces now also expose additive `contract` + `summary` metadata. |
 | `update_memory` | Update memory fields, including scope and `importance_score`. |
-| `delete_memory` | Delete memory by ID. |
+| `delete_memory` | Emergency/admin single-record deletion by ID. Use only with explicit human confirmation; routine cleanup must use `invalidate` followed by `preview_purge_memory`/`purge_memory`. |
 | `consolidate_memory` | Store a new memory and explicitly supersede exact duplicates within the same optional scope/type boundary. |
 | `preview_consolidate_memory` | Preview exact-duplicate consolidation within the same optional scope/type boundary without writing any changes. |
+| `preview_purge_memory` | Preview explicit physical purge candidates for invalidated memories without deleting data. Returns a plan fingerprint. |
+| `purge_memory` | Physically purge invalidated memories selected by a prior `preview_purge_memory` fingerprint. |
 | `list_memories` | List memories (newest first) with optional scope/type/metadata/time filters; `total` is the filtered total. Also returns additive `contract` + normalized `summary` metadata. |
 | `get_memory` | Get full memory by ID. Memory IDs are stable public identities; response includes additive contract and summary metadata. |
 | `invalidate` | Soft-delete memory, optionally linking replacement via `superseded_by`. |
 | `get_valid` | Get valid memories. Supports optional timestamp (ISO 8601), scope filters, memory_type, metadata_filter, and event/ingestion ranges. Response includes additive contract and summary metadata. |
+| `export_memory` | Export memories for a project as inline JSONL using the public migration contract. Returns a `jsonl` string in the response body — no filesystem path or file is involved. By default exports only valid (non-invalidated) records. To include invalidated records, set `valid_only=false` and `include_invalidated=true`. Raw embeddings and vectors are never exported. |
+| `import_memory` | Import memories from an inline JSONL string using the public migration contract. The `jsonl` field in the request carries the JSONL content directly — no filesystem path or file is involved. Defaults: `dry_run=false`, `conflict_strategy=remap`, `preserve_project_id=false`. Set `dry_run=true` to validate and preview without writing anything. Invalidated records are skipped unless `allow_invalidated=true`. Imported records are re-embedded by the current service; no vector payloads are preserved. |
+
+### Memory Lifecycle and GC
+
+`invalidate` is a soft-delete operation: it sets `valid_until`, records an
+`invalidation_reason`, and optionally links a replacement with `superseded_by`.
+Default list/search/read-valid paths exclude invalidated records, but the rows
+remain available for audit, lineage, and archival export.
+
+Physical cleanup is an explicit preview/apply flow:
+
+1. Call `preview_purge_memory` with optional `namespace`, `memory_type`,
+   `invalidation_reason`, `older_than_days`, and `limit`.
+2. Inspect `retention_summary`, `sample_ids`, and `operator_summary`.
+3. Pass the returned `plan_fingerprint` as `expected_plan_fingerprint` to
+   `purge_memory`.
+
+The default retention policy only makes invalidated records purge-eligible after
+their retention window. `capacity_controller_archive` and `learning_rejected`
+default to 30 days; `superseded`, `learning_archived`, and unknown invalidation
+reasons default to 90 days. `DECISION:`, `PROJECT:`, `USER:`, and memories with
+`importance_score >= 4.0` are pinned by default and are not purge candidates.
+
+`learning_memory_delete` remains a soft compatibility shim. It archives or
+rejects learning records; it does not physically delete data.
+
+Operational rules:
+
+- Use `invalidate` for routine removal from active recall/list/read-valid paths.
+- Use `preview_purge_memory` before any physical cleanup and pass the returned
+  `plan_fingerprint` to `purge_memory`.
+- Do not use `delete_memory` for stale-memory cleanup. It is reserved for
+  explicit operator-confirmed emergency/admin deletion of one record.
+- Use `get_status` after lifecycle maintenance to inspect database health,
+  invalidated counts, and purge eligibility.
+
+Recommended validation path:
+
+1. Store or update the replacement memory.
+2. Invalidate the stale memory with a clear reason and optional `superseded_by`.
+3. Confirm normal reads exclude the invalidated record via `get_valid`, `recall`,
+   or `search_memory`.
+4. Preview physical cleanup with `preview_purge_memory`.
+5. Apply cleanup only with the matching `plan_fingerprint`, then inspect
+   `get_status`.
+
+Error path guidance:
+
+- Missing or stale fingerprints from `purge_memory` mean the preview is no
+  longer current; run `preview_purge_memory` again.
+- Pinned records (`DECISION:`, `PROJECT:`, `USER:`, or
+  `importance_score >= 4.0`) should remain excluded from purge candidates unless
+  policy is intentionally changed.
+- `delete_memory` bypasses lineage and retention checks. Treat it as a last
+  resort, not a lifecycle mechanism.
 
 ### 🔎 Search & Retrieval
 | Tool | Description |
 |------|-------------|
-| `recall` | Hybrid memory retrieval (vector+BM25+graph via RRF) with additive diagnostics and contract metadata. |
-| `search_memory` | Memory search (`query`, optional `mode`: `vector` or `bm25`) with optional filters and additive contract/summary metadata. |
+| `recall` | Hybrid memory retrieval (vector+BM25+graph via RRF) with bounded effective-query normalization plus additive diagnostics and contract metadata. |
+| `search_memory` | Memory search (`query`, optional `mode`: `vector` or `bm25`) with bounded effective-query normalization, optional filters, and additive contract/summary metadata. |
 
 ### 🕸️ Knowledge Graph
 | Tool | Description |
 |------|-------------|
-| `knowledge_graph` | Knowledge graph ops. Actions: create_entity(name, entity_type?, description?) \| create_relation(from_entity, to_entity, relation_type, weight?) \| get_related(entity_id, depth?, direction?) \| detect_communities(). get_related returns preferred exported nodes/edges plus additive contract and summary metadata; raw entities/relations remain compatibility fields. |
+| `knowledge_graph` | Knowledge graph ops. Actions: create_entity(name, entity_type?, description?) \| create_relation(from_entity, to_entity, relation_type, weight?) \| get_related(entity_id, depth?, direction?) \| detect_communities(). `create_relation.from_entity` and `to_entity` must be entity IDs returned by `create_entity`, not display names. get_related returns preferred exported nodes/edges plus additive contract and summary metadata; raw entities/relations remain compatibility fields. |
 
 ### 💻 Codebase Intelligence
 | Tool | Description |
 |------|-------------|
-| `index_project` | Index codebase directory for code search. |
-| `delete_project` | Delete indexed project. |
-| `recall_code` | Hybrid code retrieval (vector+BM25+graph) with additive `contract`/`summary` metadata. `results[].id` is a local chunk-record reference; stable refind locator is `project_id + file_path + start_line + end_line`. |
-| `search_symbols` | Symbol lookup by name with additive contract/summary metadata. |
-| `symbol_graph` | Symbol relationship traversal with additive contract/summary metadata; `frontier` is an unexpanded boundary hint, not a cursor. |
-| `project_info` | Project indexing information. Actions: list() \| status(project_id) \| stats(project_id) \| projection(project_id) \| projection_by_locator(). Responses include additive contract/summary metadata, including lifecycle, generation, and projection/materialization fields. |
+| `index_project` | Index codebase directory for code search. Retrying a previously failed full index requires `force=true` and `confirm_failed_restart=true`. Optional `include_patterns` and `exclude_patterns` allow filtering indexed files. |
+| `recall_code` | Hybrid code retrieval within indexed projects. Parameters include `project_id`, `query`, `limit`, and optional `mode` (`hybrid` default, `vector` for semantic-only search). `search_code` is an internal implementation function, not a public MCP tool. |
+| `search_symbols` | Search indexed code symbols by name or lookup query. |
+| `symbol_graph` | Traverse callers, callees, and related symbol graph edges from a `symbol_id`. |
+| `project_info` | Project indexing information. Actions: list() \| index(path, force?, confirm_failed_restart?, include_patterns?, exclude_patterns?) \| status(project_id) \| stats(project_id) \| projection(project_id) \| projection_by_locator() \| bind(project_id) \| unbind() \| binding_status(). bind/unbind/status actions manage session-scoped project binding for HTTP MCP clients. Responses include additive contract/summary metadata, including lifecycle, generation, and projection/materialization fields. |
+
+
+### 📦 Memory Migration (export\_memory / import\_memory)
+
+These two tools let you move memories between server instances or namespaces using inline JSONL. The JSONL string travels inside the MCP tool request and response — there are no filesystem paths, local files, or URLs involved.
+
+#### Export
+
+`export_memory` requires a `project_id` and returns a `jsonl` field in the response. Each line is one `MigrationMemoryRecord` JSON object.
+
+**Default behavior** (valid records only):
+
+```json
+{
+  "project_id": "my-project"
+}
+```
+
+**Archival export** (include invalidated records — requires both flags):
+
+```json
+{
+  "project_id": "my-project",
+  "valid_only": false,
+  "include_invalidated": true
+}
+```
+
+Setting `valid_only=true` while also setting `include_invalidated=true` is rejected. You must set both to opt into archival export.
+
+Additional optional filters: `user_id`, `agent_id`, `run_id`, `memory_type`, `metadata_filter`, `valid_at`, `event_after`, `event_before`, `ingestion_after`, `ingestion_before`, `limit`.
+
+Raw embeddings and vectors are never included in the export. The `jsonl` field in the response is the portable payload.
+
+#### Import
+
+`import_memory` requires a `jsonl` field containing the JSONL string from a prior export. By default it also requires `project_id`; `project_id` may be omitted only when `preserve_project_id=true` and the JSONL records contain exactly one non-empty source project ID.
+
+**Default import** (live write, remap conflicting IDs):
+
+```json
+{
+  "project_id": "target-project",
+  "jsonl": "<paste jsonl string here>"
+}
+```
+
+**Dry-run** (validate and preview without writing anything):
+
+```json
+{
+  "project_id": "target-project",
+  "jsonl": "<paste jsonl string here>",
+  "dry_run": true
+}
+```
+
+**Preserve source project** (validate and import under the single project ID carried by the JSONL records):
+
+```json
+{
+  "jsonl": "<paste jsonl string here>",
+  "preserve_project_id": true,
+  "dry_run": true
+}
+```
+
+Do not combine `project_id` with `preserve_project_id=true`; choose either retargeting mode (`project_id` provided, `preserve_project_id=false`) or preserve-source-project mode (`project_id` omitted, `preserve_project_id=true`). This does not make `export_memory` cross-project: exports are still scoped to one source `project_id`.
+
+When `dry_run=true`, the tool parses and validates every record and returns the full `id_mappings` report, but writes nothing to the database.
+
+**Parameters and defaults:**
+
+| Parameter | Default | Notes |
+|-----------|---------|-------|
+| `dry_run` | `false` | Set `true` to validate without writing. |
+| `conflict_strategy` | `remap` | `remap` assigns new IDs to avoid collisions and reports old/new pairs in `id_mappings`. `skip` silently drops conflicting records. `fail` aborts on first conflict. |
+| `project_id` | Required unless `preserve_project_id=true` | Target project for retargeting mode. Omit only in preserve-source-project mode. |
+| `preserve_project_id` | `false` | When `false`, the target `project_id` is applied to all imported records. When `true`, `project_id` must be omitted and all records must carry the same non-empty source project ID. |
+| `allow_invalidated` | `false` | Invalidated records are skipped unless this is `true`. |
+
+#### Response fields
+
+`export_memory` returns:
+- `jsonl` — the portable JSONL string
+- `exported_count` — number of records in the export
+- `truncated` — `true` if a `limit` was applied and more records exist
+- `summary` — counts of valid vs invalidated records
+
+`import_memory` returns:
+- `imported_count`, `skipped_count`, `failed_count`
+- `id_mappings` — array of `{ old_id, new_id }` pairs for remapped records
+- `errors` — per-record validation errors with `code`, `message`, `line_number`, and `source_id`
+- `dry_run` — echoes whether the call was a dry run
+- `summary` — aggregate counts
+
+#### What this is not
+
+- Not a database backup or restore. The JSONL payload carries memory content and metadata, not raw DB records.
+- Not a generalized migration framework. Only memory records are supported; code index data and knowledge graph entities are not exported.
+- Not vector migration. Imported records are re-embedded by the current service using its configured embedding model. No vector payloads are preserved or transferred.
 
 ### Contract compatibility notes for plugin / MCP integrators
 
 - `contract` and `summary` remain **additive-first** surfaces. Clients must ignore unknown fields and unknown enum values.
 - `summary.partial.reason_code` is the canonical machine-readable contract reason. Current Phase 5A values are: `missing`, `stale`, `partial`, `degraded`, `invalid_locator`, `generation_mismatch`, and `unsupported`.
 - `summary.partial.reason` is retained as a legacy compatibility string. Existing values like `projection_stale`, `indexing_in_progress`, and `progress:NN.N` remain readable, but new integrations should key off `reason_code`.
+- Operator guidance for common `reason_code` values:
+  - `missing`: Requested data or serving generation is unavailable. Treat as an empty/blocked result and inspect setup or indexing status.
+  - `stale`: Data came from a previous generation or stale binding. Surface the result as usable but not current, and refresh/rebind when freshness matters.
+  - `degraded`: A fallback path served the request. Use the result cautiously and inspect capability readiness or diagnostics.
+  - `unsupported`: The transport or current context cannot perform the requested action. Switch to a supported transport/context or avoid that action.
+- `project_info(action="list")` discovers projects from the union of index status metadata, code chunks, code symbols, and file manifests, so partially indexed or degraded projects remain operator-visible. Each project entry includes persisted `root_path` when index metadata is available, allowing clients to verify which canonical workspace a `project_id` belongs to even when multiple same-shard projects exist.
+- `project_info(action="index", path="...", include_patterns?, exclude_patterns?)` is a compatibility entrypoint for the same behavior as `index_project`. Manual index requests run as one-shot background tasks; the returned `lifecycle` describes registry-managed watchers/workers only, while `background_task` and `project_info(action="status")` describe the one-shot indexing task. Client wrappers may expose the same surface as `project_status`; in that case use `project_status(action="status")` to inspect `background_task.operation_id`, `state`, progress, and restart guidance.
+- Immediately after queuing, `project_info(action="status")` can return the in-memory `background_task` even before persistent index metadata has been written, so clients do not see a transient `Project not found` during the queued-to-running handoff.
+- Force rebuild persists `status="indexing"` before clearing stale chunks/symbols/manifest rows. If the process restarts during rebuild, `status/stats` report `background_task.state="unknown_after_restart"` instead of degrading to missing metadata, so operators can decide whether to retry with `force=true` and `confirm_failed_restart=true`.
+- If a same-process one-shot indexing task is lost after restart before file enumeration, `status/stats` surface `status="failed"`, `retryable=true`, `reason_code="lost_one_shot_indexing_task_after_restart"`, and `background_task.phase="before_file_enumeration"`; recovery requires an explicit retry with `force=true` and `confirm_failed_restart=true`.
+- `project_info(action="status")` and `project_info(action="stats")` include `root_path` when persisted index metadata is present. `project_info(action="stats")` returns degraded diagnostics when code intelligence rows exist but `index_status` metadata is missing; it only returns `Project not found` when no status, chunks, symbols, or manifest entries exist for that project.
 - `project_info(action="projection")` returns `locator.lookup.state = "created"`; `project_info(action="projection_by_locator")` returns `locator.lookup.state = "resolved"` on success and `"missing"` on miss.
+- **Session-Bound Project Resolution**:
+  - `project_info(action="bind", project_id="...")` binds the current HTTP MCP session to a project.
+  - `project_info(action="unbind")` clears the binding.
+  - `project_info(action="binding_status")` returns the current binding or `null`.
+  - **Lifetime**: Binding is keyed by the HTTP MCP `mcp-session-id`, stored in process memory only, and does not survive server restart.
+  - **Transport Support**: Stdio mode returns `reason_code="unsupported"` for binding actions as it lacks session context.
+  - **Auto-binding**: `index_project` does not automatically bind the session; use an explicit `bind` action after indexing if session-scoping is desired.
+  - **Diagnostics**: If a session-bound project is deleted or becomes unavailable, tools return a success JSON with empty results, `project_resolution.source="session_binding"`, `reason_code="stale"`, and `binding_state="stale_binding"`. No cross-project fallback occurs for stale bindings.
 - Projection locators are **opaque, same-process, non-persistable, and not generation-stable**. They are convenience handles for immediate readback, not stable public identities.
 - Stable identities remain unchanged:
   - memory read/list/search surfaces → public memory IDs
   - symbol graph/search surfaces → stable project-scoped symbol IDs
   - `recall_code` re-find contract → `project_id + file_path + start_line + end_line`
 
+### Durable Indexing Resume Contract (Plugin Integrators)
+
+This section defines the plugin-facing contract for durable indexing jobs. It covers terminology, request/response shapes, reason codes, and the distinction between `job_id` and `operation_id`.
+
+#### Terminology
+
+| Term | Meaning |
+|------|---------|
+| **Full restart recovery** | The server lost the in-flight task (e.g., process restart). The only recovery path is a fresh full index via `force=true` + `confirm_failed_restart=true`. No checkpoint is used. This is **not** checkpoint resume. |
+| **Checkpoint resume** | The server interrupted a durable job and wrote a valid checkpoint. The client can resume from that checkpoint using `resume=true` + `job_id` + `resume_token`. |
+| **`job_id`** | A durable identifier assigned to an indexing job. Survives server restart. Used for resume, cancel, and cleanup operations. |
+| **`operation_id`** | A same-process-only identifier for an in-flight background task. Lost on server restart. Used only for in-flight progress tracking within a single process lifetime. Do not persist or use for resume. |
+| **`active_generation`** | The generation currently serving read queries for a project. |
+| **`target_generation`** | The generation being built by the active indexing job. Promoted to `active_generation` on successful completion. |
+| **`can_resume`** | Boolean field in the status response. `true` means a valid checkpoint exists and the job can be resumed. `false` means full restart is required. |
+
+> **Rule**: Clients must key off structured fields (`can_resume`, `reason_code`, `job_id`, `resume_token`). Do not parse string `reason` fields for control flow.
+
+---
+
+#### Example 1 — Start a new index
+
+```json
+// Request
+{
+  "tool": "index_project",
+  "arguments": {
+    "path": "/project"
+  }
+}
+
+// Response (job queued)
+{
+  "state": "queued",
+  "job_id": "idx_01HXYZ1234ABCD",
+  "operation_id": "op_7f3a9c",
+  "active_generation": 3,
+  "target_generation": 4,
+  "can_resume": false,
+  "reason_code": null
+}
+```
+
+---
+
+#### Example 2 — Status response with a durable resumable job
+
+```json
+// Request
+{
+  "tool": "project_info",
+  "arguments": {
+    "action": "status",
+    "project_id": "my-project"
+  }
+}
+
+// Response (job interrupted, checkpoint available)
+{
+  "state": "resumable",
+  "job_id": "idx_01HXYZ1234ABCD",
+  "operation_id": null,
+  "active_generation": 3,
+  "target_generation": 4,
+  "can_resume": true,
+  "resume_token": "ckpt_v1_phase_embed_file_1420",
+  "reason_code": "resumable_interrupted_job",
+  "phase": "embed",
+  "progress": { "files_done": 1420, "files_total": 2100 }
+}
+```
+
+> `operation_id` is `null` after restart because it is same-process only. `job_id` persists and is the correct handle for resume.
+
+---
+
+#### Example 3 — Resume an interrupted job
+
+```json
+// Request
+{
+  "tool": "index_project",
+  "arguments": {
+    "path": "/project",
+    "resume": true,
+    "job_id": "idx_01HXYZ1234ABCD",
+    "resume_token": "ckpt_v1_phase_embed_file_1420",
+    "allow_full_restart_fallback": false
+  }
+}
+
+// Response (resume accepted)
+{
+  "state": "running",
+  "job_id": "idx_01HXYZ1234ABCD",
+  "operation_id": "op_9b2e1f",
+  "active_generation": 3,
+  "target_generation": 4,
+  "can_resume": false,
+  "reason_code": null,
+  "resumed_from_checkpoint": true
+}
+```
+
+> Setting `allow_full_restart_fallback: false` means the server will reject the request rather than silently fall back to a full restart if the checkpoint is invalid.
+
+---
+
+#### Example 4 — Non-resumable failure (checkpoint missing)
+
+```json
+// Status response after restart with no valid checkpoint
+{
+  "state": "failed",
+  "job_id": "idx_01HXYZ1234ABCD",
+  "operation_id": null,
+  "active_generation": 3,
+  "target_generation": 4,
+  "can_resume": false,
+  "resume_token": null,
+  "reason_code": "checkpoint_generation_missing",
+  "retryable": true,
+  "requires_force": true
+}
+```
+
+> `can_resume: false` + `requires_force: true` means the only recovery path is a full restart. This is **full restart recovery**, not checkpoint resume.
+
+---
+
+#### Example 5 — Force full restart fallback
+
+```json
+// Request (explicit full restart after non-resumable failure)
+{
+  "tool": "index_project",
+  "arguments": {
+    "path": "/project",
+    "force": true,
+    "confirm_failed_restart": true
+  }
+}
+
+// Response (full restart queued)
+{
+  "state": "queued",
+  "job_id": "idx_01HXYZ5678EFGH",
+  "operation_id": "op_3c7d2a",
+  "active_generation": 3,
+  "target_generation": 5,
+  "can_resume": false,
+  "reason_code": null
+}
+```
+
+> A new `job_id` is issued. The previous failed job's `job_id` is no longer active.
+
+---
+
+#### Example 6 — Cancel an active job
+
+```json
+// Request
+{
+  "tool": "project_info",
+  "arguments": {
+    "action": "cancel_index",
+    "project_id": "my-project",
+    "job_id": "idx_01HXYZ1234ABCD"
+  }
+}
+
+// Response
+{
+  "state": "cancel_requested",
+  "job_id": "idx_01HXYZ1234ABCD",
+  "reason_code": "cancellation_requested"
+}
+```
+
+---
+
+#### Example 7 — Cleanup abandoned jobs
+
+```json
+// Request
+{
+  "tool": "project_info",
+  "arguments": {
+    "action": "cleanup_abandoned_index_jobs",
+    "project_id": "my-project"
+  }
+}
+
+// Response
+{
+  "cleaned_up_count": 2,
+  "reason_code": "cleanup_requested"
+}
+```
+
+---
+
+#### Reason Code Table
+
+Clients must key off `reason_code` (structured field), not the string `reason` field.
+
+| `reason_code` | Meaning | Recovery |
+|---------------|---------|----------|
+| `active_index_running` | Another indexing job is already running for this project. | Wait for the active job to finish, then retry. |
+| `resumable_interrupted_job` | A durable job was interrupted and has a valid checkpoint. `can_resume` will be `true`. | Resume with `resume=true` + `job_id` + `resume_token`. |
+| `lost_one_shot_indexing_task_after_restart` | A same-process one-shot task was lost after server restart before file enumeration. This is a **full restart recovery** scenario, not checkpoint resume. | Retry with `force=true` + `confirm_failed_restart=true`. |
+| `checkpoint_generation_missing` | No valid checkpoint found for the requested resume. The checkpoint may have been purged or never written. | Retry with `force=true` + `confirm_failed_restart=true`. |
+| `workspace_changed_since_checkpoint` | Files changed incompatibly since the checkpoint was written. Resume would produce an inconsistent index. | Retry with `force=true` + `confirm_failed_restart=true`. |
+| `stale_generation` | The target generation is stale or has been superseded by a newer job. | Check current status; start a new index if needed. |
+| `index_storage_corrupt` | Storage integrity check failed. The index data cannot be trusted. | Retry with `force=true` + `confirm_failed_restart=true`. |
+
+---
+
+#### `job_id` vs `operation_id` — Identity Lifetime
+
+| Field | Scope | Survives restart? | Use for |
+|-------|-------|-------------------|---------|
+| `job_id` | Durable, persisted to storage | ✅ Yes | Resume, cancel, cleanup, cross-session tracking |
+| `operation_id` | Same-process only, in-memory | ❌ No | In-flight progress tracking within a single process lifetime only |
+
+**Rule**: Clients must persist `job_id` if they need to resume or track a job across server restarts. `operation_id` is `null` after restart and must never be used for resume decisions.
+
+---
+
+#### Migration Notes (Upgrading from Pre-Resume Versions)
+
+This section is for operators upgrading from a server version that did not have durable indexing resume (i.e., before generation-scoped storage was introduced).
+
+**What changed:**
+
+- Indexing now writes all chunks, symbols, file hashes, and manifest entries tagged with a `generation` field. The active generation pointer (`active_generation`) determines which rows serve read queries.
+- A durable `IndexJobRecord` is created at job start and persisted to storage. It survives server restarts and is the basis for checkpoint resume, cancel, and cleanup operations.
+- On startup, the server runs a recovery pass: any job left in `Running` state is transitioned to `Resumable` (if checkpoints exist) or `Failed` (if no checkpoints exist).
+
+**Legacy rows (NULL generation):**
+
+- Rows written by pre-resume versions have no `generation` field (NULL in storage).
+- The server treats NULL-generation rows as belonging to the legacy active generation. They remain visible to all read queries (`recall_code`, `search_symbols`, BM25) until a new full index completes and promotes a new generation.
+- After the first successful full index post-upgrade, the new generation is promoted and old NULL-generation rows are cleaned up automatically.
+- No manual migration step is required. The first index after upgrade writes to generation 1; old rows remain readable until cleanup.
+
+**First index after upgrade:**
+
+```bash
+# Trigger a fresh full index after upgrading
+index_project({ "path": "/project" })
+```
+
+The server will:
+1. Assign `target_generation = 1` (first durable generation).
+2. Write all new rows with `generation = 1`.
+3. On completion, promote `active_generation` to 1 and delete the old NULL-generation rows.
+4. Create a durable `IndexJobRecord` with `job_id` for future resume/cancel/cleanup.
+
+**If the first post-upgrade index is interrupted:**
+
+The job will be marked `Resumable` on next startup (if checkpoints were written) or `Failed` (if interrupted before any checkpoint). Use `project_info(action="status")` to check `can_resume` and `resume_token`, then resume or force-restart as appropriate.
+
+**Backward compatibility:**
+
+- `index_project({ "path": "..." })` — unchanged, still works.
+- `index_project({ "path": "...", "force": true, "confirm_failed_restart": true })` — unchanged, still works.
+- All new resume/cancel/cleanup fields (`resume`, `job_id`, `resume_token`, `allow_full_restart_fallback`) are optional and default to `null`/`false`. Existing integrations that do not send these fields are unaffected.
+
 ### ⚙️ System & Maintenance
 | Tool | Description |
 |------|-------------|
 | `get_status` | Get system status and startup progress. |
-| `how_to_use` | Show all available tools with usage examples and parameter combinations. |
-| `reset_all_memory` | **DANGER**: Reset all database data (requires `confirm=true`). |
+| `reset_all_memory` | **DANGER**: Reset all database data (requires `confirm=true`). Use only for explicit operator-approved destructive resets, never for routine cleanup. |
 | `how_to_use` | Meta-help tool for concise MCP tool-surface guidance. |
 
 
@@ -400,6 +1000,7 @@ Environment variables or CLI args:
 | Arg | Env | Default | Description |
 |-----|-----|---------|-------------|
 | `--data-dir` | `DATA_DIR` | platform-local app data dir (`memory-mcp`) | DB location |
+| `--model-cache-dir` | `EMBEDDING_MODEL_CACHE_DIR` | native: platform app-data dir (`memory-mcp/models`); container: `--data-dir/models` | Downloaded HuggingFace model files |
 | `--model` | `EMBEDDING_MODEL` | `gemma` | Embedding model (`qwen3`, `gemma`, `bge_m3`, `nomic`, `e5_multi`, `e5_small`) |
 | `--mrl-dim` | `MRL_DIM` | *(native)* | Output dimension for MRL-supported models (e.g. 64, 128, 256, 512, 1024 for Qwen3). Defaults to the model's native maximum dimension (1024 for Qwen3). |
 | `--batch-size` | `BATCH_SIZE` | `8` | Maximum batch size for embedding inference |
@@ -415,6 +1016,182 @@ Environment variables or CLI args:
 | *(None)* | `INDEX_BATCH_SIZE` | `20` | How many files to process in one incremental chunk |
 | *(None)* | `INDEX_DEBOUNCE_MS` | `2000` | MS to wait before flushing index events (debounce) |
 | *(None)* | `MANIFEST_DIFF_INTERVAL_MINS` | `10` | Minutes between periodic missing file checks |
+| `--project-path` | `PROJECT_PATH` | *(None)* | Primary project root for code intelligence. Fallback is `/project`. |
+| `--allowed-project-roots` | `ALLOWED_PROJECT_ROOTS` | *(None)* | Optional comma-delimited allowlist for server-visible project roots. When set, startup/manual registration rejects roots outside this allowlist with `reason_code=path_not_allowed`. |
+| `--max-managed-projects` | `MAX_MANAGED_PROJECTS` | `5` | Maximum number of managed lifecycle projects in registry. Additional registrations are rejected with `reason_code=max_project_limit`. |
+| `--block-cache-mb` | `SURREAL_SURREALKV_BLOCK_CACHE_CAPACITY_MB` | auto | SurrealKV block cache size in MB. If neither this nor `SURREAL_SURREALKV_BLOCK_CACHE_CAPACITY` is set, Memory MCP auto-configures a conservative cache. On macOS the auto value is 20% of reported free pages, clamped to 128-512 MB to avoid tiny caches on large data dirs. |
+| *(None)* | `MEMORY_MCP_METRICS_DIR` | *(None)* | Enables JSONL performance metrics and writes `memory-mcp-metrics-<timestamp>-<pid>.jsonl` into the specified directory. |
+| *(None)* | `MEMORY_MCP_METRICS` | `true` when `MEMORY_MCP_METRICS_DIR` is set | Set to `0`, `false`, `off`, or `no` to disable metrics even when `MEMORY_MCP_METRICS_DIR` is present. |
+
+### Metrics for startup and query optimization
+
+Metrics are opt-in and do not change startup, indexing, or query behavior. Set `MEMORY_MCP_METRICS_DIR` to collect newline-delimited JSON events for startup phases, background warm-ups, and memory/code query stages:
+
+```bash
+MEMORY_MCP_METRICS_DIR=/tmp/memory-mcp-metrics memory-mcp --data-dir /data --project-path /project
+```
+
+Each line contains `timestamp`, `event`, `pid`, and `fields`. Initial events include:
+
+| Event | Purpose |
+|-------|---------|
+| `startup.storage_open` | SurrealDB/SurrealKV open and schema initialization time |
+| `startup.dimension_check` | embedding dimension compatibility check time |
+| `startup.state_ready` | time until the in-process server state is constructed |
+| `startup.code_job_recovery` | startup recovery pass for interrupted index jobs |
+| `startup.code_lifecycle` | code-intelligence lifecycle startup result and duration |
+| `warmup.code_bm25` | in-memory code BM25 warm-up duration and chunk count |
+| `warmup.memory_bm25` | in-memory memory lexical warm-up duration and memory count |
+| `query.memory_vector` | memory vector search total time plus embedding/vector sub-stage times |
+| `query.memory_bm25` | memory BM25 search total time plus lexical sub-stage time |
+| `query.memory_recall` | hybrid memory recall total time and vector/BM25/PPR sub-stage times |
+| `query.code_search` | internal code vector search total time and embedding/search sub-stage times, used by `recall_code mode="vector"` |
+| `query.code_recall` | hybrid code recall total time and vector/BM25/PPR sub-stage times |
+
+### 🔧 Code Intelligence Indexing Pipeline
+
+The indexing pipeline has been partially concurrent since its initial implementation. The variables below expose a bounded staged pipeline option and let you tune concurrency, back-pressure, and BM25 finalization behavior. All values are env-only (no CLI arg).
+
+> [!NOTE]
+> `CODE_INDEX_PIPELINE_MODE=legacy` is the default and the rollback-safe path. `staged` is available for validation but is not the default; do not switch the default based on small-tier benchmark evidence alone. Medium/large tier and Docker RSS evidence are required before any default-change recommendation.
+
+| Env | Default | Accepted values | Description |
+|-----|---------|-----------------|-------------|
+| `CODE_INDEX_PIPELINE_MODE` | `legacy` | `legacy`, `staged` | Pipeline mode. `legacy` preserves the original partially-concurrent path. `staged` enables the bounded staged pipeline with ordered result delivery. Use `legacy` for rollback safety. |
+| `CODE_INDEX_READ_WORKERS` | `2` | integer >= 1 | Number of concurrent file-read workers. Increase on I/O-bound machines; keep low in Docker-constrained environments. |
+| `CODE_INDEX_PARSE_WORKERS` | `max(2, min(cpu_count/2, 4))` | integer >= 2 | Number of concurrent parse workers. Defaults to half the available CPU count, capped at 4. Raising this on CPU-bound machines may help; raising it beyond available cores wastes memory. |
+| `CODE_INDEX_COMMIT_BATCH_SIZE` | `100` | integer >= 1 | Number of parsed chunks committed to storage per batch. Larger values reduce DB round-trips but increase peak memory during a commit. |
+| `CODE_INDEX_MAX_INFLIGHT_FILES` | `64` | integer >= 1 | Maximum number of files in flight through the pipeline at once. Acts as a back-pressure bound. |
+| `CODE_INDEX_MAX_INFLIGHT_BYTES` | `134217728` (128 MB) | integer >= 1 | Maximum total bytes in flight through the pipeline. Acts as a memory-pressure bound. Keep this well below your container memory limit. |
+| `CODE_INDEX_STATUS_FLUSH_MS` | `1000` | integer >= 1 | Minimum interval (ms) between indexed-file progress status flushes. Lower values give more granular progress at the cost of more DB writes. |
+| `CODE_INDEX_RELATION_BATCH_SIZE` | `5000` | integer >= 1 | Number of symbol relations written per batch during final relation finalization. |
+| `CODE_INDEX_BM25_MODE` | `final_rebuild` | `final_rebuild`, `incremental` | BM25 finalization strategy. `final_rebuild` (default) rebuilds the lexical index from storage after all chunks are committed and produces a deterministic index state. `incremental` is accepted by the config parser but is experimental and not consumed by the production indexer; do not rely on it for behavior changes. |
+| `CODE_INDEX_INCLUDE_PATTERNS` | *(None)* | comma-delimited glob patterns | Optional whitelist of project-relative glob patterns. If specified, only files matching at least one include pattern are indexed. |
+| `CODE_INDEX_EXCLUDE_PATTERNS` | *(None)* | comma-delimited glob patterns | Optional blacklist of project-relative glob patterns. Files matching any exclude pattern are skipped, even if they match an include pattern. |
+
+## Code Intelligence During Indexing
+
+For large projects, indexing is a continuous background process. Memory MCP keeps all code intelligence tools usable during active indexing by serving the last successfully promoted generation while a new one builds.
+
+### Tool Behavior During Indexing
+
+| Tool | Indexing-time behavior | Fallback | No serving generation |
+|------|----------------------|----------|-----------------------|
+| `project_info` | Always available; reports both `serving_generation` and `indexing_generation` | N/A | Returns status with `reason_code=missing` |
+| `recall_code` | Serves stale generation; falls back to BM25 if vector unavailable | BM25 / symbol-derived | Returns `reason_code=missing`, zero results |
+| `search_symbols` | Serves stale symbol table from last promoted generation | N/A | Returns `reason_code=missing`, zero results |
+| `symbol_graph` | Serves stale graph; falls back to symbol frontier if graph missing | Symbol frontier | Returns partial metadata |
+
+For single code-identifier queries such as `RecallCodeParams`, `recall_code`
+uses a BM25 lexical fast path (`summary.fallback_path =
+"bm25_lexical_fast_path"`). This path is intentional: it skips vector
+embedding, symbol probing, and PPR graph expansion so exact symbol lookups stay
+responsive on large persisted indexes. It is not marked partial when the
+serving generation is current.
+
+### Reading Degradation Metadata
+
+Every response includes a `summary.partial` object clients can branch on:
+
+- `is_partial: bool` — `true` when serving stale or missing data
+- `reason_code: string` — machine-readable: `"stale"` | `"partial"` | `"missing"` | `"degraded"`
+- `reason: string` — human-readable description (e.g. `"no_serving_generation"`)
+
+Treat `summary.partial.reason_code` as the control-flow field:
+
+- `missing`: no serving data is available; show an empty result and inspect
+  `project_info`.
+- `stale`: results are from the last promoted generation; use them for context
+  but refresh before freshness-sensitive decisions.
+- `degraded`: a fallback path served the request; inspect
+  `capability_readiness` before relying on ranking quality.
+- `unsupported`: the requested action is unavailable in the current transport or
+  context.
+
+The `capability_readiness.capabilities[]` array shows per-capability freshness. Structural/BM25/Symbols can serve new data while Semantic/Vector embeddings are still computing.
+
+### Item-Level Freshness
+
+Each returned symbol or code chunk may include a `freshness.state` field:
+
+- `"fresh"` — file unchanged since last index (checkpoint matches serving generation)
+- `"stale"` — file changed since serving generation
+- `"unknown"` — no checkpoint data available
+
+> **Important**: A project-level `is_partial=true` does **not** mean every result item is stale. Inspect `freshness.state` on individual result items to determine per-symbol/chunk freshness.
+
+### First-Ever Indexing
+
+When no serving generation exists (first indexing not yet complete), all code intelligence tools return structured partial responses with `reason_code="missing"` and zero results. They do not return transport-level errors or panics.
+
+#### Rollout and rollback
+
+To try the staged pipeline:
+
+```bash
+CODE_INDEX_PIPELINE_MODE=staged memory-mcp
+```
+
+To revert to the legacy path (the default):
+
+```bash
+CODE_INDEX_PIPELINE_MODE=legacy memory-mcp
+# or simply omit the variable; legacy is the default
+```
+
+#### 🔍 Indexing Filters
+
+Code indexing can be filtered using glob patterns to include or exclude specific files or directories. This is configurable via environment variables or per-call tool arguments.
+
+- **Patterns are project-relative**: Use `src/**/*.rs` to match files in `src`, not `/absolute/path/src/**/*.rs`.
+- **Path separators**: Always use forward slashes `/` as a separator, even on Windows.
+- **Excludes override includes**: If a file matches both an include and an exclude pattern, it will be excluded.
+- **Built-in skip dirs**: Common directories like `node_modules`, `target`, `.git`, `build`, and `dist` are always skipped and cannot be overridden by include patterns.
+- **Built-in generated source skip**: Common generated files are skipped before parsing, including Dart generated suffixes, Swift protobuf files (`*.pb.swift`), files under `generated`/`.generated` directories, and source files whose header marks them as generated and not intended for editing, such as protoc Java output (`Generated by the protocol buffer compiler. DO NOT EDIT!`).
+- **Embedding backfill does not block structural search**: Full indexing publishes BM25, symbol, and graph generations before queueing vector embeddings. Chunks/symbols without embeddings remain queryable through lexical and symbol search while the embedding worker catches up in the background. On startup, every persisted `embedding_pending` project is scanned and unembedded chunks/symbols are re-queued even when no `--project-path` lifecycle manager is active. When embedding finishes, vector and semantic serving generations are published after the HNSW indices are rebuilt.
+- **Validation**: Invalid glob patterns (e.g., those containing `\` or starting with `/`) are rejected with a clear error before indexing begins, ensuring no partial or incorrect data is persisted.
+
+**Example Env Var Configuration:**
+```bash
+CODE_INDEX_INCLUDE_PATTERNS=src/**,lib/**
+CODE_INDEX_EXCLUDE_PATTERNS=**/*.test.rs,**/generated/**
+```
+
+**Example MCP Tool Call (`index_project`):**
+```json
+{
+  "path": "/my/project",
+  "include_patterns": ["src/**"],
+  "exclude_patterns": ["**/*_test.rs"]
+}
+```
+
+#### Embedding concurrency caution
+
+The embedding pipeline runs concurrently with indexing. Raising `CODE_INDEX_MAX_INFLIGHT_BYTES` or `CODE_INDEX_PARSE_WORKERS` significantly while the embedding model is active increases peak RSS. In a 3 GB Docker container, keep `CODE_INDEX_MAX_INFLIGHT_BYTES` at or below 128 MB and `CODE_INDEX_PARSE_WORKERS` at or below 4 to leave headroom for the embedding model (~200 MB to 1.2 GB depending on model choice).
+
+#### Benchmark and verification commands
+
+Run the unit test suite for the indexing subsystem:
+
+```bash
+cargo test --lib codebase
+```
+
+Run the MCP regression harness (validates tool-name compatibility and basic tool surface):
+
+```bash
+python3 scripts/task14_mcp_regression_harness.py
+```
+
+Run the deterministic code-retrieval benchmark for both pipeline modes (small tier):
+
+```bash
+CODE_INDEX_PIPELINE_MODE=legacy python3 evals/code_retrieval_benchmark.py --tier small
+CODE_INDEX_PIPELINE_MODE=staged python3 evals/code_retrieval_benchmark.py --tier small
+```
+
+Small-tier evidence (5 files, 190 chunks, 160 symbols): staged preserved hit-rate and failure-bucket parity versus legacy while improving MRR, NDCG, and query latency. Wall-clock indexing time was effectively equal at this scale. Medium/large tier and Docker RSS evidence have not been collected yet; do not treat small-tier results as a general speedup claim.
 
 ### 🧠 Available Models
 
@@ -449,13 +1226,15 @@ memory-mcp --model gemma
 
 Gemma currently works out of the box with the bundled downloader. `HF_TOKEN` is still optional and can help with higher rate limits or private/rate-limited HuggingFace access, but the current server code does not require any separate Gemma-specific license-acceptance flow.
 
+For native runs, downloaded model files are a shared machine resource: the default cache is the platform app-data directory (`memory-mcp/models`), not a subdirectory of `--data-dir` and not the OS cache directory. This lets multiple local server instances with separate databases reuse one model download without relying on a location the system may automatically clear. For backward compatibility, if the selected model already exists under `${data_dir}/models`, the server keeps using that legacy cache. To force a specific location, pass `--model-cache-dir` or set `EMBEDDING_MODEL_CACHE_DIR`.
+
 If you want the highest-quality bundled model instead, switch to **Qwen3** explicitly:
 
 ```bash
 memory-mcp --model qwen3
 ```
 
-When running in Docker, remember that changing models also changes embedding dimensions and storage requirements. Reuse the same `/data` volume only when the stored data was created with the same model/dimension settings.
+When running in Docker, the published image sets `EMBEDDING_MODEL_CACHE_DIR=/data/models`, so model files stay inside the named `/data` volume. Remember that changing models also changes embedding dimensions and storage requirements. Reuse the same `/data` volume only when the stored data was created with the same model/dimension settings.
 
 ### 🐳 Docker Image Notes
 
@@ -496,8 +1275,6 @@ From the MCP server repository perspective, the remaining work is now **closure 
 
 See also:
 - [`ARCHITECTURE.md`](./ARCHITECTURE.md) — plugin-facing MCP contract notes
-- `SERVER_PLUGIN_BOUNDARY_STATUS.md` — final repo-side closure and handoff status
-- `PLUGIN_IMPLEMENTATION_PLAN.md` — detailed plugin-side implementation plan
 
 Based on analysis of advanced memory systems like [Hindsight](https://hindsight.vectorize.io/) (see their documentation for details on these mechanisms), we are exploring these "Cognitive Architecture" features for future releases:
 
@@ -527,6 +1304,72 @@ Based on analysis of advanced memory systems like [Hindsight](https://hindsight.
     *   Retrieval tools can filter out low-confidence memories when answering factual questions.
 
 ---
+
+## 🔍 Troubleshooting
+
+### Empty `recall_code` or `search_symbols` results
+If you receive empty results when searching code, check the following:
+
+1.  **Mount Path**: Ensure your project directory is correctly mounted into the container (e.g., `-v /host/path:/project:ro`).
+2.  **Project Root Configuration**: Verify `PROJECT_PATH` or `--project-path` matches the mounted path inside the container.
+3.  **Indexing Status**: Run `project_info(action="stats", project_id="...")` to check if indexing is still in progress or if there are errors.
+4.  **Diagnostic Info**: Use `project_info(action="list")` to see which projects the server has discovered and their current state (e.g., `degraded`, `missing`).
+5.  **Server-Visible Paths**: Remember that HTTP clients must provide paths that are **visible to the server**. The server cannot access paths that exist only on your local client machine unless they are mounted.
+
+### `already_running` response when calling `index_project`
+
+A same-project full-index request returns `already_running` when another indexing task for the same project is still active. This is intentional: the admission guard prevents a second run from clearing chunks and symbols while the first run is still writing them.
+
+Wait for the active task to finish (poll `project_info(action="status", project_id="...")` until `state` is no longer `indexing` or `in_progress`), then retry. If the status is stuck and you are certain no task is running, use `force=true` and `confirm_failed_restart=true` to override the guard.
+
+### Interrupted or lost one-shot indexing task
+
+If the server process restarts while a full-index task is running, the task is lost. On the next `project_info(action="status")` call you will see:
+
+- `background_task.state = "unknown_after_restart"` if the restart happened after the initial `Indexing` status was persisted.
+- `background_task.state = "failed"`, `retryable = true`, `reason_code = "lost_one_shot_indexing_task_after_restart"`, and `background_task.phase = "before_file_enumeration"` if the restart happened before file enumeration began.
+
+In both cases, retry with `index_project(path="...", force=true, confirm_failed_restart=true)` to start a fresh full index.
+
+### Durable resume: `can_resume: true` but resume fails
+
+If `project_info(action="status")` returns `can_resume: true` and a `resume_token`, but a subsequent resume request fails or returns `reason_code: "checkpoint_generation_missing"`:
+
+1. **Token mismatch**: The `resume_token` you sent does not match the stored checkpoint. Always read the current `resume_token` from a fresh `status` call immediately before resuming — do not cache tokens across restarts.
+2. **Checkpoint purged**: If `cleanup_abandoned_index_jobs` was called between the status check and the resume, the checkpoint records may have been deleted. Check `project_info(action="status")` again; if `can_resume` is now `false`, fall back to a full restart.
+3. **Generation superseded**: A newer full index completed and promoted a new generation, making the old checkpoint stale (`reason_code: "stale_generation"`). Start a fresh index.
+
+Recovery for all three cases:
+
+```bash
+index_project({ "path": "/project", "force": true, "confirm_failed_restart": true })
+```
+
+### Durable resume: job stuck in `cancel_requested` state
+
+If `project_info(action="status")` shows `state: "cancel_requested"` but the job never transitions to `cancelled`:
+
+The cancellation is cooperative — the indexer polls for cancel requests every 10 files. If the server process was killed before the poll ran, the job record remains in `cancel_requested`. On next startup, the recovery pass will transition it to `Failed` (no checkpoints) or `Resumable` (checkpoints exist). You can then resume or force-restart as appropriate.
+
+To clean up terminal jobs (failed, cancelled, abandoned) and reclaim storage:
+
+```bash
+project_info({ "action": "cleanup_abandoned_index_jobs", "project_id": "my-project" })
+```
+
+### BM25 finalization failure
+
+If `project_info(action="stats")` reports a BM25 failure after indexing completes, the lexical index may be in a degraded state. Vector search (`recall_code` with `mode="vector"`) still works. To rebuild the BM25 index, run a fresh full index with `force=true` and `confirm_failed_restart=true`; `final_rebuild` is the only active BM25 finalization strategy and will reconstruct the lexical index from committed chunks.
+
+### Memory pressure during indexing
+
+If the server OOM-kills or RSS grows unexpectedly during indexing, reduce the in-flight bounds:
+
+```bash
+CODE_INDEX_MAX_INFLIGHT_FILES=32 CODE_INDEX_MAX_INFLIGHT_BYTES=67108864 memory-mcp
+```
+
+The defaults (64 files, 128 MB) are conservative for a 3 GB Docker container, but the embedding model adds 200 MB to 1.2 GB on top of the indexing pipeline. If you are using `qwen3` (1.2 GB model) in a 3 GB container, consider reducing `CODE_INDEX_MAX_INFLIGHT_BYTES` to 64 MB or switching to a lighter model like `gemma` (~195 MB).
 
 ## License
 

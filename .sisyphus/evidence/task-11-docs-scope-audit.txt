@@ -1,0 +1,15 @@
+[TASK-11 EVIDENCE: SCOPE & SECURITY AUDIT]
+TIMESTAMP: 2026-05-02T10:07:00Z
+GIT_SHA: $(git rev-parse --short HEAD)
+STATUS: COMPLETED
+
+DESCRIPTION:
+Verification of security and scope constraints documentation in README.md.
+
+AUDIT RESULTS:
+1. Server-Visible Paths (L140): "The server process must be able to see the paths you request to index."
+2. No Remote Uploads (L141): "The server does not support uploading client-local files or indexing client-side paths over the network."
+3. No Header/Query Binding (L142): "Project binding is currently only supported via explicit project_info tool actions. Binding via HTTP headers or query parameters is not supported."
+4. Stdio Constraints (L408): "Stdio mode returns reason_code=\"unsupported\" for binding actions as it lacks session context."
+
+VERIFICATION PASS: All security and scope constraints are explicitly documented.

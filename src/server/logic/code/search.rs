@@ -4,6 +4,7 @@ use std::time::{Duration, Instant};
 use rmcp::model::CallToolResult;
 use serde_json::json;
 
+use crate::codebase::freshness::{build_freshness_map, classify_path_from_map};
 use crate::config::AppState;
 use crate::graph::{
     rrf_merge, run_ppr, DEFAULT_CODE_BM25_WEIGHT, DEFAULT_CODE_PPR_WEIGHT,
@@ -11,12 +12,18 @@ use crate::graph::{
 };
 use crate::server::params::{normalize_project_id, RecallCodeParams, SearchCodeParams};
 use crate::storage::StorageBackend;
-use crate::types::ExportIdentity;
+use crate::types::{
+    CapabilityFreshness, ContractReasonCode, ExportIdentity, ServingGenerationMetadata,
+};
 
 use super::super::contracts::{
     export_contract_meta, summary_collection_response, with_surface_guidance,
 };
 use super::super::{normalize_limit, success_json};
+use super::{
+    apply_project_resolution, completed_serving_metadata,
+    effective_indexing_generation_for_project, resolve_project_for_code_tool, CodeToolContext,
+};
 
 struct RecallCodeTimingEvidence;
 
@@ -85,6 +92,244 @@ fn code_search_contract_json(
     );
     contract.generation_basis.lifecycle = status.map(lifecycle_view_from_status);
     serde_json::to_value(contract).unwrap_or_else(|_| json!({}))
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RecallCodeFallbackPath {
+    Hybrid,
+    Bm25LexicalFastPath,
+    Bm25LexicalSymbolHydration,
+    NoServingGeneration,
+}
+
+impl RecallCodeFallbackPath {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Hybrid => "hybrid_vector_bm25_ppr",
+            Self::Bm25LexicalFastPath => "bm25_lexical_fast_path",
+            Self::Bm25LexicalSymbolHydration => "bm25_lexical_symbol_hydration",
+            Self::NoServingGeneration => "no_serving_generation",
+        }
+    }
+
+    fn is_partial(self, indexing_partial: bool) -> bool {
+        indexing_partial
+            || matches!(
+                self,
+                Self::Bm25LexicalSymbolHydration | Self::NoServingGeneration
+            )
+    }
+
+    fn reason_code(self, indexing_partial: bool) -> Option<ContractReasonCode> {
+        match self {
+            Self::Hybrid if indexing_partial => Some(ContractReasonCode::Stale),
+            Self::Hybrid => None,
+            Self::Bm25LexicalFastPath if indexing_partial => Some(ContractReasonCode::Stale),
+            Self::Bm25LexicalFastPath => None,
+            Self::Bm25LexicalSymbolHydration => Some(ContractReasonCode::Degraded),
+            Self::NoServingGeneration => Some(ContractReasonCode::Missing),
+        }
+    }
+
+    fn reason(self, indexing_partial: bool) -> Option<&'static str> {
+        match self {
+            Self::Hybrid if indexing_partial => Some("stale_serving_generation"),
+            Self::Hybrid => None,
+            Self::Bm25LexicalFastPath if indexing_partial => Some("stale_serving_generation"),
+            Self::Bm25LexicalFastPath => None,
+            Self::Bm25LexicalSymbolHydration => Some("semantic_or_graph_unavailable"),
+            Self::NoServingGeneration => Some("no_serving_generation"),
+        }
+    }
+}
+
+fn fallback_path_for_serving(serving: &ServingGenerationMetadata) -> RecallCodeFallbackPath {
+    let any_cap_set = serving.bm25.or(serving.vector).or(serving.graph).is_some();
+    let (bm25_gen, vector_gen, graph_gen) = if any_cap_set {
+        (serving.bm25, serving.vector, serving.graph)
+    } else {
+        (serving.structural, serving.structural, serving.structural)
+    };
+    if vector_gen.is_some() && bm25_gen.is_some() && graph_gen.is_some() {
+        RecallCodeFallbackPath::Hybrid
+    } else if bm25_gen.is_some() {
+        RecallCodeFallbackPath::Bm25LexicalSymbolHydration
+    } else {
+        RecallCodeFallbackPath::NoServingGeneration
+    }
+}
+
+fn effective_recall_serving_metadata(
+    serving: &ServingGenerationMetadata,
+) -> ServingGenerationMetadata {
+    let any_cap_set = serving.bm25.or(serving.vector).or(serving.graph).is_some();
+    if any_cap_set {
+        serving.clone()
+    } else {
+        ServingGenerationMetadata {
+            structural: serving.structural,
+            bm25: serving.structural,
+            symbols: serving.symbols.or(serving.structural),
+            graph: serving.structural,
+            vector: serving.structural,
+            semantic: serving.semantic,
+            indexing: serving.indexing,
+        }
+    }
+}
+
+fn recall_item_freshness_json(
+    file_path: &str,
+    item_generation: Option<u64>,
+    serving_generation: Option<u64>,
+    freshness_map: &std::collections::HashMap<String, CapabilityFreshness>,
+    indexing_generation: Option<u64>,
+    is_interrupted_generation: bool,
+    is_fallback_serving: bool,
+) -> serde_json::Value {
+    let state = match classify_path_from_map(file_path, freshness_map) {
+        Some(freshness) => freshness,
+        None => match (item_generation, serving_generation, indexing_generation) {
+            (Some(item), Some(serving), Some(indexing))
+                if item == serving && indexing > serving =>
+            {
+                if is_interrupted_generation || is_fallback_serving {
+                    CapabilityFreshness::Stale
+                } else {
+                    CapabilityFreshness::Unavailable
+                }
+            }
+            (Some(item), Some(serving), _) if item == serving => CapabilityFreshness::Fresh,
+            (Some(_), Some(_), _) => CapabilityFreshness::Stale,
+            (None, Some(serving), Some(indexing)) if indexing > serving => {
+                CapabilityFreshness::Stale
+            }
+            (None, Some(_), _) => CapabilityFreshness::Fresh,
+            _ => CapabilityFreshness::Unavailable,
+        },
+    };
+    if matches!(state, CapabilityFreshness::Unavailable) {
+        return serde_json::Value::Null;
+    }
+    let generation = item_generation.or(serving_generation);
+    json!({
+        "state": state,
+        "generation": generation,
+        "serving_generation": serving_generation,
+        "file_path": file_path,
+    })
+}
+
+fn attach_recall_code_generation_summary(
+    response: &mut serde_json::Value,
+    serving: &ServingGenerationMetadata,
+    indexing_generation: Option<u64>,
+    fallback_path: RecallCodeFallbackPath,
+    bm25_hits: usize,
+    vector_hits: usize,
+    is_partial: bool,
+    reason_code: Option<ContractReasonCode>,
+    reason: Option<&str>,
+    is_interrupted: bool,
+) {
+    let metadata = json!({
+        "serving_generation": {
+            "structural": serving.structural,
+            "bm25": serving.bm25,
+            "symbols": serving.symbols,
+            "graph": serving.graph,
+            "vector": serving.vector,
+            "semantic": serving.semantic,
+        },
+        "indexing_generation": indexing_generation,
+        "fallback_path": fallback_path.as_str(),
+        "bm25_hits": bm25_hits,
+        "vector_hits": vector_hits,
+    });
+
+    if let Some(summary) = response
+        .get_mut("summary")
+        .and_then(|value| value.as_object_mut())
+    {
+        summary.insert(
+            "serving_generation".to_string(),
+            metadata["serving_generation"].clone(),
+        );
+        summary.insert(
+            "indexing_generation".to_string(),
+            json!(indexing_generation),
+        );
+        summary.insert("fallback_path".to_string(), json!(fallback_path.as_str()));
+        summary.insert("bm25_hits".to_string(), json!(bm25_hits));
+        summary.insert("vector_hits".to_string(), json!(vector_hits));
+        if let Some(partial) = summary
+            .get_mut("partial")
+            .and_then(|value| value.as_object_mut())
+        {
+            partial.insert("is_partial".to_string(), json!(is_partial));
+            partial.insert(
+                "reason_code".to_string(),
+                reason_code
+                    .as_ref()
+                    .map(serde_json::to_value)
+                    .transpose()
+                    .unwrap_or(None)
+                    .unwrap_or(serde_json::Value::Null),
+            );
+            partial.insert(
+                "reason".to_string(),
+                reason.map(|r| json!(r)).unwrap_or(serde_json::Value::Null),
+            );
+        }
+    }
+
+    if let Some(contract) = response
+        .get_mut("contract")
+        .and_then(|value| value.as_object_mut())
+    {
+        contract.insert("recall_code".to_string(), metadata);
+    }
+
+    let effective_serving = serving.structural.or(serving.bm25).or(serving.vector);
+    response["serving_generation"] = json!(effective_serving);
+    response["indexing_generation"] = json!(indexing_generation);
+    let reason_code_val = reason_code
+        .as_ref()
+        .map(serde_json::to_value)
+        .transpose()
+        .unwrap_or(None)
+        .unwrap_or(serde_json::Value::Null);
+    let is_stale = matches!(reason_code, Some(ContractReasonCode::Stale));
+    let mut capabilities = vec![json!({
+        "capability": "recall_code",
+        "freshness": if effective_serving.is_some() { "fresh" } else { "missing" },
+        "serving_generation": effective_serving,
+        "reason_code": reason_code_val,
+        "reason": reason.map(|r| json!(r)).unwrap_or(serde_json::Value::Null),
+    })];
+    if is_stale {
+        capabilities.push(json!({
+            "capability": "recall_code",
+            "freshness": "partial",
+            "serving_generation": effective_serving,
+            "reason_code": "partial",
+            "reason": serde_json::Value::Null,
+        }));
+    }
+    if is_interrupted && is_stale {
+        capabilities.push(json!({
+            "capability": "recall_code",
+            "freshness": "degraded",
+            "serving_generation": effective_serving,
+            "reason_code": "degraded",
+            "reason": serde_json::Value::Null,
+        }));
+    }
+    response["capability_readiness"] = json!({
+        "serving_generation": effective_serving,
+        "indexing_generation": indexing_generation,
+        "capabilities": capabilities,
+    });
 }
 
 fn lifecycle_view_from_status(status: &crate::types::IndexStatus) -> crate::types::LifecycleView {
@@ -181,6 +426,19 @@ fn is_codeish_query(query: &str, terms: &[String]) -> bool {
                 "fn" | "impl" | "struct" | "trait" | "class" | "method"
             )
         })
+}
+
+fn is_single_identifier_fast_path_query(query: &str) -> bool {
+    let query = query.trim();
+    query.len() >= 8
+        && !query.chars().any(char::is_whitespace)
+        && query.chars().all(|c| {
+            c.is_ascii_alphanumeric() || matches!(c, '_' | ':' | '.')
+        })
+        && query
+            .chars()
+            .zip(query.chars().skip(1))
+            .any(|(a, b)| a.is_ascii_lowercase() && b.is_ascii_uppercase())
 }
 
 fn lexical_rerank_score(
@@ -337,14 +595,28 @@ pub async fn search_code(
     state: &Arc<AppState>,
     params: SearchCodeParams,
 ) -> anyhow::Result<CallToolResult> {
-    crate::ensure_embedding_ready!(state);
+    search_code_with_context(state, params, None).await
+}
+
+pub(crate) async fn search_code_with_context(
+    state: &Arc<AppState>,
+    params: SearchCodeParams,
+    context: Option<CodeToolContext>,
+) -> anyhow::Result<CallToolResult> {
+    let total_start = Instant::now();
+    let embedding_ready = state.embedding.is_ready();
+    let embedding_readiness_wait = total_start.elapsed();
 
     let SearchCodeParams {
         query,
         project_id,
         limit,
     } = params;
-    let project_id = normalize_project_id(project_id);
+    let query_len = query.len();
+    let project_resolution =
+        resolve_project_for_code_tool(state, normalize_project_id(project_id), context.as_ref())
+            .await;
+    let project_id = project_resolution.project_id().map(str::to_string);
 
     let mut is_partial = false;
     let mut indexing_message = None;
@@ -365,28 +637,103 @@ pub async fn search_code(
         }
     }
 
-    let query_embedding = state.embedding.embed(&query).await?;
-
     let limit = normalize_limit(limit);
+
+    if project_resolution.is_stale_binding() {
+        let mut response = json!({
+            "results": [],
+            "count": 0,
+            "summary": summary_collection_response(
+                "collection",
+                0,
+                Some(0),
+                true,
+                Some("Session-bound project is stale; refusing cross-project fallback.".to_string()),
+            ),
+            "query": query,
+            "contract": code_search_contract_json(project_id.as_deref(), project_status.as_ref()),
+            "vector_hits": 0,
+            "bm25_hits": 0,
+            "is_partial": true,
+            "message": "Session-bound project is stale; refusing cross-project fallback."
+        });
+        apply_project_resolution(&mut response, &project_resolution);
+        return Ok(success_json(response));
+    }
+
+    let embed_start = Instant::now();
+    let query_embedding = if embedding_ready {
+        Some(state.embedding.embed(&query).await?)
+    } else {
+        None
+    };
+    let embed_elapsed = embed_start.elapsed();
 
     // Run vector search and BM25 in parallel for robust results.
     // Previously BM25 was only a fallback — degenerate vectors masked BM25 entirely.
     let project_id = project_id.as_deref();
+    let active_generation = match project_id {
+        Some(ref project_id) => state
+            .storage
+            .get_active_generation(&project_id)
+            .await
+            .ok()
+            .flatten(),
+        None => None,
+    };
+    let indexing_generation = match project_id {
+        Some(project_id) => {
+            let active_status = project_status
+                .as_ref()
+                .and_then(|status| (status.project_id == project_id).then_some(status));
+            effective_indexing_generation_for_project(
+                state,
+                project_id,
+                active_generation,
+                None,
+                active_status,
+            )
+            .await
+            .0
+        }
+        None => None,
+    };
+    let freshness_map = match (project_id, active_generation, indexing_generation) {
+        (Some(project_id), Some(serving_gen), Some(indexing_gen))
+            if indexing_gen != serving_gen =>
+        {
+            build_freshness_map(
+                project_id,
+                Some(serving_gen),
+                Some(indexing_gen),
+                &[],
+                state.storage.as_ref(),
+            )
+            .await
+            .unwrap_or_default()
+        }
+        _ => std::collections::HashMap::new(),
+    };
+    let parallel_search_start = Instant::now();
     let (vector_results, bm25_results) = tokio::join!(
         async {
-            match state
-                .storage
-                .vector_search_code(&query_embedding, project_id, limit)
-                .await
-            {
-                Ok(results) => {
-                    tracing::debug!(hits = results.len(), "search_code: vector search completed");
-                    results
+            if let Some(query_embedding) = query_embedding.as_ref() {
+                match state
+                    .storage
+                    .vector_search_code(query_embedding, project_id, active_generation, limit)
+                    .await
+                {
+                    Ok(results) => {
+                        tracing::debug!(hits = results.len(), "search_code: vector search completed");
+                        results
+                    }
+                    Err(e) => {
+                        tracing::warn!(error = %e, "search_code: vector search failed, falling back to empty");
+                        Vec::new()
+                    }
                 }
-                Err(e) => {
-                    tracing::warn!(error = %e, "search_code: vector search failed, falling back to empty");
-                    Vec::new()
-                }
+            } else {
+                Vec::new()
             }
         },
         async {
@@ -396,6 +743,7 @@ pub async fn search_code(
                 .await
         }
     );
+    let parallel_search_elapsed = parallel_search_start.elapsed();
 
     // Merge: vector results first, then BM25 results not already present.
     // This gives vector priority in ranking while ensuring BM25 fills gaps.
@@ -405,6 +753,7 @@ pub async fn search_code(
 
     for r in &vector_results {
         if seen_ids.insert(r.id.clone()) {
+            let freshness = classify_path_from_map(&r.file_path, &freshness_map);
             merged.push(json!({
                 "id": r.id,
                 "file_path": r.file_path,
@@ -416,6 +765,7 @@ pub async fn search_code(
                 "name": r.name,
                 "context_path": r.context_path,
                 "score": r.score,
+                "freshness": freshness,
                 "source": "vector"
             }));
         }
@@ -429,6 +779,7 @@ pub async fn search_code(
             break;
         }
         if seen_ids.insert(r.id.clone()) {
+            let freshness = classify_path_from_map(&r.file_path, &freshness_map);
             merged.push(json!({
                 "id": r.id,
                 "file_path": r.file_path,
@@ -440,28 +791,65 @@ pub async fn search_code(
                 "name": r.name,
                 "context_path": r.context_path,
                 "score": r.score,
+                "freshness": freshness,
                 "source": "bm25"
             }));
         }
     }
 
-    Ok(success_json(json!({
+    let missing_project_diagnostic =
+        super::missing_project_binding_diagnostic(state, project_id).await;
+    let response_is_partial = is_partial || !embedding_ready;
+    let response_message = if !embedding_ready {
+        Some("Embedding model is still loading; served BM25-only code search results.".to_string())
+    } else {
+        indexing_message.clone()
+    };
+
+    let mut response = json!({
         "results": merged,
         "count": merged.len(),
         "summary": summary_collection_response(
             "collection",
             merged.len(),
             Some(merged.len()),
-            is_partial,
-            indexing_message.clone(),
+            response_is_partial,
+            response_message.clone(),
         ),
         "query": query,
         "contract": code_search_contract_json(project_id, project_status.as_ref()),
         "vector_hits": vector_results.len(),
         "bm25_hits": bm25_results.len(),
-        "is_partial": is_partial,
-        "message": indexing_message
-    })))
+        "is_partial": response_is_partial,
+        "message": response_message,
+        "degraded_reason": if embedding_ready { serde_json::Value::Null } else { json!("embedding_model_loading_bm25_only") }
+    });
+
+    apply_project_resolution(&mut response, &project_resolution);
+
+    if let Some(diagnostic) = missing_project_diagnostic.as_ref() {
+        super::apply_missing_project_binding_diagnostic(&mut response, diagnostic);
+    }
+
+    state.metrics.record_duration(
+        "query.code_search",
+        total_start.elapsed(),
+        json!({
+            "query_len": query_len,
+            "project_id": project_id,
+            "limit": limit,
+            "result_count": merged.len(),
+            "vector_hits": vector_results.len(),
+            "bm25_hits": bm25_results.len(),
+            "is_partial": response_is_partial,
+            "embedding_readiness_wait_ms": embedding_readiness_wait.as_secs_f64() * 1000.0,
+            "embedding_ready": embedding_ready,
+            "embedding_ms": embed_elapsed.as_secs_f64() * 1000.0,
+            "parallel_search_ms": parallel_search_elapsed.as_secs_f64() * 1000.0,
+        }),
+    );
+
+    Ok(success_json(response))
 }
 
 /// Hybrid code search: Vector + BM25 + Symbol Graph PageRank → RRF merge
@@ -469,11 +857,19 @@ pub async fn recall_code(
     state: &Arc<AppState>,
     params: RecallCodeParams,
 ) -> anyhow::Result<CallToolResult> {
+    recall_code_with_context(state, params, None).await
+}
+
+pub(crate) async fn recall_code_with_context(
+    state: &Arc<AppState>,
+    params: RecallCodeParams,
+    context: Option<CodeToolContext>,
+) -> anyhow::Result<CallToolResult> {
     use petgraph::graph::{DiGraph, NodeIndex};
     use std::collections::{HashMap, HashSet};
 
     let total_start = Instant::now();
-    crate::ensure_embedding_ready!(state);
+    let embedding_ready = state.embedding.is_ready();
     let embedding_readiness_wait = total_start.elapsed();
 
     let RecallCodeParams {
@@ -488,6 +884,7 @@ pub async fn recall_code(
         language,
         chunk_type,
     } = params;
+    let query_len = query.len();
     let mut timing = RecallCodeTimingEvidence::maybe_new(
         &query,
         project_id.as_deref(),
@@ -499,7 +896,10 @@ pub async fn recall_code(
     if let Some(timing) = timing.as_mut() {
         timing.record("embedding_readiness_wait", embedding_readiness_wait);
     }
-    let project_id = normalize_project_id(project_id);
+    let project_resolution =
+        resolve_project_for_code_tool(state, normalize_project_id(project_id), context.as_ref())
+            .await;
+    let project_id = project_resolution.project_id().map(str::to_string);
 
     let mut is_partial = false;
     let mut indexing_message = None;
@@ -526,16 +926,230 @@ pub async fn recall_code(
         timing.count("status_seen", project_status.is_some());
     }
 
-    let stage_start = Instant::now();
-    let query_embedding = state.embedding.embed(&query).await?;
-    if let Some(timing) = timing.as_mut() {
-        timing.record("embedding_inference", stage_start.elapsed());
-        timing.count("embedding_dim", query_embedding.len());
+    let limit = normalize_limit(limit);
+    let (serving_metadata, indexing_generation, is_interrupted_generation) =
+        match project_id.as_deref() {
+            Some(project_id) => {
+                let serving = state
+                    .storage
+                    .get_serving_metadata(project_id)
+                    .await
+                    .unwrap_or(ServingGenerationMetadata {
+                        structural: None,
+                        bm25: None,
+                        symbols: None,
+                        graph: None,
+                        vector: None,
+                        semantic: None,
+                        indexing: None,
+                    });
+                let active_status = project_status
+                    .as_ref()
+                    .and_then(|status| (status.project_id == project_id).then_some(status));
+                let serving = completed_serving_metadata(serving, active_status);
+                let (indexing, is_interrupted) = effective_indexing_generation_for_project(
+                    state,
+                    project_id,
+                    serving.structural,
+                    serving.structural.or(serving.indexing),
+                    active_status,
+                )
+                .await;
+                (serving, indexing, is_interrupted)
+            }
+            None => (
+                ServingGenerationMetadata {
+                    structural: None,
+                    bm25: None,
+                    symbols: None,
+                    graph: None,
+                    vector: None,
+                    semantic: None,
+                    indexing: None,
+                },
+                None,
+                false,
+            ),
+        };
+    let is_fallback_serving = serving_metadata
+        .bm25
+        .or(serving_metadata.vector)
+        .or(serving_metadata.graph)
+        .is_none();
+    let serving_metadata = effective_recall_serving_metadata(&serving_metadata);
+    let mut fallback_path = fallback_path_for_serving(&serving_metadata);
+    if !embedding_ready
+        && matches!(fallback_path, RecallCodeFallbackPath::Hybrid)
+        && serving_metadata.bm25.is_some()
+    {
+        fallback_path = RecallCodeFallbackPath::Bm25LexicalSymbolHydration;
     }
 
-    let stage_start = Instant::now();
-    let limit = normalize_limit(limit);
+    // Set is_partial when an abandoned/in-progress generation is newer than the serving generation.
+    if let (Some(ig), Some(sg)) = (indexing_generation, serving_metadata.structural) {
+        if ig > sg {
+            is_partial = true;
+        }
+    }
 
+    if fallback_path == RecallCodeFallbackPath::NoServingGeneration {
+        if project_id.is_none() && !project_resolution.is_stale_binding() {
+            let all_project_ids = state.storage.list_projects().await.unwrap_or_default();
+            let mut all_results: Vec<serde_json::Value> = Vec::new();
+            let cross_project_limit = limit.min(50);
+            for pid in &all_project_ids {
+                let pid_serving = state
+                    .storage
+                    .get_serving_metadata(pid)
+                    .await
+                    .unwrap_or_default();
+                if pid_serving.structural.is_none() {
+                    continue;
+                }
+                let sub_params = RecallCodeParams {
+                    query: query.clone(),
+                    project_id: Some(pid.clone()),
+                    limit: Some(cross_project_limit),
+                    mode: None,
+                    vector_weight,
+                    bm25_weight,
+                    ppr_weight,
+                    path_prefix: path_prefix.clone(),
+                    language: language.clone(),
+                    chunk_type: chunk_type.clone(),
+                };
+                if let Ok(sub_result) =
+                    Box::pin(recall_code_with_context(state, sub_params, None)).await
+                {
+                    let rmcp::model::RawContent::Text(text) = &sub_result.content[0].raw else {
+                        continue;
+                    };
+                    if let Ok(sub_json) = serde_json::from_str::<serde_json::Value>(&text.text) {
+                        if let Some(arr) = sub_json["results"].as_array() {
+                            all_results.extend(arr.iter().cloned());
+                        }
+                    }
+                }
+            }
+            let result_count = all_results.len();
+            let mut response = json!({
+                "results": all_results,
+                "count": result_count,
+                "summary": summary_collection_response(
+                    "collection",
+                    result_count,
+                    Some(result_count),
+                    false,
+                    None,
+                ),
+                "query": query,
+                "is_partial": false,
+            });
+            apply_project_resolution(&mut response, &project_resolution);
+            if let Some(timing) = timing.as_mut() {
+                timing.record(
+                    "response_shaping",
+                    Instant::now().duration_since(stage_start),
+                );
+                timing.count("results_count", result_count);
+                timing.finish(false, result_count);
+            }
+            return Ok(success_json(response));
+        }
+        let mut response = json!({
+            "results": [],
+            "count": 0,
+            "summary": summary_collection_response(
+                "collection",
+                0,
+                Some(0),
+                true,
+                Some("No serving code index generation is available for this project.".to_string()),
+            ),
+            "contract": code_search_contract_json(project_id.as_deref(), project_status.as_ref()),
+            "weights": {
+                "vector": vector_weight.unwrap_or(DEFAULT_CODE_VECTOR_WEIGHT),
+                "bm25": bm25_weight.unwrap_or(DEFAULT_CODE_BM25_WEIGHT),
+                "ppr": ppr_weight.unwrap_or(DEFAULT_CODE_PPR_WEIGHT)
+            },
+            "is_partial": true,
+            "message": "No serving code index generation is available for this project."
+        });
+        attach_recall_code_generation_summary(
+            &mut response,
+            &serving_metadata,
+            indexing_generation,
+            fallback_path,
+            0,
+            0,
+            true,
+            Some(ContractReasonCode::Missing),
+            Some("no_serving_generation"),
+            is_interrupted_generation,
+        );
+        apply_project_resolution(&mut response, &project_resolution);
+        if let Some(degradation) = super::get_degradation_info(state).await {
+            response["_indexing"] = degradation;
+        }
+        if let Some(timing) = timing.as_mut() {
+            timing.record(
+                "response_shaping",
+                Instant::now().duration_since(stage_start),
+            );
+            timing.count("results_count", 0usize);
+            timing.count("has_degradation", response.get("_indexing").is_some());
+            timing.finish(true, 0);
+        }
+        return Ok(success_json(response));
+    }
+
+    if project_resolution.is_stale_binding() {
+        let mut response = json!({
+            "results": [],
+            "count": 0,
+            "summary": summary_collection_response(
+                "collection",
+                0,
+                Some(0),
+                true,
+                Some("Session-bound project is stale; refusing cross-project fallback.".to_string()),
+            ),
+            "query": query,
+            "contract": code_search_contract_json(project_id.as_deref(), project_status.as_ref()),
+            "weights": {
+                "vector": vector_weight.unwrap_or(DEFAULT_CODE_VECTOR_WEIGHT),
+                "bm25": bm25_weight.unwrap_or(DEFAULT_CODE_BM25_WEIGHT),
+                "ppr": ppr_weight.unwrap_or(DEFAULT_CODE_PPR_WEIGHT)
+            },
+            "is_partial": true,
+            "message": "Session-bound project is stale; refusing cross-project fallback."
+        });
+        attach_recall_code_generation_summary(
+            &mut response,
+            &serving_metadata,
+            indexing_generation,
+            fallback_path,
+            0,
+            0,
+            true,
+            Some(ContractReasonCode::Stale),
+            Some("stale_project_binding"),
+            is_interrupted_generation,
+        );
+        apply_project_resolution(&mut response, &project_resolution);
+        if let Some(timing) = timing.as_mut() {
+            timing.record("response_shaping", stage_start.elapsed());
+            timing.count("results_count", 0usize);
+            timing.count("has_degradation", false);
+            timing.finish(true, 0);
+        }
+        return Ok(success_json(response));
+    }
+
+    let vector_generation = serving_metadata.vector;
+    let bm25_generation = serving_metadata.bm25;
+    let graph_generation = serving_metadata.graph;
+    let structural_generation = serving_metadata.structural.or(bm25_generation);
     let vector_weight = vector_weight.unwrap_or(DEFAULT_CODE_VECTOR_WEIGHT);
     let bm25_weight = bm25_weight.unwrap_or(DEFAULT_CODE_BM25_WEIGHT);
     let ppr_weight = ppr_weight.unwrap_or(DEFAULT_CODE_PPR_WEIGHT);
@@ -553,6 +1167,65 @@ pub async fn recall_code(
     let chunk_type_filter = chunk_type.as_deref();
     let has_filters =
         path_prefix.is_some() || language_filter.is_some() || chunk_type_filter.is_some();
+
+    let lexical_fast_path =
+        fallback_path == RecallCodeFallbackPath::Hybrid
+            && bm25_generation.is_some()
+            && is_single_identifier_fast_path_query(&query);
+    if lexical_fast_path {
+        fallback_path = RecallCodeFallbackPath::Bm25LexicalFastPath;
+    }
+
+    // Over-fetch for hybrid rerank, but keep the single-identifier fast path
+    // tight so it does not fetch dozens of chunk bodies from the DB.
+    let fetch_limit = if lexical_fast_path {
+        limit
+    } else if has_filters {
+        (limit * 10).min(300)
+    } else {
+        (limit * 8).min(250)
+    };
+
+    let freshness_map = match (
+        project_id,
+        structural_generation,
+        indexing_generation,
+    ) {
+        (Some(project_id), Some(serving_gen), Some(indexing_gen))
+            if indexing_gen != serving_gen =>
+        {
+            build_freshness_map(
+                project_id,
+                Some(serving_gen),
+                Some(indexing_gen),
+                &[],
+                state.storage.as_ref(),
+            )
+            .await
+            .unwrap_or_default()
+        }
+        _ => HashMap::new(),
+    };
+
+    let stage_start = Instant::now();
+    let query_embedding = if fallback_path == RecallCodeFallbackPath::Hybrid
+        && embedding_ready
+        && vector_generation.is_some()
+    {
+        Some(state.embedding.embed(&query).await?)
+    } else {
+        None
+    };
+    let embedding_elapsed = stage_start.elapsed();
+    if let Some(timing) = timing.as_mut() {
+        timing.record("embedding_inference", stage_start.elapsed());
+        timing.count(
+            "embedding_dim",
+            query_embedding.as_ref().map(Vec::len).unwrap_or(0),
+        );
+    }
+
+    let stage_start = Instant::now();
 
     let matches_filters = |chunk: &crate::types::ScoredCodeChunk| -> bool {
         if let Some(prefix) = path_prefix {
@@ -581,14 +1254,6 @@ pub async fn recall_code(
         }
         true
     };
-
-    // Over-fetch and rerank locally to improve exact identifier/path quality.
-    // Keep it bounded to avoid pathological memory/time growth.
-    let fetch_limit = if has_filters {
-        (limit * 10).min(300)
-    } else {
-        (limit * 8).min(250)
-    };
     if let Some(timing) = timing.as_mut() {
         timing.record("prefilter_setup", stage_start.elapsed());
         timing.set_runtime_params(
@@ -605,34 +1270,42 @@ pub async fn recall_code(
         timing.count("has_filters", has_filters);
         timing.count("query_terms_len", query_terms.len());
         timing.count("codeish_query", codeish_query);
+        timing.count("lexical_fast_path", lexical_fast_path);
     }
 
     // 1. Vector search on code_chunks
     let stage_start = Instant::now();
-    let vector_results: Vec<_> = match state
-        .storage
-        .vector_search_code(&query_embedding, project_id, fetch_limit)
-        .await
+    let vector_results: Vec<_> = if let (Some(query_embedding), Some(vector_generation)) =
+        (query_embedding.as_ref(), vector_generation)
     {
-        Ok(results) => {
-            tracing::debug!(hits = results.len(), "recall_code: vector search completed");
-            results
+        match state
+            .storage
+            .vector_search_code(query_embedding, project_id, Some(vector_generation), fetch_limit)
+            .await
+        {
+            Ok(results) => {
+                tracing::debug!(hits = results.len(), "recall_code: vector search completed");
+                results
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "recall_code: vector search failed, falling back to empty");
+                Vec::new()
+            }
         }
-        Err(e) => {
-            tracing::warn!(error = %e, "recall_code: vector search failed, falling back to empty");
-            Vec::new()
-        }
+    } else {
+        Vec::new()
     }
     .into_iter()
     .filter(|r| matches_filters(r))
     .collect();
+    let vector_elapsed = stage_start.elapsed();
     if let Some(timing) = timing.as_mut() {
         timing.record("vector_search", stage_start.elapsed());
         timing.count("vector_hits_filtered", vector_results.len());
         timing.count("fetch_limit", fetch_limit);
     }
 
-    // 2. BM25 search via in-memory engine (replaces DB-based CONTAINS fallback)
+    // 2. BM25 search against the per-capability serving generation.
     let stage_start = Instant::now();
     let mut bm25_results: Vec<_> = state
         .code_search
@@ -641,6 +1314,7 @@ pub async fn recall_code(
         .into_iter()
         .filter(|r| matches_filters(r))
         .collect();
+    let bm25_elapsed = stage_start.elapsed();
     if let Some(timing) = timing.as_mut() {
         timing.record("bm25_search", stage_start.elapsed());
         timing.count("bm25_hits_filtered", bm25_results.len());
@@ -650,13 +1324,25 @@ pub async fn recall_code(
     // `search_symbols` is substring-based for a single query string, so we probe
     // both full query and top identifier tokens to avoid missing exact names.
     let stage_start = Instant::now();
-    let symbol_probes = build_symbol_probes(&query, &query_terms);
+    let symbol_probes = if lexical_fast_path {
+        Vec::new()
+    } else {
+        build_symbol_probes(&query, &query_terms)
+    };
     let mut seed_symbols_lex = Vec::new();
     let mut seen_symbol_ids = HashSet::new();
     for probe in &symbol_probes {
         if let Ok((symbols, _)) = state
             .storage
-            .search_symbols(probe, project_id, 20, 0, None, path_prefix)
+            .search_symbols(
+                probe,
+                project_id,
+                20,
+                0,
+                None,
+                path_prefix,
+                structural_generation,
+            )
             .await
         {
             for s in symbols {
@@ -701,7 +1387,7 @@ pub async fn recall_code(
     let mut files_to_fetch_count = 0usize;
     let mut exact_added_count = 0usize;
 
-    if codeish_query && project_id.is_some() {
+    if codeish_query && !lexical_fast_path && project_id.is_some() {
         let mut exact_symbols: Vec<(f32, crate::types::CodeSymbol)> = seed_symbols_lex
             .iter()
             .cloned()
@@ -729,7 +1415,7 @@ pub async fn recall_code(
             if !symbol_keys.is_empty() {
                 if let Ok(mapped) = state
                     .storage
-                    .get_mapped_chunks_for_symbols(pid, &symbol_keys, 80)
+                    .get_mapped_chunks_for_symbols(pid, &symbol_keys, structural_generation, 80)
                     .await
                 {
                     mapped_chunks_count = mapped.len();
@@ -740,7 +1426,11 @@ pub async fn recall_code(
                         .collect();
                     missing_chunk_ids_count = missing_ids.len();
                     if !missing_ids.is_empty() {
-                        if let Ok(chunks) = state.storage.get_chunks_by_ids(&missing_ids).await {
+                        if let Ok(chunks) = state
+                            .storage
+                            .get_chunks_by_ids(&missing_ids, structural_generation)
+                            .await
+                        {
                             for chunk in chunks {
                                 let Some(id) = chunk
                                     .id
@@ -759,6 +1449,8 @@ pub async fn recall_code(
                                     chunk_type: chunk.chunk_type,
                                     name: chunk.name,
                                     context_path: chunk.context_path,
+                                    freshness: None,
+                                    generation: chunk.generation,
                                     score: 0.0,
                                 };
                                 if matches_filters(&scored) {
@@ -795,7 +1487,11 @@ pub async fn recall_code(
             files_to_fetch_count = files_to_fetch.len();
 
             for file_path in files_to_fetch {
-                if let Ok(chunks) = state.storage.get_chunks_by_path(pid, &file_path).await {
+                if let Ok(chunks) = state
+                    .storage
+                    .get_chunks_by_path(pid, &file_path, structural_generation)
+                    .await
+                {
                     for chunk in chunks {
                         let Some(id) = chunk
                             .id
@@ -814,6 +1510,8 @@ pub async fn recall_code(
                             chunk_type: chunk.chunk_type,
                             name: chunk.name,
                             context_path: chunk.context_path,
+                            freshness: None,
+                            generation: chunk.generation,
                             score: 0.0,
                         };
                         if matches_filters(&scored) {
@@ -889,14 +1587,24 @@ pub async fn recall_code(
     // 3. Graph component: find related symbols → PPR
     // (removed: _all_chunk_ids — HashSet+Vec was built but never read)
 
-    let ppr_tuples: Vec<(String, f32)> = if ppr_weight > 0.0 {
+    let ppr_stage_start = Instant::now();
+    let ppr_tuples: Vec<(String, f32)> = if ppr_weight > 0.0
+        && fallback_path == RecallCodeFallbackPath::Hybrid
+        && graph_generation.is_some()
+    {
         // Find semantically similar symbols via vector search
         let stage_start = Instant::now();
-        let seed_symbols_vec = state
-            .storage
-            .vector_search_symbols(&query_embedding, project_id, 20)
-            .await
-            .unwrap_or_default();
+        let seed_symbols_vec = if let (Some(query_embedding), Some(vector_generation)) =
+            (query_embedding.as_ref(), vector_generation)
+        {
+            state
+                .storage
+                .vector_search_symbols(query_embedding, project_id, Some(vector_generation), 20)
+                .await
+                .unwrap_or_default()
+        } else {
+            Vec::new()
+        };
         if let Some(timing) = timing.as_mut() {
             timing.record("ppr_seed_symbol_vector_search", stage_start.elapsed());
             timing.count("seed_symbols_vec_count", seed_symbols_vec.len());
@@ -931,7 +1639,11 @@ pub async fn recall_code(
                 timing.count("ppr_seed_symbol_ids_count", symbol_ids.len());
             }
             let stage_start = Instant::now();
-            match state.storage.get_code_subgraph(&symbol_ids).await {
+            match state
+                .storage
+                .get_code_subgraph(&symbol_ids, graph_generation)
+                .await
+            {
                 Ok((symbols, relations)) if !symbols.is_empty() => {
                     if let Some(timing) = timing.as_mut() {
                         timing.record("ppr_subgraph_fetch", stage_start.elapsed());
@@ -1090,6 +1802,7 @@ pub async fn recall_code(
         }
         vec![]
     };
+    let ppr_elapsed = ppr_stage_start.elapsed();
 
     // 4. RRF merge
     let stage_start = Instant::now();
@@ -1142,6 +1855,15 @@ pub async fn recall_code(
                 let final_score = scores.combined_score
                     + lexical_score * lexical_weight
                     + exact_score * exact_weight;
+                let freshness = recall_item_freshness_json(
+                    &chunk.file_path,
+                    chunk.generation,
+                    structural_generation,
+                    &freshness_map,
+                    indexing_generation,
+                    is_interrupted_generation,
+                    is_fallback_serving,
+                );
                 (
                     final_score,
                     json!({
@@ -1161,6 +1883,7 @@ pub async fn recall_code(
                         "vector_score": scores.vector_score,
                         "bm25_score": scores.bm25_score,
                         "ppr_score": scores.ppr_score,
+                        "freshness": freshness,
                     }),
                 )
             })
@@ -1175,6 +1898,23 @@ pub async fn recall_code(
         timing.count("ranked_after_truncate", results.len());
     }
 
+    let response_is_partial = fallback_path.is_partial(is_partial);
+    let response_reason_code = fallback_path.reason_code(is_partial);
+    let response_reason = fallback_path.reason(is_partial);
+    let response_message = match fallback_path {
+        RecallCodeFallbackPath::Hybrid => indexing_message.clone(),
+        RecallCodeFallbackPath::Bm25LexicalFastPath => indexing_message.clone(),
+        RecallCodeFallbackPath::Bm25LexicalSymbolHydration => Some(
+            if embedding_ready {
+                "Semantic vector or graph serving generation is unavailable; served BM25 plus lexical/symbol hydration results."
+            } else {
+                "Embedding model is still loading; served BM25 plus lexical/symbol hydration results."
+            }
+                .to_string(),
+        ),
+        RecallCodeFallbackPath::NoServingGeneration => indexing_message.clone(),
+    };
+
     let stage_start = Instant::now();
     let mut response = json!({
         "results": results,
@@ -1183,8 +1923,8 @@ pub async fn recall_code(
             "collection",
             results.len(),
             Some(results.len()),
-            is_partial,
-            indexing_message.clone(),
+            response_is_partial,
+            response_message.clone(),
         ),
         "query": query,
         "contract": code_search_contract_json(project_id, project_status.as_ref()),
@@ -1193,15 +1933,64 @@ pub async fn recall_code(
             "bm25": bm25_weight,
             "ppr": ppr_weight
         },
-        "is_partial": is_partial,
-        "message": indexing_message
+        "is_partial": response_is_partial,
+        "message": response_message
     });
 
-    if let Some(degradation) = super::get_degradation_info(state).await {
-        response["_indexing"] = degradation;
+    attach_recall_code_generation_summary(
+        &mut response,
+        &serving_metadata,
+        indexing_generation,
+        fallback_path,
+        bm25_results.len(),
+        vector_results.len(),
+        response_is_partial,
+        response_reason_code,
+        response_reason,
+        is_interrupted_generation,
+    );
+
+    apply_project_resolution(&mut response, &project_resolution);
+
+    if project_status
+        .as_ref()
+        .is_some_and(|status| status.status != crate::types::IndexState::Completed)
+    {
+        if let Some(degradation) = super::get_degradation_info(state).await {
+            response["_indexing"] = degradation;
+        }
+    }
+
+    let missing_project_diagnostic =
+        super::missing_project_binding_diagnostic(state, project_id).await;
+    if let Some(diagnostic) = missing_project_diagnostic.as_ref() {
+        super::apply_missing_project_binding_diagnostic(&mut response, diagnostic);
     }
 
     let results_count = response["count"].as_u64().unwrap_or(0) as usize;
+    state.metrics.record_duration(
+        "query.code_recall",
+        total_start.elapsed(),
+        json!({
+            "query_len": query_len,
+            "project_id": project_id,
+            "limit": limit,
+            "fetch_limit": fetch_limit,
+            "result_count": results_count,
+            "vector_hits": vector_results.len(),
+            "bm25_hits": bm25_results.len(),
+            "ppr_hits": ppr_tuples.len(),
+            "is_partial": response_is_partial,
+            "has_filters": has_filters,
+            "codeish_query": codeish_query,
+            "embedding_readiness_wait_ms": embedding_readiness_wait.as_secs_f64() * 1000.0,
+            "embedding_ready": embedding_ready,
+            "embedding_ms": embedding_elapsed.as_secs_f64() * 1000.0,
+            "vector_search_ms": vector_elapsed.as_secs_f64() * 1000.0,
+            "bm25_search_ms": bm25_elapsed.as_secs_f64() * 1000.0,
+            "ppr_ms": ppr_elapsed.as_secs_f64() * 1000.0,
+        }),
+    );
     if let Some(timing) = timing.as_mut() {
         timing.record("response_shaping", stage_start.elapsed());
         timing.count("results_count", results_count);
@@ -1212,7 +2001,7 @@ pub async fn recall_code(
     let result = success_json(response);
     if let Some(timing) = timing.as_mut() {
         timing.record("serialization", stage_start.elapsed());
-        timing.finish(is_partial, results_count);
+        timing.finish(response_is_partial, results_count);
     }
     Ok(result)
 }
@@ -1220,6 +2009,708 @@ pub async fn recall_code(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::search::bm25::ChunkMeta;
+    use crate::test_utils::TestContext;
+    use crate::types::{
+        CapabilityFreshness, CapabilityKind, ChunkType, CodeChunk, CodeSymbol, Datetime,
+        IndexFileCheckpoint, IndexJobPhase, IndexState, IndexStatus, Language, SymbolType,
+    };
+
+    fn response_json(result: &CallToolResult) -> serde_json::Value {
+        let value = serde_json::to_value(result).unwrap();
+        let text = value["content"][0]["text"].as_str().unwrap();
+        serde_json::from_str(text).unwrap()
+    }
+
+    fn test_chunk(project_id: &str, name: &str, content: &str, generation: u64) -> CodeChunk {
+        CodeChunk {
+            id: None,
+            file_path: format!("src/{name}.rs"),
+            content: content.to_string(),
+            language: Language::Rust,
+            start_line: 1,
+            end_line: 3,
+            chunk_type: ChunkType::Function,
+            name: Some(name.to_string()),
+            context_path: None,
+            embedding: Some(vec![0.1; 768]),
+            content_hash: format!("hash-{project_id}-{name}-{generation}"),
+            project_id: Some(project_id.to_string()),
+            generation: Some(generation),
+            indexed_at: Datetime::default(),
+        }
+    }
+
+    async fn seed_chunk(
+        ctx: &TestContext,
+        project_id: &str,
+        name: &str,
+        content: &str,
+        generation: u64,
+    ) -> CodeChunk {
+        let mut chunk = test_chunk(project_id, name, content, generation);
+        let id = ctx
+            .state
+            .storage
+            .create_code_chunk(chunk.clone())
+            .await
+            .unwrap();
+        chunk.id = Some(crate::types::RecordId::new("code_chunks", id.as_str()));
+        chunk
+    }
+
+    async fn seed_bm25(ctx: &TestContext, project_id: &str, chunks: &[CodeChunk]) {
+        let pairs: Vec<_> = chunks
+            .iter()
+            .filter_map(ChunkMeta::from_code_chunk)
+            .collect();
+        ctx.state
+            .code_search
+            .rebuild_project(project_id, pairs)
+            .await;
+    }
+
+    async fn seed_indexing_status(ctx: &TestContext, project_id: &str) {
+        let mut status = IndexStatus::new(project_id.to_string());
+        status.status = IndexState::Indexing;
+        status.total_files = 2;
+        status.indexed_files = 1;
+        status.structural_generation = 2;
+        status.semantic_generation = 2;
+        ctx.state.storage.update_index_status(status).await.unwrap();
+    }
+
+    async fn seed_symbol(ctx: &TestContext, project_id: &str, name: &str, generation: u64) {
+        let mut symbol = CodeSymbol::new(
+            name.to_string(),
+            SymbolType::Function,
+            format!("src/{name}.rs"),
+            1,
+            3,
+            project_id.to_string(),
+        );
+        symbol.embedding = Some(vec![0.1; 768]);
+        symbol.generation = Some(generation);
+        ctx.state.storage.create_code_symbol(symbol).await.unwrap();
+    }
+
+    async fn seed_checkpoint(
+        ctx: &TestContext,
+        project_id: &str,
+        generation: u64,
+        file_path: &str,
+        content_hash: &str,
+        completed: bool,
+    ) {
+        ctx.state
+            .storage
+            .upsert_file_checkpoint(&IndexFileCheckpoint {
+                id: None,
+                job_id: format!("job-{generation}"),
+                project_id: project_id.to_string(),
+                generation,
+                relative_file_path: file_path.to_string(),
+                file_path: file_path.to_string(),
+                content_hash: content_hash.to_string(),
+                checkpoint_generation: generation,
+                phase: IndexJobPhase::Parse,
+                completed,
+                completed_at: Datetime::default(),
+                chunks_written: u64::from(completed),
+                symbols_written: u64::from(completed),
+                updated_at: Datetime::default(),
+            })
+            .await
+            .unwrap();
+    }
+
+    async fn seed_generation_for_freshness(
+        ctx: &TestContext,
+        project_id: &str,
+        generation: u64,
+        name: &str,
+        token: &str,
+    ) -> CodeChunk {
+        let chunk = seed_chunk(
+            ctx,
+            project_id,
+            name,
+            &format!("fn {name}() {{ let {token} = true; }}"),
+            generation,
+        )
+        .await;
+        seed_bm25(ctx, project_id, &[chunk.clone()]).await;
+        seed_symbol(ctx, project_id, name, generation).await;
+        ctx.state
+            .storage
+            .set_active_generation(project_id, generation)
+            .await
+            .unwrap();
+        ctx.state
+            .storage
+            .set_serving_generation(project_id, CapabilityKind::Bm25, generation)
+            .await
+            .unwrap();
+        ctx.state
+            .storage
+            .set_serving_generation(project_id, CapabilityKind::Vector, generation)
+            .await
+            .unwrap();
+        ctx.state
+            .storage
+            .set_serving_generation(project_id, CapabilityKind::Graph, generation)
+            .await
+            .unwrap();
+        ctx.state
+            .storage
+            .set_serving_generation(project_id, CapabilityKind::Symbols, generation)
+            .await
+            .unwrap();
+        chunk
+    }
+
+    fn first_result_freshness(json: &serde_json::Value) -> &serde_json::Value {
+        &json["results"]
+            .as_array()
+            .expect("results should be array")
+            .first()
+            .expect("expected at least one result")["freshness"]["state"]
+    }
+
+    #[tokio::test]
+    async fn unchanged_symbols_remain_fresh_during_indexing() {
+        let ctx = TestContext::new().await;
+        let project_id = "unchanged-symbols-fresh";
+        let chunk = seed_generation_for_freshness(
+            &ctx,
+            project_id,
+            1,
+            "unchanged_marker",
+            "unchanged_fresh_token",
+        )
+        .await;
+        seed_checkpoint(
+            &ctx,
+            project_id,
+            1,
+            &chunk.file_path,
+            &chunk.content_hash,
+            true,
+        )
+        .await;
+        seed_checkpoint(
+            &ctx,
+            project_id,
+            2,
+            &chunk.file_path,
+            &chunk.content_hash,
+            true,
+        )
+        .await;
+        ctx.state
+            .storage
+            .set_indexing_generation(project_id, Some(2))
+            .await
+            .unwrap();
+
+        let file_freshness = crate::codebase::freshness::classify_file_freshness(
+            project_id,
+            &chunk.file_path,
+            1,
+            Some(2),
+            ctx.state.storage.as_ref(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(file_freshness, CapabilityFreshness::Fresh);
+
+        let recall = response_json(
+            &recall_code(
+                &ctx.state,
+                RecallCodeParams {
+                    query: "unchanged_fresh_token".to_string(),
+                    project_id: Some(project_id.to_string()),
+                    limit: Some(5),
+                    mode: None,
+                    vector_weight: None,
+                    bm25_weight: None,
+                    ppr_weight: None,
+                    path_prefix: None,
+                    language: None,
+                    chunk_type: None,
+                },
+            )
+            .await
+            .unwrap(),
+        );
+        assert_eq!(first_result_freshness(&recall), "fresh");
+
+        let symbols = response_json(
+            &crate::server::logic::code::search_symbols(
+                &ctx.state,
+                crate::server::params::SearchSymbolsParams {
+                    query: "unchanged_marker".to_string(),
+                    project_id: Some(project_id.to_string()),
+                    limit: Some(5),
+                    offset: Some(0),
+                    symbol_type: None,
+                    path_prefix: None,
+                },
+            )
+            .await
+            .unwrap(),
+        );
+        assert_eq!(first_result_freshness(&symbols), "fresh");
+    }
+
+    #[tokio::test]
+    async fn changed_file_symbols_mark_stale_or_pending_during_indexing() {
+        let ctx = TestContext::new().await;
+        let project_id = "changed-file-stale-pending";
+        let changed_chunk = seed_generation_for_freshness(
+            &ctx,
+            project_id,
+            1,
+            "changed_marker",
+            "changed_stale_token",
+        )
+        .await;
+        let pending_path = "src/pending_marker.rs";
+        seed_checkpoint(
+            &ctx,
+            project_id,
+            1,
+            &changed_chunk.file_path,
+            &changed_chunk.content_hash,
+            true,
+        )
+        .await;
+        seed_checkpoint(
+            &ctx,
+            project_id,
+            2,
+            &changed_chunk.file_path,
+            "changed-hash-v2",
+            true,
+        )
+        .await;
+        seed_checkpoint(&ctx, project_id, 1, pending_path, "pending-hash-v1", true).await;
+        seed_checkpoint(&ctx, project_id, 2, pending_path, "pending-hash-v2", false).await;
+        ctx.state
+            .storage
+            .set_indexing_generation(project_id, Some(2))
+            .await
+            .unwrap();
+
+        let changed_freshness = crate::codebase::freshness::classify_file_freshness(
+            project_id,
+            &changed_chunk.file_path,
+            1,
+            Some(2),
+            ctx.state.storage.as_ref(),
+        )
+        .await
+        .unwrap();
+        let pending_freshness = crate::codebase::freshness::classify_file_freshness(
+            project_id,
+            pending_path,
+            1,
+            Some(2),
+            ctx.state.storage.as_ref(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(changed_freshness, CapabilityFreshness::Stale);
+        assert_eq!(pending_freshness, CapabilityFreshness::Partial);
+
+        let recall = response_json(
+            &recall_code(
+                &ctx.state,
+                RecallCodeParams {
+                    query: "changed_stale_token".to_string(),
+                    project_id: Some(project_id.to_string()),
+                    limit: Some(5),
+                    mode: None,
+                    vector_weight: None,
+                    bm25_weight: None,
+                    ppr_weight: None,
+                    path_prefix: None,
+                    language: None,
+                    chunk_type: None,
+                },
+            )
+            .await
+            .unwrap(),
+        );
+        assert_eq!(first_result_freshness(&recall), "stale");
+    }
+
+    #[tokio::test]
+    async fn item_freshness_unknown_without_checkpoint_evidence() {
+        let ctx = TestContext::new().await;
+        let project_id = "unknown-without-checkpoints";
+        let chunk = seed_generation_for_freshness(
+            &ctx,
+            project_id,
+            1,
+            "unknown_marker",
+            "unknown_freshness_token",
+        )
+        .await;
+        ctx.state
+            .storage
+            .set_indexing_generation(project_id, Some(2))
+            .await
+            .unwrap();
+
+        let file_freshness = crate::codebase::freshness::classify_file_freshness(
+            project_id,
+            &chunk.file_path,
+            1,
+            Some(2),
+            ctx.state.storage.as_ref(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(file_freshness, CapabilityFreshness::Unavailable);
+
+        let recall = response_json(
+            &recall_code(
+                &ctx.state,
+                RecallCodeParams {
+                    query: "unknown_freshness_token".to_string(),
+                    project_id: Some(project_id.to_string()),
+                    limit: Some(5),
+                    mode: None,
+                    vector_weight: None,
+                    bm25_weight: None,
+                    ppr_weight: None,
+                    path_prefix: None,
+                    language: None,
+                    chunk_type: None,
+                },
+            )
+            .await
+            .unwrap(),
+        );
+        assert!(first_result_freshness(&recall).is_null());
+    }
+
+    #[tokio::test]
+    async fn recall_code_serves_stale_generation_during_indexing() {
+        let ctx = TestContext::new().await;
+        let project_id = "recall-code-stale-serving";
+        let chunk = seed_chunk(
+            &ctx,
+            project_id,
+            "stale_serving_marker",
+            "fn stale_serving_marker() { let stale_generation_token = true; }",
+            1,
+        )
+        .await;
+        seed_bm25(&ctx, project_id, &[chunk]).await;
+        seed_symbol(&ctx, project_id, "stale_serving_marker", 1).await;
+        seed_indexing_status(&ctx, project_id).await;
+        ctx.state
+            .storage
+            .set_serving_generation(project_id, CapabilityKind::Bm25, 1)
+            .await
+            .unwrap();
+        ctx.state
+            .storage
+            .set_serving_generation(project_id, CapabilityKind::Vector, 1)
+            .await
+            .unwrap();
+        ctx.state
+            .storage
+            .set_serving_generation(project_id, CapabilityKind::Graph, 1)
+            .await
+            .unwrap();
+        ctx.state
+            .storage
+            .set_active_generation(project_id, 1)
+            .await
+            .unwrap();
+        ctx.state
+            .storage
+            .set_indexing_generation(project_id, Some(2))
+            .await
+            .unwrap();
+
+        let result = recall_code(
+            &ctx.state,
+            RecallCodeParams {
+                query: "stale_generation_token".to_string(),
+                project_id: Some(project_id.to_string()),
+                limit: Some(5),
+                mode: None,
+                vector_weight: None,
+                bm25_weight: None,
+                ppr_weight: None,
+                path_prefix: None,
+                language: None,
+                chunk_type: None,
+            },
+        )
+        .await
+        .unwrap();
+        let json = response_json(&result);
+
+        assert_eq!(json["summary"]["fallback_path"], "hybrid_vector_bm25_ppr");
+        assert_eq!(json["summary"]["serving_generation"]["bm25"], 1);
+        assert_eq!(json["summary"]["serving_generation"]["vector"], 1);
+        assert_eq!(json["summary"]["serving_generation"]["graph"], 1);
+        assert_eq!(json["summary"]["indexing_generation"], 2);
+        assert_eq!(json["summary"]["partial"]["reason_code"], "stale");
+        assert!(json["count"].as_u64().unwrap() >= 1);
+    }
+
+    #[tokio::test]
+    async fn recall_code_ignores_residual_indexing_generation_after_completion() {
+        let ctx = TestContext::new().await;
+        let project_id = "recall-code-completed-residual-indexing";
+        let chunk = seed_generation_for_freshness(
+            &ctx,
+            project_id,
+            8,
+            "completed_residual_marker",
+            "completed_residual_token",
+        )
+        .await;
+        seed_checkpoint(
+            &ctx,
+            project_id,
+            8,
+            &chunk.file_path,
+            &chunk.content_hash,
+            true,
+        )
+        .await;
+        ctx.state
+            .storage
+            .set_serving_generation(project_id, CapabilityKind::Semantic, 8)
+            .await
+            .unwrap();
+        ctx.state
+            .storage
+            .set_serving_generation(project_id, CapabilityKind::Symbols, 8)
+            .await
+            .unwrap();
+        ctx.state
+            .storage
+            .set_indexing_generation(project_id, Some(7))
+            .await
+            .unwrap();
+
+        let mut status = IndexStatus::new(project_id.to_string());
+        status.status = IndexState::Completed;
+        status.structural_generation = 8;
+        status.semantic_generation = 8;
+        status.refresh_lifecycle_states();
+        ctx.state.storage.update_index_status(status).await.unwrap();
+
+        let result = recall_code(
+            &ctx.state,
+            RecallCodeParams {
+                query: "completed_residual_token".to_string(),
+                project_id: Some(project_id.to_string()),
+                limit: Some(5),
+                mode: None,
+                vector_weight: None,
+                bm25_weight: None,
+                ppr_weight: None,
+                path_prefix: None,
+                language: None,
+                chunk_type: None,
+            },
+        )
+        .await
+        .unwrap();
+        let json = response_json(&result);
+
+        assert_eq!(
+            json["summary"]["indexing_generation"],
+            serde_json::Value::Null
+        );
+        assert_eq!(json["indexing_generation"], serde_json::Value::Null);
+        assert_eq!(json["summary"]["partial"]["is_partial"], false);
+        assert_eq!(first_result_freshness(&json), "fresh");
+    }
+
+    #[tokio::test]
+    async fn recall_code_falls_back_to_bm25_when_semantic_unavailable() {
+        let ctx = TestContext::new().await;
+        let project_id = "recall-code-bm25-fallback";
+        let chunk = seed_chunk(
+            &ctx,
+            project_id,
+            "bm25_only_marker",
+            "fn bm25_only_marker() { let lexical_bm25_fallback_token = true; }",
+            7,
+        )
+        .await;
+        seed_bm25(&ctx, project_id, &[chunk]).await;
+        seed_symbol(&ctx, project_id, "bm25_only_marker", 7).await;
+        ctx.state
+            .storage
+            .set_active_generation(project_id, 7)
+            .await
+            .unwrap();
+        ctx.state
+            .storage
+            .set_serving_generation(project_id, CapabilityKind::Bm25, 7)
+            .await
+            .unwrap();
+        ctx.state
+            .storage
+            .set_indexing_generation(project_id, Some(8))
+            .await
+            .unwrap();
+
+        let result = recall_code(
+            &ctx.state,
+            RecallCodeParams {
+                query: "lexical_bm25_fallback_token".to_string(),
+                project_id: Some(project_id.to_string()),
+                limit: Some(5),
+                mode: None,
+                vector_weight: None,
+                bm25_weight: None,
+                ppr_weight: None,
+                path_prefix: None,
+                language: None,
+                chunk_type: None,
+            },
+        )
+        .await
+        .unwrap();
+        let json = response_json(&result);
+
+        assert_eq!(
+            json["summary"]["fallback_path"],
+            "bm25_lexical_symbol_hydration"
+        );
+        assert_eq!(json["summary"]["serving_generation"]["bm25"], 7);
+        assert_eq!(
+            json["summary"]["serving_generation"]["vector"],
+            serde_json::Value::Null
+        );
+        assert_eq!(json["summary"]["vector_hits"], 0);
+        assert!(json["summary"]["bm25_hits"].as_u64().unwrap() >= 1);
+        assert_eq!(json["summary"]["partial"]["reason_code"], "degraded");
+        assert!(json["count"].as_u64().unwrap() >= 1);
+    }
+
+    #[tokio::test]
+    async fn recall_code_uses_bm25_fast_path_for_single_identifier_query() {
+        let ctx = TestContext::new().await;
+        let project_id = "recall-code-bm25-fast-path";
+        let chunk = seed_chunk(
+            &ctx,
+            project_id,
+            "FastPathCamelMarker",
+            "pub struct FastPathCamelMarker { value: bool }",
+            4,
+        )
+        .await;
+        seed_bm25(&ctx, project_id, &[chunk]).await;
+        ctx.state
+            .storage
+            .set_active_generation(project_id, 4)
+            .await
+            .unwrap();
+        ctx.state
+            .storage
+            .set_serving_generation(project_id, CapabilityKind::Bm25, 4)
+            .await
+            .unwrap();
+        ctx.state
+            .storage
+            .set_serving_generation(project_id, CapabilityKind::Vector, 4)
+            .await
+            .unwrap();
+        ctx.state
+            .storage
+            .set_serving_generation(project_id, CapabilityKind::Graph, 4)
+            .await
+            .unwrap();
+
+        let result = recall_code(
+            &ctx.state,
+            RecallCodeParams {
+                query: "FastPathCamelMarker".to_string(),
+                project_id: Some(project_id.to_string()),
+                limit: Some(5),
+                mode: None,
+                vector_weight: None,
+                bm25_weight: None,
+                ppr_weight: None,
+                path_prefix: None,
+                language: None,
+                chunk_type: None,
+            },
+        )
+        .await
+        .unwrap();
+        let json = response_json(&result);
+
+        assert_eq!(
+            json["summary"]["fallback_path"],
+            "bm25_lexical_fast_path"
+        );
+        assert_eq!(json["summary"]["partial"]["is_partial"], false);
+        assert_eq!(
+            json["summary"]["partial"]["reason_code"],
+            serde_json::Value::Null
+        );
+        assert_eq!(json["summary"]["vector_hits"], 0);
+        assert!(json["summary"]["bm25_hits"].as_u64().unwrap() >= 1);
+        assert_eq!(json["results"][0]["name"], "FastPathCamelMarker");
+    }
+
+    #[tokio::test]
+    async fn recall_code_no_serving_generation_returns_partial_contract() {
+        let ctx = TestContext::new().await;
+        let project_id = "recall-code-no-serving";
+        ctx.state
+            .storage
+            .set_indexing_generation(project_id, Some(3))
+            .await
+            .unwrap();
+
+        let result = recall_code(
+            &ctx.state,
+            RecallCodeParams {
+                query: "anything".to_string(),
+                project_id: Some(project_id.to_string()),
+                limit: Some(5),
+                mode: None,
+                vector_weight: None,
+                bm25_weight: None,
+                ppr_weight: None,
+                path_prefix: None,
+                language: None,
+                chunk_type: None,
+            },
+        )
+        .await
+        .unwrap();
+        let json = response_json(&result);
+
+        assert_eq!(json["count"], 0);
+        assert_eq!(json["summary"]["fallback_path"], "no_serving_generation");
+        assert_eq!(json["summary"]["indexing_generation"], 3);
+        assert_eq!(json["summary"]["partial"]["is_partial"], true);
+        assert_eq!(json["summary"]["partial"]["reason_code"], "missing");
+        assert_eq!(
+            json["summary"]["partial"]["reason"],
+            "no_serving_generation"
+        );
+        assert_eq!(
+            json["contract"]["recall_code"]["fallback_path"],
+            "no_serving_generation"
+        );
+    }
 
     #[test]
     fn recall_code_response_keeps_core_contract_fields() {

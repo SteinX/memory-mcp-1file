@@ -1,13 +1,13 @@
 use crate::types::{
-    record_key_to_string, CodeSymbol, ContractReasonCode, CountSummary, Entity,
-    ExportContractMeta, ExportIdentity, ExportResponseSummary, ExportedGraphEdge,
-    ExportedGraphNode, ExportedProjectProjection, ExportedSymbolEdge, ExportedSymbolNode,
-    FrontierSummary, GenerationBasis, IndexStatus, LifecycleView, PartialSummary,
-    ProjectionContractState, ProjectionEnvelope, ProjectProjectionInputs,
-    ProjectProjectionRequest, ProjectionLifecycleView, ProjectionMaterializationEnvelope,
-    Relation, SemanticLifecycleView, StructuralLifecycleView, SurfaceGuidance,
-    SymbolRelation, TraversalDefaults, TraversalSummary,
+    record_key_to_string, CodeSymbol, ContractReasonCode, CountSummary, Entity, ExportContractMeta,
+    ExportIdentity, ExportResponseSummary, ExportedGraphEdge, ExportedGraphNode,
+    ExportedProjectProjection, ExportedSymbolEdge, ExportedSymbolNode, FrontierSummary,
+    GenerationBasis, IndexStatus, LifecycleView, PartialSummary, ProjectProjectionInputs,
+    ProjectProjectionRequest, ProjectionContractState, ProjectionEnvelope, ProjectionLifecycleView,
+    ProjectionMaterializationEnvelope, Relation, SemanticLifecycleView, StructuralLifecycleView,
+    SurfaceGuidance, SymbolRelation, TraversalDefaults, TraversalSummary,
 };
+use crate::types::code::{CapabilityFreshness, CapabilityKind, CapabilityReadiness, ServingGenerationMetadata};
 
 fn projection_partial_reason_code(status: &IndexStatus) -> Option<ContractReasonCode> {
     match status.projection_state {
@@ -182,23 +182,68 @@ mod tests {
         assert_eq!(contract.projection.state, ProjectionContractState::Missing);
         assert_eq!(contract.projection.basis, "semantic_generation");
         assert_eq!(contract.projection.generation, 0);
-        assert_eq!(contract.projection.materialization.strategy, "not_materialized");
-        assert_eq!(contract.projection.materialization.identity_basis, "project_id + semantic_generation");
-        assert_eq!(contract.projection.materialization.refresh_basis, "semantic_generation");
+        assert_eq!(
+            contract.projection.materialization.strategy,
+            "not_materialized"
+        );
+        assert_eq!(
+            contract.projection.materialization.identity_basis,
+            "project_id + semantic_generation"
+        );
+        assert_eq!(
+            contract.projection.materialization.refresh_basis,
+            "semantic_generation"
+        );
         assert_eq!(contract.projection.materialization.persistence_semantics, "contract is exposed on status surfaces only; no persisted projection artifact is promised yet");
         assert_eq!(contract.projection.materialization.is_addressable, false);
-        assert_eq!(contract.projection.materialization.shape_version_semantics, "materialized_projection_payload_shape_version");
-        assert_eq!(contract.projection.materialization.addressability_semantics, "no_stable_external_read_target_is_promised_until_materialization_strategy_changes");
+        assert_eq!(
+            contract.projection.materialization.shape_version_semantics,
+            "materialized_projection_payload_shape_version"
+        );
+        assert_eq!(
+            contract.projection.materialization.addressability_semantics,
+            "no_stable_external_read_target_is_promised_until_materialization_strategy_changes"
+        );
         assert_eq!(contract.projection.materialization.locator_kind, None);
         assert_eq!(contract.projection.materialization.locator_semantics, "absent_when_not_materialized; when present it identifies the externally consumable projection instance");
-        assert_eq!(contract.projection.materialization.locator_stability, "not_stable_until_materialization_strategy_changes");
-        assert_eq!(contract.projection.materialization.locator_scope, "none_when_not_materialized");
+        assert_eq!(
+            contract.projection.materialization.locator_stability,
+            "not_stable_until_materialization_strategy_changes"
+        );
+        assert_eq!(
+            contract.projection.materialization.locator_scope,
+            "none_when_not_materialized"
+        );
         assert_eq!(contract.projection.materialization.locator_is_opaque, true);
-        assert_eq!(contract.projection.materialization.locator_can_be_persisted_by_clients, false);
-        assert_eq!(contract.projection.materialization.locator_survives_generation_change, false);
+        assert_eq!(
+            contract
+                .projection
+                .materialization
+                .locator_can_be_persisted_by_clients,
+            false
+        );
+        assert_eq!(
+            contract
+                .projection
+                .materialization
+                .locator_survives_generation_change,
+            false
+        );
         assert_eq!(contract.projection.materialization.current_generation, 0);
-        assert_eq!(contract.projection.materialization.last_materialized_generation, None);
-        assert_eq!(contract.projection.materialization.consistent_with_projection_state, true);
+        assert_eq!(
+            contract
+                .projection
+                .materialization
+                .last_materialized_generation,
+            None
+        );
+        assert_eq!(
+            contract
+                .projection
+                .materialization
+                .consistent_with_projection_state,
+            true
+        );
         assert_eq!(contract.generation_basis.structural_generation, 0);
         assert_eq!(contract.generation_basis.semantic_generation, 0);
         assert!(contract.generation_basis.lifecycle.is_none());
@@ -216,26 +261,86 @@ mod tests {
         assert_eq!(contract.projection_state, ProjectionContractState::Stale);
         assert_eq!(contract.projection.state, ProjectionContractState::Stale);
         assert_eq!(contract.projection.generation, status.semantic_generation);
-        assert_eq!(contract.projection.materialization.strategy, "not_materialized");
-        assert_eq!(contract.projection.materialization.refresh_basis, "semantic_generation");
+        assert_eq!(
+            contract.projection.materialization.strategy,
+            "not_materialized"
+        );
+        assert_eq!(
+            contract.projection.materialization.refresh_basis,
+            "semantic_generation"
+        );
         assert_eq!(contract.projection.materialization.persistence_semantics, "contract is exposed on status surfaces only; no persisted projection artifact is promised yet");
         assert_eq!(contract.projection.materialization.current_generation, 0);
         assert_eq!(contract.projection.materialization.is_addressable, false);
-        assert_eq!(contract.projection.materialization.shape_version_semantics, "materialized_projection_payload_shape_version");
-        assert_eq!(contract.projection.materialization.addressability_semantics, "no_stable_external_read_target_is_promised_until_materialization_strategy_changes");
+        assert_eq!(
+            contract.projection.materialization.shape_version_semantics,
+            "materialized_projection_payload_shape_version"
+        );
+        assert_eq!(
+            contract.projection.materialization.addressability_semantics,
+            "no_stable_external_read_target_is_promised_until_materialization_strategy_changes"
+        );
         assert_eq!(contract.projection.materialization.locator_kind, None);
         assert_eq!(contract.projection.materialization.locator_semantics, "absent_when_not_materialized; when present it identifies the externally consumable projection instance");
-        assert_eq!(contract.projection.materialization.locator_stability, "not_stable_until_materialization_strategy_changes");
-        assert_eq!(contract.projection.materialization.locator_scope, "none_when_not_materialized");
+        assert_eq!(
+            contract.projection.materialization.locator_stability,
+            "not_stable_until_materialization_strategy_changes"
+        );
+        assert_eq!(
+            contract.projection.materialization.locator_scope,
+            "none_when_not_materialized"
+        );
         assert_eq!(contract.projection.materialization.locator_is_opaque, true);
-        assert_eq!(contract.projection.materialization.locator_can_be_persisted_by_clients, false);
-        assert_eq!(contract.projection.materialization.locator_survives_generation_change, false);
-        assert_eq!(contract.projection.materialization.last_materialized_generation, None);
-        assert_eq!(contract.projection.materialization.consistent_with_projection_state, true);
+        assert_eq!(
+            contract
+                .projection
+                .materialization
+                .locator_can_be_persisted_by_clients,
+            false
+        );
+        assert_eq!(
+            contract
+                .projection
+                .materialization
+                .locator_survives_generation_change,
+            false
+        );
+        assert_eq!(
+            contract
+                .projection
+                .materialization
+                .last_materialized_generation,
+            None
+        );
+        assert_eq!(
+            contract
+                .projection
+                .materialization
+                .consistent_with_projection_state,
+            true
+        );
         assert_eq!(contract.generation_basis.structural_generation, 1);
         assert_eq!(contract.generation_basis.semantic_generation, 0);
-        assert_eq!(contract.generation_basis.lifecycle.as_ref().unwrap().structural.generation, 1);
-        assert_eq!(contract.generation_basis.lifecycle.as_ref().unwrap().semantic.generation, 0);
+        assert_eq!(
+            contract
+                .generation_basis
+                .lifecycle
+                .as_ref()
+                .unwrap()
+                .structural
+                .generation,
+            1
+        );
+        assert_eq!(
+            contract
+                .generation_basis
+                .lifecycle
+                .as_ref()
+                .unwrap()
+                .semantic
+                .generation,
+            0
+        );
     }
 
     #[test]
@@ -253,22 +358,64 @@ mod tests {
         assert_eq!(contract.projection.state, ProjectionContractState::Current);
         assert_eq!(contract.projection.basis, "semantic_generation");
         assert_eq!(contract.projection.generation, 1);
-        assert_eq!(contract.projection.materialization.strategy, "not_materialized");
-        assert_eq!(contract.projection.materialization.refresh_basis, "semantic_generation");
+        assert_eq!(
+            contract.projection.materialization.strategy,
+            "not_materialized"
+        );
+        assert_eq!(
+            contract.projection.materialization.refresh_basis,
+            "semantic_generation"
+        );
         assert_eq!(contract.projection.materialization.persistence_semantics, "contract is exposed on status surfaces only; no persisted projection artifact is promised yet");
         assert_eq!(contract.projection.materialization.current_generation, 1);
         assert_eq!(contract.projection.materialization.is_addressable, false);
-        assert_eq!(contract.projection.materialization.shape_version_semantics, "materialized_projection_payload_shape_version");
-        assert_eq!(contract.projection.materialization.addressability_semantics, "no_stable_external_read_target_is_promised_until_materialization_strategy_changes");
+        assert_eq!(
+            contract.projection.materialization.shape_version_semantics,
+            "materialized_projection_payload_shape_version"
+        );
+        assert_eq!(
+            contract.projection.materialization.addressability_semantics,
+            "no_stable_external_read_target_is_promised_until_materialization_strategy_changes"
+        );
         assert_eq!(contract.projection.materialization.locator_kind, None);
         assert_eq!(contract.projection.materialization.locator_semantics, "absent_when_not_materialized; when present it identifies the externally consumable projection instance");
-        assert_eq!(contract.projection.materialization.locator_stability, "not_stable_until_materialization_strategy_changes");
-        assert_eq!(contract.projection.materialization.locator_scope, "none_when_not_materialized");
+        assert_eq!(
+            contract.projection.materialization.locator_stability,
+            "not_stable_until_materialization_strategy_changes"
+        );
+        assert_eq!(
+            contract.projection.materialization.locator_scope,
+            "none_when_not_materialized"
+        );
         assert_eq!(contract.projection.materialization.locator_is_opaque, true);
-        assert_eq!(contract.projection.materialization.locator_can_be_persisted_by_clients, false);
-        assert_eq!(contract.projection.materialization.locator_survives_generation_change, false);
-        assert_eq!(contract.projection.materialization.last_materialized_generation, None);
-        assert_eq!(contract.projection.materialization.consistent_with_projection_state, true);
+        assert_eq!(
+            contract
+                .projection
+                .materialization
+                .locator_can_be_persisted_by_clients,
+            false
+        );
+        assert_eq!(
+            contract
+                .projection
+                .materialization
+                .locator_survives_generation_change,
+            false
+        );
+        assert_eq!(
+            contract
+                .projection
+                .materialization
+                .last_materialized_generation,
+            None
+        );
+        assert_eq!(
+            contract
+                .projection
+                .materialization
+                .consistent_with_projection_state,
+            true
+        );
         assert_eq!(contract.generation_basis.semantic_generation, 1);
     }
 
@@ -292,6 +439,7 @@ mod tests {
                 start_line: 2,
                 end_line: 2,
                 embedding: None,
+                generation: None,
                 project_id: "proj-builder".to_string(),
                 indexed_at: crate::types::Datetime::default(),
             },
@@ -304,6 +452,7 @@ mod tests {
                 start_line: 1,
                 end_line: 1,
                 embedding: None,
+                generation: None,
                 project_id: "proj-builder".to_string(),
                 indexed_at: crate::types::Datetime::default(),
             },
@@ -341,11 +490,23 @@ mod tests {
 
         assert_eq!(projection.project_id, "proj-builder");
         assert_eq!(projection.contract.schema_version, 1);
-        assert_eq!(projection.contract.identity.project_id, Some("proj-builder".to_string()));
+        assert_eq!(
+            projection.contract.identity.project_id,
+            Some("proj-builder".to_string())
+        );
         assert_eq!(projection.contract.identity.stable_node_ids, true);
-        assert_eq!(projection.contract.identity.node_ids_are_project_scoped, true);
-        assert_eq!(projection.contract.identity.node_id_semantics, Some("stable_project_scoped_project_id".to_string()));
-        assert_eq!(projection.contract.identity.edge_id_semantics, Some("no_public_edge_ids".to_string()));
+        assert_eq!(
+            projection.contract.identity.node_ids_are_project_scoped,
+            true
+        );
+        assert_eq!(
+            projection.contract.identity.node_id_semantics,
+            Some("stable_project_scoped_project_id".to_string())
+        );
+        assert_eq!(
+            projection.contract.identity.edge_id_semantics,
+            Some("no_public_edge_ids".to_string())
+        );
         assert_eq!(projection.request.relation_scope, "all");
         assert_eq!(projection.request.sort_mode, "canonical");
         assert_eq!(projection.summary.result_kind, "graph");
@@ -384,21 +545,49 @@ mod tests {
 
         assert_eq!(projection.lifecycle.projection.state, "current");
         assert_eq!(projection.lifecycle.projection.is_current, true);
-        assert_eq!(projection.contract.projection.state, ProjectionContractState::Current);
+        assert_eq!(
+            projection.contract.projection.state,
+            ProjectionContractState::Current
+        );
         assert_eq!(projection.contract.projection.generation, 1);
-        assert_eq!(projection.contract.projection.materialization.current_generation, 1);
-        assert_eq!(projection.contract.projection.materialization.consistent_with_projection_state, true);
+        assert_eq!(
+            projection
+                .contract
+                .projection
+                .materialization
+                .current_generation,
+            1
+        );
+        assert_eq!(
+            projection
+                .contract
+                .projection
+                .materialization
+                .consistent_with_projection_state,
+            true
+        );
         assert_eq!(projection.request.relation_scope, "all");
         assert_eq!(projection.request.sort_mode, "canonical");
-        assert_eq!(projection.summary.partial.as_ref().unwrap().is_partial, false);
-        assert_eq!(projection.summary.partial.as_ref().unwrap().reason_code, None);
+        assert_eq!(
+            projection.summary.partial.as_ref().unwrap().is_partial,
+            false
+        );
+        assert_eq!(
+            projection.summary.partial.as_ref().unwrap().reason_code,
+            None
+        );
         assert_eq!(projection.summary.partial.as_ref().unwrap().reason, None);
         assert_eq!(
             projection.summary.partial.as_ref().unwrap().message.as_deref(),
             Some("Projection is an on-demand export of the current semantic snapshot; no separately materialized artifact is promised.")
         );
         assert_eq!(projection.contract.compatibility.mode, "additive_first");
-        assert!(projection.contract.compatibility.clients_must_ignore_unknown_fields);
+        assert!(
+            projection
+                .contract
+                .compatibility
+                .clients_must_ignore_unknown_fields
+        );
     }
 
     #[test]
@@ -423,14 +612,26 @@ mod tests {
         );
 
         assert_eq!(projection.lifecycle.projection.state, "stale");
-        assert_eq!(projection.contract.projection.state, ProjectionContractState::Stale);
-        assert_eq!(projection.summary.partial.as_ref().unwrap().is_partial, true);
+        assert_eq!(
+            projection.contract.projection.state,
+            ProjectionContractState::Stale
+        );
+        assert_eq!(
+            projection.summary.partial.as_ref().unwrap().is_partial,
+            true
+        );
         assert_eq!(
             projection.summary.partial.as_ref().unwrap().reason_code,
             Some(ContractReasonCode::Stale)
         );
         assert_eq!(
-            projection.summary.partial.as_ref().unwrap().reason.as_deref(),
+            projection
+                .summary
+                .partial
+                .as_ref()
+                .unwrap()
+                .reason
+                .as_deref(),
             Some("projection_stale")
         );
         assert_eq!(
@@ -438,7 +639,12 @@ mod tests {
             Some("Projection is an on-demand export of the latest available semantic snapshot and may lag structural changes.")
         );
         assert_eq!(projection.contract.compatibility.mode, "additive_first");
-        assert!(projection.contract.compatibility.clients_must_ignore_unknown_fields);
+        assert!(
+            projection
+                .contract
+                .compatibility
+                .clients_must_ignore_unknown_fields
+        );
     }
 
     #[test]
@@ -455,6 +661,7 @@ mod tests {
                 start_line: 2,
                 end_line: 2,
                 embedding: None,
+                generation: None,
                 project_id: "proj-imports".to_string(),
                 indexed_at: crate::types::Datetime::default(),
             },
@@ -467,6 +674,7 @@ mod tests {
                 start_line: 1,
                 end_line: 1,
                 embedding: None,
+                generation: None,
                 project_id: "proj-imports".to_string(),
                 indexed_at: crate::types::Datetime::default(),
             },
@@ -479,6 +687,7 @@ mod tests {
                 start_line: 1,
                 end_line: 1,
                 embedding: None,
+                generation: None,
                 project_id: "proj-imports".to_string(),
                 indexed_at: crate::types::Datetime::default(),
             },
@@ -491,6 +700,7 @@ mod tests {
                 start_line: 1,
                 end_line: 1,
                 embedding: None,
+                generation: None,
                 project_id: "proj-imports".to_string(),
                 indexed_at: crate::types::Datetime::default(),
             },
@@ -548,7 +758,11 @@ mod tests {
         assert_eq!(projection.edges[0].relation_type, "imports");
         assert_eq!(projection.nodes.len(), 2);
         assert_eq!(projection.counts.nodes, Some(2));
-        let node_ids: Vec<_> = projection.nodes.iter().map(|node| node.id.as_str()).collect();
+        let node_ids: Vec<_> = projection
+            .nodes
+            .iter()
+            .map(|node| node.id.as_str())
+            .collect();
         assert!(node_ids.contains(&"module"));
         assert!(node_ids.contains(&"dep"));
         assert!(!node_ids.contains(&"orphan"));
@@ -569,6 +783,7 @@ mod tests {
                 start_line: 2,
                 end_line: 2,
                 embedding: None,
+                generation: None,
                 project_id: "proj-type-links".to_string(),
                 indexed_at: crate::types::Datetime::default(),
             },
@@ -581,6 +796,7 @@ mod tests {
                 start_line: 3,
                 end_line: 3,
                 embedding: None,
+                generation: None,
                 project_id: "proj-type-links".to_string(),
                 indexed_at: crate::types::Datetime::default(),
             },
@@ -593,6 +809,7 @@ mod tests {
                 start_line: 4,
                 end_line: 4,
                 embedding: None,
+                generation: None,
                 project_id: "proj-type-links".to_string(),
                 indexed_at: crate::types::Datetime::default(),
             },
@@ -605,6 +822,7 @@ mod tests {
                 start_line: 5,
                 end_line: 5,
                 embedding: None,
+                generation: None,
                 project_id: "proj-type-links".to_string(),
                 indexed_at: crate::types::Datetime::default(),
             },
@@ -617,6 +835,7 @@ mod tests {
                 start_line: 6,
                 end_line: 6,
                 embedding: None,
+                generation: None,
                 project_id: "proj-type-links".to_string(),
                 indexed_at: crate::types::Datetime::default(),
             },
@@ -629,6 +848,7 @@ mod tests {
                 start_line: 1,
                 end_line: 1,
                 embedding: None,
+                generation: None,
                 project_id: "proj-type-links".to_string(),
                 indexed_at: crate::types::Datetime::default(),
             },
@@ -704,7 +924,11 @@ mod tests {
             .all(|edge| edge.relation_type == "extends" || edge.relation_type == "implements"));
         assert_eq!(projection.nodes.len(), 4);
         assert_eq!(projection.counts.nodes, Some(4));
-        let node_ids: Vec<_> = projection.nodes.iter().map(|node| node.id.as_str()).collect();
+        let node_ids: Vec<_> = projection
+            .nodes
+            .iter()
+            .map(|node| node.id.as_str())
+            .collect();
         assert!(node_ids.contains(&"child"));
         assert!(node_ids.contains(&"parent"));
         assert!(node_ids.contains(&"impl"));
@@ -727,6 +951,7 @@ mod tests {
                 start_line: 2,
                 end_line: 2,
                 embedding: None,
+                generation: None,
                 project_id: "proj-calls-prune".to_string(),
                 indexed_at: crate::types::Datetime::default(),
             },
@@ -739,6 +964,7 @@ mod tests {
                 start_line: 1,
                 end_line: 1,
                 embedding: None,
+                generation: None,
                 project_id: "proj-calls-prune".to_string(),
                 indexed_at: crate::types::Datetime::default(),
             },
@@ -751,6 +977,7 @@ mod tests {
                 start_line: 1,
                 end_line: 1,
                 embedding: None,
+                generation: None,
                 project_id: "proj-calls-prune".to_string(),
                 indexed_at: crate::types::Datetime::default(),
             },
@@ -807,7 +1034,11 @@ mod tests {
         assert_eq!(projection.edges.len(), 1);
         assert_eq!(projection.nodes.len(), 2);
         assert_eq!(projection.counts.nodes, Some(2));
-        let node_ids: Vec<_> = projection.nodes.iter().map(|node| node.id.as_str()).collect();
+        let node_ids: Vec<_> = projection
+            .nodes
+            .iter()
+            .map(|node| node.id.as_str())
+            .collect();
         assert!(node_ids.contains(&"caller"));
         assert!(node_ids.contains(&"target"));
         assert!(!node_ids.contains(&"orphan"));
@@ -827,6 +1058,7 @@ mod tests {
             end_line: 1,
             embedding: None,
             project_id: "proj-none-empty".to_string(),
+            generation: None,
             indexed_at: crate::types::Datetime::default(),
         }];
 
@@ -851,7 +1083,10 @@ mod tests {
         assert_eq!(projection.counts.edges, Some(0));
         assert_eq!(projection.shaping.relation_scope_applied, "none");
         assert_eq!(projection.shaping.sort_mode_applied, "canonical");
-        assert_eq!(projection.shaping.node_selection_basis, "empty_graph_when_no_edges_retained");
+        assert_eq!(
+            projection.shaping.node_selection_basis,
+            "empty_graph_when_no_edges_retained"
+        );
         assert_eq!(projection.shaping.edge_selection_basis, "no_edges_retained");
         assert_eq!(projection.shaping.output_kind, "empty_graph");
     }
@@ -870,6 +1105,7 @@ mod tests {
                 start_line: 2,
                 end_line: 2,
                 embedding: None,
+                generation: None,
                 project_id: "proj-shaping".to_string(),
                 indexed_at: crate::types::Datetime::default(),
             },
@@ -882,6 +1118,7 @@ mod tests {
                 start_line: 1,
                 end_line: 1,
                 embedding: None,
+                generation: None,
                 project_id: "proj-shaping".to_string(),
                 indexed_at: crate::types::Datetime::default(),
             },
@@ -894,6 +1131,7 @@ mod tests {
                 start_line: 1,
                 end_line: 1,
                 embedding: None,
+                generation: None,
                 project_id: "proj-shaping".to_string(),
                 indexed_at: crate::types::Datetime::default(),
             },
@@ -931,7 +1169,10 @@ mod tests {
 
         assert_eq!(projection.shaping.relation_scope_applied, "calls");
         assert_eq!(projection.shaping.sort_mode_applied, "canonical");
-        assert_eq!(projection.shaping.node_selection_basis, "relation_endpoint_induced_subgraph");
+        assert_eq!(
+            projection.shaping.node_selection_basis,
+            "relation_endpoint_induced_subgraph"
+        );
         assert_eq!(projection.shaping.edge_selection_basis, "only_call_edges");
         assert_eq!(projection.shaping.output_kind, "induced_symbol_graph");
     }
@@ -1168,6 +1409,30 @@ pub fn summary_index_status_response(
     is_partial: bool,
     message: Option<String>,
 ) -> ExportResponseSummary {
+    summary_index_status_response_with_reason(
+        total_files,
+        indexed_files,
+        total_chunks,
+        total_symbols,
+        overall_progress_percent,
+        is_partial,
+        index_status_reason_code(is_partial),
+        index_status_reason_slug(is_partial, overall_progress_percent),
+        message,
+    )
+}
+
+pub fn summary_index_status_response_with_reason(
+    total_files: u32,
+    indexed_files: u32,
+    total_chunks: u32,
+    total_symbols: u32,
+    _overall_progress_percent: f32,
+    is_partial: bool,
+    reason_code: Option<ContractReasonCode>,
+    reason: Option<String>,
+    message: Option<String>,
+) -> ExportResponseSummary {
     ExportResponseSummary {
         result_kind: "status".to_string(),
         counts: CountSummary {
@@ -1180,8 +1445,8 @@ pub fn summary_index_status_response(
         traversal: None,
         partial: Some(PartialSummary {
             is_partial,
-            reason_code: index_status_reason_code(is_partial),
-            reason: index_status_reason_slug(is_partial, overall_progress_percent),
+            reason_code,
+            reason,
             message,
         }),
     }
@@ -1225,8 +1490,7 @@ pub fn exported_symbol_nodes(symbols: &[CodeSymbol]) -> Vec<ExportedSymbolNode> 
         .collect();
 
     nodes.sort_by(|a, b| {
-        a.id
-            .cmp(&b.id)
+        a.id.cmp(&b.id)
             .then_with(|| a.project_id.cmp(&b.project_id))
             .then_with(|| a.file_path.cmp(&b.file_path))
             .then_with(|| a.start_line.cmp(&b.start_line))
@@ -1366,17 +1630,24 @@ pub fn shape_project_projection_graph(
             .cmp(&b.project_id)
             .then_with(|| a.file_path.cmp(&b.file_path))
             .then_with(|| a.line_number.cmp(&b.line_number))
-            .then_with(|| record_key_to_string(&a.from_symbol.key).cmp(&record_key_to_string(&b.from_symbol.key)))
-            .then_with(|| record_key_to_string(&a.to_symbol.key).cmp(&record_key_to_string(&b.to_symbol.key)))
-            .then_with(|| a.relation_type.to_string().cmp(&b.relation_type.to_string()))
+            .then_with(|| {
+                record_key_to_string(&a.from_symbol.key)
+                    .cmp(&record_key_to_string(&b.from_symbol.key))
+            })
+            .then_with(|| {
+                record_key_to_string(&a.to_symbol.key).cmp(&record_key_to_string(&b.to_symbol.key))
+            })
+            .then_with(|| {
+                a.relation_type
+                    .to_string()
+                    .cmp(&b.relation_type.to_string())
+            })
     });
 
     inputs
 }
 
-pub fn assemble_project_projection(
-    inputs: ProjectProjectionInputs,
-) -> ExportedProjectProjection {
+pub fn assemble_project_projection(inputs: ProjectProjectionInputs) -> ExportedProjectProjection {
     let ProjectProjectionInputs {
         status,
         total_files,
@@ -1453,4 +1724,126 @@ pub fn build_project_projection(
     );
     let shaped = shape_project_projection_graph(inputs);
     assemble_project_projection(shaped)
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Capability status helpers (Task 5: project_info capability readiness)
+// ─────────────────────────────────────────────────────────────────────────────
+
+pub fn build_capability_readiness(
+    meta: &ServingGenerationMetadata,
+    indexing_gen: Option<u64>,
+    is_indexing: bool,
+    is_interrupted: bool,
+) -> Vec<CapabilityReadiness> {
+    let structural_serving = meta.structural;
+    let is_stale = is_indexing || match (indexing_gen, structural_serving) {
+        (Some(i), Some(s)) => i > s,
+        _ => false,
+    };
+
+    let caps: &[(CapabilityKind, Option<u64>)] = &[
+        (CapabilityKind::ProjectInfo, meta.structural),
+        (CapabilityKind::Bm25, meta.bm25),
+        (CapabilityKind::Vector, meta.vector),
+        (CapabilityKind::Symbols, meta.symbols),
+        (CapabilityKind::Graph, meta.graph),
+        (CapabilityKind::Semantic, meta.semantic),
+    ];
+
+    let mut result: Vec<CapabilityReadiness> = caps.iter()
+        .map(|(kind, gen)| {
+            let freshness = match gen {
+                None => CapabilityFreshness::Missing,
+                Some(_) if is_stale => CapabilityFreshness::Stale,
+                Some(_) => CapabilityFreshness::Fresh,
+            };
+            let reason_code = match &freshness {
+                CapabilityFreshness::Missing => Some("no_serving_generation".to_string()),
+                CapabilityFreshness::Stale if is_indexing => Some("indexing_in_progress".to_string()),
+                CapabilityFreshness::Stale => Some("stale".to_string()),
+                CapabilityFreshness::Fresh => None,
+                CapabilityFreshness::Partial => Some("partial".to_string()),
+                CapabilityFreshness::Degraded => Some("degraded".to_string()),
+                CapabilityFreshness::Unavailable => Some("unavailable".to_string()),
+            };
+            CapabilityReadiness {
+                capability: kind.clone(),
+                freshness,
+                serving_generation: *gen,
+                reason: None,
+                reason_code,
+            }
+        })
+        .collect();
+
+    if is_stale {
+        result.push(CapabilityReadiness {
+            capability: CapabilityKind::ProjectInfo,
+            freshness: CapabilityFreshness::Partial,
+            serving_generation: structural_serving,
+            reason: None,
+            reason_code: Some("partial".to_string()),
+        });
+    }
+
+    if is_interrupted && is_stale {
+        result.push(CapabilityReadiness {
+            capability: CapabilityKind::Graph,
+            freshness: CapabilityFreshness::Degraded,
+            serving_generation: meta.graph,
+            reason: None,
+            reason_code: Some("degraded".to_string()),
+        });
+        result.push(CapabilityReadiness {
+            capability: CapabilityKind::Vector,
+            freshness: CapabilityFreshness::Degraded,
+            serving_generation: meta.vector,
+            reason: None,
+            reason_code: Some("degraded".to_string()),
+        });
+    }
+
+    result
+}
+
+pub fn serving_envelope_json(
+    meta: &ServingGenerationMetadata,
+    indexing_generation: Option<u64>,
+) -> serde_json::Value {
+    serde_json::json!({
+        "structural": meta.structural,
+        "bm25": meta.bm25,
+        "vector": meta.vector,
+        "symbols": meta.symbols,
+        "graph": meta.graph,
+        "semantic": meta.semantic,
+        "indexing": indexing_generation,
+    })
+}
+
+pub fn project_info_capability_block(
+    meta: &ServingGenerationMetadata,
+    indexing_generation: Option<u64>,
+    is_indexing: bool,
+    is_interrupted: bool,
+) -> serde_json::Value {
+    let capabilities = build_capability_readiness(meta, indexing_generation, is_indexing, is_interrupted);
+    let caps_json: Vec<serde_json::Value> = capabilities
+        .iter()
+        .map(|c| {
+            serde_json::json!({
+                "capability": serde_json::to_value(&c.capability).unwrap_or_default(),
+                "freshness": serde_json::to_value(&c.freshness).unwrap_or_default(),
+                "serving_generation": c.serving_generation,
+                "reason_code": c.reason_code,
+            })
+        })
+        .collect();
+
+    serde_json::json!({
+        "serving": serving_envelope_json(meta, indexing_generation),
+        "indexing_generation": indexing_generation,
+        "capabilities": caps_json,
+    })
 }

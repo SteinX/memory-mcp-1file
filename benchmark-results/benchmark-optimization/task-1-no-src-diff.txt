@@ -1,0 +1,4 @@
+command=GIT_MASTER=1 git diff -- src/
+exit_code=0
+diff_empty=True
+--- diff ---

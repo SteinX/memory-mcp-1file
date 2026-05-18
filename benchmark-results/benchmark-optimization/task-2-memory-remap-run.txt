@@ -1,0 +1,8 @@
+{
+  "output_json": "/Users/xiayiming1/Documents/Workspace/memory-mcp-1file/.sisyphus/evidence/evals/memory-retrieval-baseline.json",
+  "output_md": "/Users/xiayiming1/Documents/Workspace/memory-mcp-1file/.sisyphus/evidence/evals/memory-retrieval-baseline.md",
+  "query_count": 10,
+  "ran_queries": 10,
+  "blocker_count": 0,
+  "observed_reason_codes": []
+}

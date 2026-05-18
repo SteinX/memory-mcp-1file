@@ -7,8 +7,8 @@ use tokio::time::MissedTickBehavior;
 
 use crate::forgetting::config::{capacity_controller_enabled, ForgettingConfig};
 use crate::forgetting::decay::compute_decay;
-use crate::storage::MemoryStorage;
 use crate::storage::traits::CapacityMemoryCandidate;
+use crate::storage::MemoryStorage;
 use crate::types::SearchResult;
 use crate::Result;
 
@@ -202,7 +202,8 @@ impl CapacityController {
             attention_summary: None,
             operator_summary: None,
         };
-        let (_, _, final_score) = compute_decay(&self.config, &search_result, candidate.importance_score);
+        let (_, _, final_score) =
+            compute_decay(&self.config, &search_result, candidate.importance_score);
         final_score
     }
 
@@ -228,7 +229,9 @@ impl CapacityController {
     async fn was_accessed_recently(&self, id: &str) -> Result<bool> {
         let cutoff = Utc::now() - ChronoDuration::minutes(RECENT_ACCESS_WINDOW_MINUTES);
         let last_accessed_at = self.db.get_memory_last_accessed_at(id.to_string()).await?;
-        Ok(last_accessed_at.map(|timestamp| timestamp > cutoff).unwrap_or(false))
+        Ok(last_accessed_at
+            .map(|timestamp| timestamp > cutoff)
+            .unwrap_or(false))
     }
 }
 
@@ -310,7 +313,8 @@ mod tests {
 
         fn list_capacity_candidates(
             &self,
-        ) -> Pin<Box<dyn Future<Output = Result<Vec<CapacityMemoryCandidate>>> + Send + '_>> {
+        ) -> Pin<Box<dyn Future<Output = Result<Vec<CapacityMemoryCandidate>>> + Send + '_>>
+        {
             Box::pin(async move { Ok(self.state.lock().unwrap().candidates.clone()) })
         }
 
@@ -372,11 +376,8 @@ mod tests {
             ..TestMemoryStorageState::default()
         }));
         let (_shutdown_tx, shutdown_rx) = watch::channel(false);
-        let controller = CapacityController::new(
-            ForgettingConfig::default(),
-            storage.clone(),
-            shutdown_rx,
-        );
+        let controller =
+            CapacityController::new(ForgettingConfig::default(), storage.clone(), shutdown_rx);
 
         controller.run().await;
 
@@ -445,10 +446,17 @@ mod tests {
         assert_eq!(stats.archived, 1);
         assert_eq!(stats.skipped_recent, 1);
 
-        let current_valid = storage.get_valid(&MemoryQuery::default(), 10).await.unwrap();
+        let current_valid = storage
+            .get_valid(&MemoryQuery::default(), 10)
+            .await
+            .unwrap();
         let current_ids: Vec<String> = current_valid
             .into_iter()
-            .filter_map(|memory| memory.id.map(|id| crate::types::record_key_to_string(&id.key)))
+            .filter_map(|memory| {
+                memory
+                    .id
+                    .map(|id| crate::types::record_key_to_string(&id.key))
+            })
             .collect();
         assert!(!current_ids.contains(&stale_id));
 
@@ -464,7 +472,11 @@ mod tests {
             .unwrap();
         let historical_ids: Vec<String> = historical
             .into_iter()
-            .filter_map(|memory| memory.id.map(|id| crate::types::record_key_to_string(&id.key)))
+            .filter_map(|memory| {
+                memory
+                    .id
+                    .map(|id| crate::types::record_key_to_string(&id.key))
+            })
             .collect();
         assert!(historical_ids.contains(&stale_id));
 

@@ -308,6 +308,10 @@ impl MemorySearchEngine {
 
     pub async fn upsert_memory(&self, memory: Memory) {
         if let Some(meta) = MemoryMeta::from_memory(memory) {
+            if meta.valid_until.is_some() {
+                self.remove_memory(&meta.id).await;
+                return;
+            }
             let mut index = self.index.write().await;
             index
                 .engine
@@ -323,6 +327,11 @@ impl MemorySearchEngine {
         let mut index = self.index.write().await;
         for memory in memories {
             if let Some(meta) = MemoryMeta::from_memory(memory) {
+                if meta.valid_until.is_some() {
+                    index.engine.remove(&meta.id);
+                    index.meta.remove(&meta.id);
+                    continue;
+                }
                 index
                     .engine
                     .upsert(Document::new(meta.id.clone(), meta.content.clone()));
@@ -369,6 +378,10 @@ impl MemorySearchEngine {
             })
             .take(limit)
             .collect()
+    }
+
+    pub async fn document_count(&self) -> usize {
+        self.index.read().await.meta.len()
     }
 
     pub async fn load_all_from_storage(&self, storage: &impl StorageBackend) -> usize {
@@ -428,6 +441,7 @@ pub struct ChunkMeta {
     /// Hierarchical breadcrumb path from AST (e.g. "impl:AuthService > fn:login")
     pub context_path: Option<String>,
     pub project_id: String,
+    pub generation: Option<u64>,
 }
 
 impl ChunkMeta {
@@ -454,6 +468,7 @@ impl ChunkMeta {
             name: chunk.name.clone(),
             context_path: chunk.context_path.clone(),
             project_id,
+            generation: chunk.generation,
         };
         Some((meta, chunk.content.clone()))
     }
@@ -664,7 +679,11 @@ impl CodeSearchEngine {
 
         // ── Phase 2: fetch content for only the top-N results from the DB ──
         let ids: Vec<String> = scored_metas.iter().map(|(_, m)| m.id.clone()).collect();
-        let fetched = match storage.get_chunks_by_ids(&ids).await {
+        let active_generation = match project_id {
+            Some(project_id) => storage.get_active_generation(project_id).await.ok().flatten(),
+            None => None,
+        };
+        let fetched = match storage.get_chunks_by_ids(&ids, active_generation).await {
             Ok(chunks) => chunks,
             Err(e) => {
                 tracing::warn!("BM25 search: failed to fetch chunk content: {}", e);
@@ -673,12 +692,12 @@ impl CodeSearchEngine {
         };
 
         // Build a content lookup by chunk ID
-        let content_map: HashMap<String, String> = fetched
+        let chunk_map: HashMap<String, crate::types::CodeChunk> = fetched
             .into_iter()
             .filter_map(|c| {
                 c.id.as_ref()
                     .map(|t| crate::types::record_key_to_string(&t.key))
-                    .map(|id| (id, c.content))
+                    .map(|id| (id, c))
             })
             .collect();
 
@@ -686,7 +705,8 @@ impl CodeSearchEngine {
         scored_metas
             .into_iter()
             .map(|(score, meta)| {
-                let content = content_map.get(&meta.id).cloned().unwrap_or_default();
+                let chunk = chunk_map.get(&meta.id);
+                let content = chunk.map(|chunk| chunk.content.clone()).unwrap_or_default();
                 ScoredCodeChunk {
                     id: meta.id,
                     file_path: meta.file_path,
@@ -697,6 +717,8 @@ impl CodeSearchEngine {
                     chunk_type: meta.chunk_type,
                     name: meta.name,
                     context_path: meta.context_path,
+                    freshness: None,
+                    generation: chunk.and_then(|chunk| chunk.generation).or(meta.generation),
                     score,
                 }
             })
@@ -728,29 +750,34 @@ impl CodeSearchEngine {
         &self,
         storage: &impl crate::storage::StorageBackend,
     ) -> usize {
-        let projects = match storage.list_projects().await {
-            Ok(p) => p,
+        let statuses = match storage.list_index_statuses().await {
+            Ok(statuses) => statuses,
             Err(e) => {
-                tracing::warn!("Failed to list projects for BM25 warm-up: {}", e);
+                tracing::warn!("Failed to list project statuses for BM25 warm-up: {}", e);
                 return 0;
             }
         };
 
         let mut total = 0usize;
 
-        for project_id in &projects {
+        for status in statuses {
             // Only load projects that finished indexing (completed or embedding_pending)
-            match storage.get_index_status(project_id).await {
-                Ok(Some(status))
-                    if status.status == crate::types::IndexState::Completed
-                        || status.status == crate::types::IndexState::EmbeddingPending =>
-                {
-                    // OK — load it
-                }
-                _ => continue,
+            if status.status != crate::types::IndexState::Completed
+                && status.status != crate::types::IndexState::EmbeddingPending
+            {
+                continue;
             }
 
-            match self.rebuild_project_streaming(storage, project_id).await {
+            let project_id = status.project_id;
+            let active_generation = storage
+                .get_active_generation(&project_id)
+                .await
+                .ok()
+                .flatten();
+            match self
+                .rebuild_project_streaming(storage, &project_id, active_generation)
+                .await
+            {
                 Ok(count) => {
                     if count > 0 {
                         tracing::info!(
@@ -783,6 +810,7 @@ impl CodeSearchEngine {
         &self,
         storage: &impl crate::storage::StorageBackend,
         project_id: &str,
+        active_generation: Option<u64>,
     ) -> crate::Result<usize> {
         const PAGE_SIZE: usize = 1000;
         let mut all_pairs: Vec<(ChunkMeta, String)> = Vec::new();
@@ -790,7 +818,7 @@ impl CodeSearchEngine {
 
         loop {
             let chunks = storage
-                .get_chunks_paginated(project_id, PAGE_SIZE, offset)
+                .get_chunks_paginated(project_id, active_generation, PAGE_SIZE, offset)
                 .await?;
             if chunks.is_empty() {
                 break;
@@ -821,18 +849,23 @@ impl CodeSearchEngine {
     ///
     /// Uses the same streaming paginated fetch as `load_all_from_storage` to
     /// avoid a transient memory spike.
-    pub async fn rebuild_from_storage(
+    pub async fn try_rebuild_from_storage(
         &self,
         storage: &impl crate::storage::StorageBackend,
         project_id: &str,
-    ) {
-        match self.rebuild_project_streaming(storage, project_id).await {
+        active_generation: Option<u64>,
+    ) -> crate::Result<usize> {
+        match self
+            .rebuild_project_streaming(storage, project_id, active_generation)
+            .await
+        {
             Ok(count) => {
                 tracing::info!(
                     project_id = %project_id,
                     chunks = count,
                     "BM25 index rebuilt for project"
                 );
+                Ok(count)
             }
             Err(e) => {
                 tracing::warn!(
@@ -840,8 +873,20 @@ impl CodeSearchEngine {
                     error = %e,
                     "Failed to rebuild BM25 index for project"
                 );
+                Err(e)
             }
         }
+    }
+
+    pub async fn rebuild_from_storage(
+        &self,
+        storage: &impl crate::storage::StorageBackend,
+        project_id: &str,
+    ) {
+        let active_generation = storage.get_active_generation(project_id).await.ok().flatten();
+        let _ = self
+            .try_rebuild_from_storage(storage, project_id, active_generation)
+            .await;
     }
 }
 
@@ -961,6 +1006,7 @@ mod tests {
                 embedding: None,
                 content_hash: String::new(),
                 project_id: Some("proj".to_string()),
+                generation: None,
                 indexed_at: crate::types::Datetime::default(),
             }
         }
@@ -970,6 +1016,7 @@ mod tests {
         async fn get_chunks_by_ids(
             &self,
             ids: &[String],
+            _: Option<u64>,
         ) -> crate::Result<Vec<crate::types::CodeChunk>> {
             Ok(ids
                 .iter()
@@ -1007,6 +1054,12 @@ mod tests {
             _: usize,
             _: usize,
         ) -> crate::Result<Vec<crate::types::Memory>> {
+            unreachable!()
+        }
+        async fn list_memory_ids(
+            &self,
+            _: &crate::types::MemoryQuery,
+        ) -> crate::Result<Vec<String>> {
             unreachable!()
         }
         async fn count_memories(&self) -> crate::Result<usize> {
@@ -1051,6 +1104,7 @@ mod tests {
             &self,
             _: &[f32],
             _: Option<&str>,
+            _: Option<u64>,
             _: usize,
         ) -> crate::Result<Vec<crate::types::ScoredCodeChunk>> {
             unreachable!()
@@ -1059,6 +1113,7 @@ mod tests {
             &self,
             _: &[f32],
             _: Option<&str>,
+            _: Option<u64>,
             _: usize,
         ) -> crate::Result<Vec<crate::types::CodeSymbol>> {
             unreachable!()
@@ -1165,18 +1220,21 @@ mod tests {
             &self,
             _: &str,
             _: &str,
+            _: Option<u64>,
         ) -> crate::Result<Vec<crate::types::CodeChunk>> {
             unreachable!()
         }
         async fn get_all_chunks_for_project(
             &self,
             _: &str,
+            _: Option<u64>,
         ) -> crate::Result<Vec<crate::types::CodeChunk>> {
             unreachable!()
         }
         async fn get_chunks_paginated(
             &self,
             _: &str,
+            _: Option<u64>,
             _: usize,
             _: usize,
         ) -> crate::Result<Vec<crate::types::CodeChunk>> {
@@ -1195,6 +1253,103 @@ mod tests {
             unreachable!()
         }
         async fn list_projects(&self) -> crate::Result<Vec<String>> {
+            unreachable!()
+        }
+        async fn create_or_update_index_job(
+            &self,
+            _: &crate::types::IndexJobRecord,
+        ) -> crate::Result<()> {
+            unreachable!()
+        }
+        async fn update_index_job(&self, _: crate::types::IndexJobRecord) -> crate::Result<()> {
+            unreachable!()
+        }
+        async fn get_index_job(
+            &self,
+            _: &str,
+            _: &str,
+        ) -> crate::Result<Option<crate::types::IndexJobRecord>> {
+            unreachable!()
+        }
+        async fn list_index_jobs_for_project(
+            &self,
+            _: &str,
+        ) -> crate::Result<Vec<crate::types::IndexJobRecord>> {
+            unreachable!()
+        }
+        async fn delete_index_job(&self, _: &str, _: &str) -> crate::Result<()> {
+            unreachable!()
+        }
+        async fn upsert_file_checkpoint(
+            &self,
+            _: &crate::types::IndexFileCheckpoint,
+        ) -> crate::Result<()> {
+            unreachable!()
+        }
+        async fn get_file_checkpoint(
+            &self,
+            _: &str,
+            _: u64,
+            _: &str,
+        ) -> crate::Result<Option<crate::types::IndexFileCheckpoint>> {
+            unreachable!()
+        }
+        async fn list_file_checkpoints_for_job(
+            &self,
+            _: &str,
+            _: u64,
+        ) -> crate::Result<Vec<crate::types::IndexFileCheckpoint>> {
+            unreachable!()
+        }
+        async fn get_active_generation(&self, _: &str) -> crate::Result<Option<u64>> {
+            Ok(None)
+        }
+        async fn set_active_generation(&self, _: &str, _: u64) -> crate::Result<()> {
+            unreachable!()
+        }
+        async fn get_serving_generation(
+            &self,
+            _: &str,
+            _: crate::types::CapabilityKind,
+        ) -> crate::Result<Option<u64>> {
+            Ok(None)
+        }
+        async fn set_serving_generation(
+            &self,
+            _: &str,
+            _: crate::types::CapabilityKind,
+            _: u64,
+        ) -> crate::Result<()> {
+            unreachable!()
+        }
+        async fn get_indexing_generation(&self, _: &str) -> crate::Result<Option<u64>> {
+            Ok(None)
+        }
+        async fn set_indexing_generation(
+            &self,
+            _: &str,
+            _: Option<u64>,
+        ) -> crate::Result<()> {
+            unreachable!()
+        }
+        async fn get_serving_metadata(
+            &self,
+            _: &str,
+        ) -> crate::Result<crate::types::ServingGenerationMetadata> {
+            Ok(crate::types::ServingGenerationMetadata {
+                structural: None,
+                bm25: None,
+                symbols: None,
+                graph: None,
+                vector: None,
+                semantic: None,
+                indexing: None,
+            })
+        }
+        async fn list_abandoned_generations(&self, _: &str) -> crate::Result<Vec<u64>> {
+            unreachable!()
+        }
+        async fn delete_project_generation(&self, _: &str, _: u64) -> crate::Result<()> {
             unreachable!()
         }
         async fn get_file_hash(&self, _: &str, _: &str) -> crate::Result<Option<String>> {
@@ -1264,18 +1419,21 @@ mod tests {
         async fn get_project_symbols(
             &self,
             _: &str,
+            _: Option<u64>,
         ) -> crate::Result<Vec<crate::types::CodeSymbol>> {
             unreachable!()
         }
         async fn get_symbol_callers(
             &self,
             _: &str,
+            _: Option<u64>,
         ) -> crate::Result<Vec<crate::types::CodeSymbol>> {
             unreachable!()
         }
         async fn get_symbol_callees(
             &self,
             _: &str,
+            _: Option<u64>,
         ) -> crate::Result<Vec<crate::types::CodeSymbol>> {
             unreachable!()
         }
@@ -1284,6 +1442,7 @@ mod tests {
             _: &str,
             _: usize,
             _: crate::types::Direction,
+            _: Option<u64>,
         ) -> crate::Result<(
             Vec<crate::types::CodeSymbol>,
             Vec<crate::types::SymbolRelation>,
@@ -1293,6 +1452,7 @@ mod tests {
         async fn get_code_subgraph(
             &self,
             _: &[String],
+            _: Option<u64>,
         ) -> crate::Result<(
             Vec<crate::types::CodeSymbol>,
             Vec<crate::types::SymbolRelation>,
@@ -1307,6 +1467,7 @@ mod tests {
             _: usize,
             _: Option<&str>,
             _: Option<&str>,
+            _: Option<u64>,
         ) -> crate::Result<(Vec<crate::types::CodeSymbol>, u32)> {
             unreachable!()
         }
@@ -1321,20 +1482,28 @@ mod tests {
             &self,
             _: &str,
             _: &[String],
+            _: Option<u64>,
             _: usize,
         ) -> crate::Result<Vec<(String, f32)>> {
             unreachable!()
         }
-        async fn count_symbols(&self, _: &str) -> crate::Result<u32> {
+        async fn count_symbols(&self, _: &str, _: Option<u64>) -> crate::Result<u32> {
             unreachable!()
         }
-        async fn count_chunks(&self, _: &str) -> crate::Result<u32> {
+        async fn count_chunks(&self, _: &str, _: Option<u64>) -> crate::Result<u32> {
             unreachable!()
         }
-        async fn count_embedded_symbols(&self, _: &str) -> crate::Result<u32> {
+        async fn count_embedded_symbols(&self, _: &str, _: Option<u64>) -> crate::Result<u32> {
             unreachable!()
         }
-        async fn count_embedded_chunks(&self, _: &str) -> crate::Result<u32> {
+        async fn count_embedded_chunks(&self, _: &str, _: Option<u64>) -> crate::Result<u32> {
+            unreachable!()
+        }
+        async fn get_all_project_stats(
+            &self,
+        ) -> crate::Result<
+            std::collections::HashMap<String, crate::storage::traits::ProjectStats>,
+        > {
             unreachable!()
         }
         async fn get_unembedded_chunks(
@@ -1372,6 +1541,9 @@ mod tests {
             _: &str,
             _: Option<&str>,
         ) -> crate::Result<Option<crate::types::CodeSymbol>> {
+            unreachable!()
+        }
+        async fn get_symbol_project_id(&self, _: &str) -> crate::Result<Option<String>> {
             unreachable!()
         }
         async fn health_check(&self) -> crate::Result<bool> {
@@ -1426,6 +1598,7 @@ mod tests {
                 name: name.map(|s| s.to_string()),
                 context_path: None,
                 project_id: project_id.to_string(),
+                generation: None,
             },
             content.to_string(),
         )
@@ -1590,6 +1763,66 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn test_code_search_engine_project_id_none_searches_all_projects_without_leakage() {
+        let engine = CodeSearchEngine::new();
+
+        engine
+            .rebuild_project(
+                "alpha-root",
+                vec![make_chunk_pair(
+                    "alpha_chunk",
+                    "src/alpha.rs",
+                    "fn shared_probe() { let alpha_marker = true; }",
+                    Some("shared_probe"),
+                    "alpha-root",
+                )],
+            )
+            .await;
+        engine
+            .rebuild_project(
+                "beta-root",
+                vec![make_chunk_pair(
+                    "beta_chunk",
+                    "src/beta.rs",
+                    "fn shared_probe() { let beta_marker = true; }",
+                    Some("shared_probe"),
+                    "beta-root",
+                )],
+            )
+            .await;
+
+        let mock_storage = MockStorage::new(vec![
+            MockStorage::make_chunk(
+                "alpha_chunk",
+                "fn shared_probe() { let alpha_marker = true; }",
+            ),
+            MockStorage::make_chunk(
+                "beta_chunk",
+                "fn shared_probe() { let beta_marker = true; }",
+            ),
+        ]);
+
+        let alpha_results = engine
+            .search("shared_probe", Some("alpha-root"), 10, &mock_storage)
+            .await;
+        assert_eq!(alpha_results.len(), 1);
+        assert_eq!(alpha_results[0].id, "alpha_chunk");
+
+        let beta_results = engine
+            .search("shared_probe", Some("beta-root"), 10, &mock_storage)
+            .await;
+        assert_eq!(beta_results.len(), 1);
+        assert_eq!(beta_results[0].id, "beta_chunk");
+
+        let all_results = engine.search("shared_probe", None, 10, &mock_storage).await;
+        let ids: HashSet<_> = all_results
+            .iter()
+            .map(|result| result.id.as_str())
+            .collect();
+        assert_eq!(ids, HashSet::from(["alpha_chunk", "beta_chunk"]));
+    }
+
     /// Verify make_document_text emits both raw and normalised forms.
     #[test]
     fn test_make_document_text_includes_raw_path() {
@@ -1603,6 +1836,7 @@ mod tests {
             name: Some("MyModule::my_fn".to_string()),
             context_path: None,
             project_id: "p".to_string(),
+            generation: None,
         };
         let content = "some content here";
         let text = make_document_text(&chunk, content);

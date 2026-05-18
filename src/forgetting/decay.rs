@@ -5,9 +5,9 @@ use chrono::Utc;
 use crate::types::{MemoryType, SearchResult};
 
 use super::config::{
-    DEFAULT_DECAY_LAMBDA, DEFAULT_EPISODIC_HALF_LIFE_DAYS, DEFAULT_MIN_DECAY,
+    ForgettingConfig, DEFAULT_DECAY_LAMBDA, DEFAULT_EPISODIC_HALF_LIFE_DAYS, DEFAULT_MIN_DECAY,
     DEFAULT_PROCEDURAL_HALF_LIFE_DAYS, DEFAULT_REINFORCEMENT_ALPHA, DEFAULT_REINFORCEMENT_CAP,
-    DEFAULT_SEMANTIC_HALF_LIFE_DAYS, ForgettingConfig,
+    DEFAULT_SEMANTIC_HALF_LIFE_DAYS,
 };
 
 /// Compute effective age in days, slowed by access reinforcement.
@@ -19,8 +19,8 @@ use super::config::{
 #[must_use]
 pub fn effective_age_days(actual_age_days: f64, access_count: u32) -> f64 {
     let clamped_age_days = actual_age_days.max(0.0);
-    let reinforcement_scale = 1.0
-        + f64::from(DEFAULT_REINFORCEMENT_ALPHA) * (1.0 + f64::from(access_count)).ln();
+    let reinforcement_scale =
+        1.0 + f64::from(DEFAULT_REINFORCEMENT_ALPHA) * (1.0 + f64::from(access_count)).ln();
 
     clamped_age_days / reinforcement_scale
 }
@@ -62,11 +62,7 @@ pub fn reinforcement_bonus(access_count: u32) -> f32 {
 /// Formula:
 /// `final_score = current_score * decay_factor * (1 + reinforcement_bonus)`
 #[must_use]
-pub fn apply_decay_scoring(
-    current_score: f32,
-    decay_factor: f32,
-    reinforcement_bonus: f32,
-) -> f32 {
+pub fn apply_decay_scoring(current_score: f32, decay_factor: f32, reinforcement_bonus: f32) -> f32 {
     current_score * decay_factor * (1.0 + reinforcement_bonus)
 }
 
@@ -84,10 +80,7 @@ pub fn compute_decay(
     current_score: f32,
 ) -> (f32, f32, f32) {
     let now = Utc::now();
-    let anchor_time = result
-        .event_time
-        .or(result.ingestion_time)
-        .unwrap_or(now);
+    let anchor_time = result.event_time.or(result.ingestion_time).unwrap_or(now);
     let actual_age_days = (now - anchor_time).num_milliseconds() as f64 / 86_400_000.0;
     let effective_age = effective_age_days(actual_age_days, result.access_count);
     let half_life_days = f64::from(config.half_life_days_for(&result.memory_type));
@@ -167,10 +160,7 @@ mod tests {
     #[test]
     fn high_access_count_slows_decay() {
         let without_reinforcement = decay_factor(60.0, &MemoryType::Episodic);
-        let with_reinforcement = decay_factor(
-            effective_age_days(60.0, 10),
-            &MemoryType::Episodic,
-        );
+        let with_reinforcement = decay_factor(effective_age_days(60.0, 10), &MemoryType::Episodic);
 
         assert!(with_reinforcement > without_reinforcement);
         assert!(with_reinforcement > 0.25);

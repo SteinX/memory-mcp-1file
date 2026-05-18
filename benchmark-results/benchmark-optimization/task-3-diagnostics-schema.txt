@@ -1,0 +1,54 @@
+Task 3 diagnostics schema verification
+Timestamp (UTC): 2026-04-27T00:00:00Z
+
+Command:
+python3 - <<'PY'
+import json
+from pathlib import Path
+p = Path('.sisyphus/evidence/evals/memory-retrieval-baseline.json')
+data = json.loads(p.read_text())
+rows = data.get('per_query', [])
+allowed = {
+    'id_mismatch','empty_results','wrong_rank','embedding_not_ready','call_error','parse_error','none','expected_no_match'
+}
+missing_diag = []
+invalid_failure = []
+for idx,row in enumerate(rows,1):
+    if not isinstance(row.get('raw_top_k'), list):
+        missing_diag.append(row.get('query_id', idx))
+    ft = row.get('failure_type')
+    if ft not in allowed:
+        invalid_failure.append({'query_id': row.get('query_id', idx), 'failure_type': ft})
+summary = {
+    'row_count': len(rows),
+    'rows_with_raw_top_k_list': len(rows) - len(missing_diag),
+    'missing_raw_top_k_query_ids': missing_diag,
+    'rows_with_valid_failure_type': len(rows) - len(invalid_failure),
+    'invalid_failure_type_rows': invalid_failure,
+    'allowed_failure_types': sorted(allowed),
+    'status': 'pass' if len(rows)==10 and not missing_diag and not invalid_failure else 'fail'
+}
+print(json.dumps(summary, indent=2, sort_keys=True))
+if summary['status'] != 'pass':
+    raise SystemExit(1)
+PY
+
+Output:
+{
+  "allowed_failure_types": [
+    "call_error",
+    "embedding_not_ready",
+    "empty_results",
+    "expected_no_match",
+    "id_mismatch",
+    "none",
+    "parse_error",
+    "wrong_rank"
+  ],
+  "invalid_failure_type_rows": [],
+  "missing_raw_top_k_query_ids": [],
+  "row_count": 10,
+  "rows_with_raw_top_k_list": 10,
+  "rows_with_valid_failure_type": 10,
+  "status": "pass"
+}

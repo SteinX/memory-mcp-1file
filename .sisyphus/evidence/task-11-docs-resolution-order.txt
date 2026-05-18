@@ -1,0 +1,22 @@
+[TASK-11 EVIDENCE: RESOLUTION ORDER AUDIT]
+TIMESTAMP: 2026-05-02T10:05:00Z
+GIT_SHA: $(git rev-parse --short HEAD)
+STATUS: COMPLETED
+
+DESCRIPTION:
+Verification of project resolution order, session binding, and in-memory lifetime documentation in README.md.
+
+AUDIT RESULTS:
+1. Resolution Order (L345-L350):
+   - Explicit project_id (L346)
+   - Session Binding (L347)
+   - Breadth Fallback (L348)
+   - Stale Binding Diagnostics (L349)
+
+2. Session-Bound Project Resolution Details (L403-L410):
+   - Bind/Unbind/Status actions (L404-L406)
+   - Lifetime: Binding is keyed by the HTTP MCP mcp-session-id, stored in process memory only, and does not survive server restart (L407)
+   - Transport Support: Stdio mode returns reason_code="unsupported" for binding actions as it lacks session context (L408)
+   - Diagnostics: Stale bindings return success JSON with empty results, reason_code="stale", and binding_state="stale_binding" (L410)
+
+VERIFICATION PASS: All required resolution order and lifetime semantics are documented with verified line references.

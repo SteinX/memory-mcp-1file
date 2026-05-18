@@ -1,0 +1,47 @@
+{
+  "generated_at": "2026-05-14T11:27:12.225020+00:00",
+  "endpoint": "http://127.0.0.1:23819/mcp",
+  "context": {
+    "project_id": "reddoc_true_dev",
+    "project_stats_skipped": true
+  },
+  "results": [
+    {
+      "name": "code_recall_exact_symbol",
+      "tool": "recall_code",
+      "arguments": {
+        "project_id": "reddoc_true_dev",
+        "query": "RCChatSearchTabView",
+        "limit": 10
+      },
+      "iterations": 1,
+      "warmup": 0,
+      "latency_ms": {
+        "min": 17.506542000000014,
+        "max": 17.506542000000014,
+        "mean": 17.506542000000014,
+        "median": 17.506542000000014,
+        "p95": 17.506542000000014,
+        "samples": [
+          17.506542000000014
+        ]
+      },
+      "last_summary": {
+        "count": 0,
+        "is_partial": false,
+        "bm25_hits": 0,
+        "vector_hits": 0,
+        "fallback_path": "bm25_lexical_fast_path",
+        "serving_generation": {
+          "bm25": 8,
+          "graph": 8,
+          "semantic": 8,
+          "structural": 8,
+          "symbols": 8,
+          "vector": 8
+        },
+        "indexing_generation": null
+      }
+    }
+  ]
+}

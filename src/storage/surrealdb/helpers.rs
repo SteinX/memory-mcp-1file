@@ -1,6 +1,6 @@
 use crate::types::{
-    CodeRelationType, ConfidenceClass, Relation, RelationClass, RelationProvenance,
-    StalenessState, SymbolRelation,
+    CodeRelationType, ConfidenceClass, Relation, RelationClass, RelationProvenance, StalenessState,
+    SymbolRelation,
 };
 
 pub(super) fn generate_id() -> String {

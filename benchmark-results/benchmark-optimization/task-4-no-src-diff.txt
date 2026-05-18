@@ -1,0 +1,2 @@
+Command: rtk git diff -- src/
+Result: no output; no server source changes under src/.

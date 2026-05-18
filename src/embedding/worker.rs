@@ -391,9 +391,11 @@ mod tests {
         let metrics = std::sync::Arc::new(EmbeddingMetrics::new());
         let adaptive_queue = AdaptiveEmbeddingQueue::with_defaults(tx.clone(), metrics);
         let forgetting_config = crate::forgetting::config::ForgettingConfig::default();
-        let (access_tracker, _) = crate::forgetting::access::create_access_channel(forgetting_config.clone());
+        let (access_tracker, _) =
+            crate::forgetting::access::create_access_channel(forgetting_config.clone());
 
         let (shutdown_tx, _) = tokio::sync::watch::channel(false);
+        let db_semaphore_size = crate::config::AppConfig::default().db_semaphore_size;
         let _worker = EmbeddingWorker::new(
             rx,
             tx,
@@ -408,7 +410,7 @@ mod tests {
                 embedding_store: store,
                 embedding_queue: adaptive_queue,
                 progress: crate::config::IndexProgressTracker::new(),
-                db_semaphore: Arc::new(tokio::sync::Semaphore::new(10)),
+                db_semaphore: Arc::new(tokio::sync::Semaphore::new(db_semaphore_size)),
                 code_search: Arc::new(crate::search::CodeSearchEngine::new()),
                 memory_search: Arc::new(crate::search::MemorySearchEngine::new()),
                 indexing_projects: Arc::new(
@@ -416,7 +418,16 @@ mod tests {
                 ),
                 shutdown_tx,
                 index_pending: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
-                projection_registry: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
+                project_registry: Arc::new(crate::codebase::ProjectRegistry::new()),
+                session_bindings: Arc::new(crate::codebase::SessionBindingStore::new(1024)),
+                projection_registry: Arc::new(tokio::sync::RwLock::new(
+                    std::collections::HashMap::new(),
+                )),
+                community_cache: moka::future::Cache::builder()
+                    .max_capacity(1)
+                    .time_to_live(std::time::Duration::from_secs(300))
+                    .build(),
+                metrics: crate::metrics::MetricsRecorder::disabled(),
             }),
         );
     }

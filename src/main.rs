@@ -1,8 +1,8 @@
 use clap::Parser;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 
@@ -10,7 +10,12 @@ use tracing_subscriber::util::SubscriberInitExt;
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
-use memory_mcp::codebase::{CodebaseManager, IndexWorker};
+use memory_mcp::codebase::startup::{
+    clear_completed_indexing_generations_on_startup, perform_startup_job_recovery,
+    resume_pending_embeddings_on_startup, start_code_intelligence_lifecycle,
+    CodeIntelligenceStartupStatus,
+};
+use memory_mcp::codebase::ProjectRegistryPolicy;
 use memory_mcp::config::{AppConfig, AppState};
 use memory_mcp::embedding::{
     EmbeddingConfig, EmbeddingService, EmbeddingStore, EmbeddingWorker, ModelType,
@@ -23,6 +28,7 @@ use memory_mcp::lifecycle::{
 };
 use memory_mcp::search::{CodeSearchEngine, MemorySearchEngine};
 use memory_mcp::server::MemoryMcpServer;
+use memory_mcp::storage::surrealdb::DimensionCheck;
 use memory_mcp::storage::{StorageBackend, SurrealStorage};
 use memory_mcp::transport::{serve_http_sse, HttpServerConfig};
 use memory_mcp::types::EmbeddingState;
@@ -33,6 +39,13 @@ use memory_mcp::types::EmbeddingState;
 struct Cli {
     #[arg(long, env, default_value_os_t = default_data_dir())]
     data_dir: PathBuf,
+
+    #[arg(
+        long,
+        env = "EMBEDDING_MODEL_CACHE_DIR",
+        help = "Directory for downloaded HuggingFace model files. Native runs default to a durable shared app-data directory outside --data-dir; containers default to --data-dir/models."
+    )]
+    model_cache_dir: Option<PathBuf>,
 
     #[arg(long, env = "EMBEDDING_MODEL", default_value = "gemma")]
     model: String,
@@ -96,6 +109,29 @@ struct Cli {
     )]
     bind: String,
 
+    #[arg(
+        long,
+        env = "PROJECT_PATH",
+        help = "Explicit project root for code intelligence startup"
+    )]
+    project_path: Option<PathBuf>,
+
+    #[arg(
+        long,
+        env = "ALLOWED_PROJECT_ROOTS",
+        value_delimiter = ',',
+        help = "Optional comma-delimited allowlist of server-visible roots for project registration"
+    )]
+    allowed_project_roots: Vec<PathBuf>,
+
+    #[arg(
+        long,
+        env = "MAX_MANAGED_PROJECTS",
+        default_value = "5",
+        help = "Maximum number of managed project lifecycles in registry"
+    )]
+    max_managed_projects: usize,
+
     /// SurrealKV block cache capacity in MB. Default: auto-detect based on available RAM.
     /// Set to 0 to use SurrealDB's default (RAM/2, may cause OOM on constrained systems).
     /// Recommended: 256 MB for 16 GB RAM, 512 MB for 32 GB RAM.
@@ -107,6 +143,57 @@ fn default_data_dir() -> PathBuf {
     dirs::data_local_dir()
         .unwrap_or_else(|| PathBuf::from("."))
         .join("memory-mcp")
+}
+
+fn resolve_model_cache_dir(
+    data_dir: &Path,
+    model: ModelType,
+    override_dir: Option<PathBuf>,
+) -> PathBuf {
+    if let Some(dir) = override_dir {
+        return dir;
+    }
+
+    let legacy_dir = data_dir.join("models");
+    if model_exists_in_cache_dir(&legacy_dir, model) {
+        return legacy_dir;
+    }
+
+    default_model_cache_dir(data_dir)
+}
+
+fn model_exists_in_cache_dir(cache_dir: &Path, model: ModelType) -> bool {
+    let repo_dir = cache_dir.join(format!("models--{}", model.repo_id().replace('/', "--")));
+    let Ok(commit_hash) = std::fs::read_to_string(repo_dir.join("refs").join("main")) else {
+        return false;
+    };
+
+    repo_dir
+        .join("snapshots")
+        .join(commit_hash.trim())
+        .join("model.safetensors")
+        .exists()
+}
+
+fn default_model_cache_dir(data_dir: &Path) -> PathBuf {
+    default_model_cache_dir_for(data_dir, is_container_environment())
+}
+
+fn default_model_cache_dir_for(data_dir: &Path, is_container: bool) -> PathBuf {
+    if is_container {
+        return data_dir.join("models");
+    }
+
+    dirs::data_local_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("memory-mcp")
+        .join("models")
+}
+
+fn is_container_environment() -> bool {
+    std::path::Path::new("/.dockerenv").exists()
+        || std::env::var_os("MEMORY_MCP_CONTAINER").is_some()
+        || std::env::var_os("KUBERNETES_SERVICE_HOST").is_some()
 }
 
 fn init_logging(
@@ -312,15 +399,19 @@ fn configure_block_cache(cli_cache_mb: Option<u64>) {
     #[cfg(target_os = "macos")]
     {
         if let Some(available_mb) = get_available_memory_mb_macos() {
-            // Use 20% of available RAM, max 512 MB
-            let cache_mb = std::cmp::min((available_mb as f64 * 0.2) as u64, 512);
+            // Use 20% of available RAM, capped at 512 MB, but keep a practical
+            // lower bound. macOS can report very low free-page counts under
+            // normal memory pressure; a tiny 10-12 MB SurrealKV block cache
+            // makes large data-dir startup and query paths much slower.
+            let detected_mb = std::cmp::min((available_mb as f64 * 0.2) as u64, 512);
+            let cache_mb = detected_mb.clamp(128, 512);
             let cache_bytes = cache_mb * 1024 * 1024;
             unsafe {
                 std::env::set_var(ENV_VAR, cache_bytes.to_string());
             }
             eprintln!(
-                "[memory-mcp] Auto-configured block cache: {} MB (available RAM: {} MB)",
-                cache_mb, available_mb
+                "[memory-mcp] Auto-configured block cache: {} MB (available RAM: {} MB, detected: {} MB)",
+                cache_mb, available_mb, detected_mb
             );
         }
     }
@@ -377,6 +468,7 @@ fn main() -> anyhow::Result<()> {
 }
 
 async fn async_main(cli: Cli) -> anyhow::Result<()> {
+    let process_start = Instant::now();
     if cli.list_models {
         println!("Available models:");
         println!("  qwen3     - 1024 dim, ~1.2 GB          [Apache 2.0] Top open-source 2026, MRL, 32K ctx");
@@ -407,6 +499,23 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
     )?;
 
     let runtime_mode = if cli.stdio { "stdio" } else { "http_sse" };
+    let model: ModelType = cli.model.parse().map_err(|e: String| anyhow::anyhow!(e))?;
+    let model_cache_dir =
+        resolve_model_cache_dir(&cli.data_dir, model, cli.model_cache_dir.clone());
+    let metrics_recorder = memory_mcp::metrics::MetricsRecorder::from_env();
+    if let Some(path) = metrics_recorder.output_path() {
+        tracing::info!(path = %path.display(), "metrics output enabled");
+    }
+    metrics_recorder.record_event(
+        "process_start",
+        serde_json::json!({
+            "mode": runtime_mode,
+            "version": env!("CARGO_PKG_VERSION"),
+            "model": cli.model,
+            "model_cache_dir": model_cache_dir.display().to_string(),
+            "project_path": cli.project_path.as_ref().map(|path| path.display().to_string()),
+        }),
+    );
     install_panic_hook(cli.data_dir.clone(), runtime_mode.to_string());
     record_runtime_event_with_details(
         &cli.data_dir,
@@ -416,9 +525,11 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
         serde_json::json!({
             "version": env!("CARGO_PKG_VERSION"),
             "model": cli.model,
+            "model_cache_dir": model_cache_dir.display().to_string(),
             "bind": cli.bind,
             "port": cli.port,
             "log_level": cli.log_level,
+            "project_path": cli.project_path.as_ref().map(|path| path.display().to_string()),
         }),
     );
 
@@ -429,10 +540,9 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
         mode = runtime_mode,
         model = %cli.model,
         data_dir = %cli.data_dir.display(),
+        model_cache_dir = %model_cache_dir.display(),
         "memory-mcp starting"
     );
-
-    let model: ModelType = cli.model.parse().map_err(|e: String| anyhow::anyhow!(e))?;
 
     if model.requires_license_agreement() {
         tracing::warn!(
@@ -447,18 +557,101 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
         cache_size: cli.cache_size,
         batch_size: cli.batch_size,
         mrl_dim: cli.mrl_dim,
-        cache_dir: Some(cli.data_dir.join("models")),
+        cache_dir: Some(model_cache_dir),
     };
 
     embedding_config
         .validate()
         .map_err(|e| anyhow::anyhow!("Invalid embedding configuration: {}", e))?;
 
+    let storage_start = Instant::now();
     let storage =
         Arc::new(SurrealStorage::new(&cli.data_dir, embedding_config.output_dim()).await?);
+    metrics_recorder.record_duration(
+        "startup.storage_open",
+        storage_start.elapsed(),
+        serde_json::json!({
+            "data_dir": cli.data_dir.display().to_string(),
+            "embedding_dim": embedding_config.output_dim(),
+        }),
+    );
 
-    if let Err(e) = storage.check_dimension(embedding_config.output_dim()).await {
-        tracing::warn!("Dimension check: {}", e);
+    let dimension_check_start = Instant::now();
+    match storage
+        .inspect_dimension(embedding_config.output_dim())
+        .await
+    {
+        Ok(DimensionCheck::Match { actual }) => {
+            tracing::info!(
+                model = embedding_config.output_dim(),
+                db = actual,
+                "Dimension check passed"
+            );
+            metrics_recorder.record_duration(
+                "startup.dimension_check",
+                dimension_check_start.elapsed(),
+                serde_json::json!({"ok": true, "status": "match", "actual": actual}),
+            );
+        }
+        Ok(DimensionCheck::Mismatch { actual, expected }) => {
+            tracing::warn!(
+                old = actual,
+                new = expected,
+                "Dimension mismatch detected; rebuilding vector indices in background"
+            );
+            metrics_recorder.record_duration(
+                "startup.dimension_check",
+                dimension_check_start.elapsed(),
+                serde_json::json!({"ok": true, "status": "mismatch_background", "actual": actual, "expected": expected}),
+            );
+            let repair_storage = storage.clone();
+            let repair_metrics = metrics_recorder.clone();
+            tokio::spawn(async move {
+                let started = Instant::now();
+                let result = async {
+                    repair_storage.rebuild_vector_indices(expected).await?;
+                    repair_storage.mark_embeddings_stale().await
+                }
+                .await;
+                match result {
+                    Ok(()) => {
+                        tracing::info!(
+                            old = actual,
+                            new = expected,
+                            "Background vector index rebuild completed; embeddings marked stale"
+                        );
+                        repair_metrics.record_duration(
+                            "startup.dimension_repair",
+                            started.elapsed(),
+                            serde_json::json!({"ok": true, "actual": actual, "expected": expected}),
+                        );
+                    }
+                    Err(error) => {
+                        tracing::warn!(%error, old = actual, new = expected, "Background vector index rebuild failed");
+                        repair_metrics.record_duration(
+                            "startup.dimension_repair",
+                            started.elapsed(),
+                            serde_json::json!({"ok": false, "actual": actual, "expected": expected, "error": error.to_string()}),
+                        );
+                    }
+                }
+            });
+        }
+        Ok(DimensionCheck::Unknown) => {
+            metrics_recorder.record_duration(
+                "startup.dimension_check",
+                dimension_check_start.elapsed(),
+                serde_json::json!({"ok": true, "status": "unknown"}),
+            );
+        }
+        Err(e) => {
+            tracing::warn!("Dimension check: {}", e);
+            metrics_recorder.record_duration(
+                "startup.dimension_check",
+                dimension_check_start.elapsed(),
+                serde_json::json!({"ok": false, "status": "error", "error": e.to_string()}),
+            );
+        }
     }
 
     tracing::info!(output_dim = embedding_config.output_dim(), model = %embedding_config.model, "Embedding engine configured");
@@ -470,28 +663,70 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
     embedding.start_loading();
 
     let metrics = std::sync::Arc::new(memory_mcp::embedding::EmbeddingMetrics::new());
-    let (queue_tx, queue_rx) = tokio::sync::mpsc::channel(256);
-    let adaptive_queue =
-        memory_mcp::embedding::AdaptiveEmbeddingQueue::with_defaults(queue_tx, metrics.clone());
     let forgetting_config = ForgettingConfig::from_env();
     let (access_tracker, access_writer) = create_access_channel(forgetting_config.clone());
 
     let (shutdown_tx, _shutdown_rx) = tokio::sync::watch::channel(false);
 
+    let allowed_project_roots = if cli.allowed_project_roots.is_empty() {
+        None
+    } else {
+        let mut canonical_roots = Vec::with_capacity(cli.allowed_project_roots.len());
+        for root in &cli.allowed_project_roots {
+            let canonical = root.canonicalize().map_err(|source| {
+                anyhow::anyhow!(
+                    "Invalid --allowed-project-roots entry '{}': {}",
+                    root.display(),
+                    source
+                )
+            })?;
+            canonical_roots.push(canonical);
+        }
+        Some(canonical_roots)
+    };
+
+    let max_managed_projects = if cli.max_managed_projects == 0 {
+        5
+    } else {
+        cli.max_managed_projects
+    };
+
+    let project_registry_policy = ProjectRegistryPolicy {
+        allowed_roots: allowed_project_roots.clone(),
+        max_projects: max_managed_projects,
+    };
+
+    let db_semaphore_size = AppConfig::db_semaphore_size_from_env();
+    tracing::info!("DB semaphore permits: {}", db_semaphore_size);
+
+    let app_config = AppConfig {
+        data_dir: cli.data_dir,
+        model: cli.model,
+        cache_size: cli.cache_size,
+        batch_size: cli.batch_size,
+        timeout_ms: cli.timeout,
+        log_level: cli.log_level,
+        model_load_timeout_ms: cli.model_load_timeout_secs * 1000,
+        // New fields: use compile-time defaults (values are documented in AppConfig::default)
+        allowed_project_roots,
+        max_managed_projects,
+        db_semaphore_size,
+        ..AppConfig::default()
+    };
+
+    let (queue_tx, queue_rx) = tokio::sync::mpsc::channel(app_config.embedding_queue_capacity);
+    let adaptive_queue = memory_mcp::embedding::AdaptiveEmbeddingQueue::new(
+        queue_tx,
+        metrics.clone(),
+        memory_mcp::embedding::AdaptiveQueueConfig {
+            capacity: app_config.embedding_queue_capacity,
+            ..Default::default()
+        },
+    );
     let requeue_tx = adaptive_queue.requeue_sender();
 
     let state = Arc::new(AppState {
-        config: AppConfig {
-            data_dir: cli.data_dir,
-            model: cli.model,
-            cache_size: cli.cache_size,
-            batch_size: cli.batch_size,
-            timeout_ms: cli.timeout,
-            log_level: cli.log_level,
-            model_load_timeout_ms: cli.model_load_timeout_secs * 1000,
-            // New fields: use compile-time defaults (values are documented in AppConfig::default)
-            ..AppConfig::default()
-        },
+        config: app_config.clone(),
         forgetting_config: forgetting_config.clone(),
         access_tracker,
         storage: storage.clone(),
@@ -499,14 +734,32 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
         embedding_store: embedding_store.clone(),
         embedding_queue: adaptive_queue,
         progress: memory_mcp::config::IndexProgressTracker::new(),
-        db_semaphore: Arc::new(tokio::sync::Semaphore::new(10)),
+        db_semaphore: Arc::new(tokio::sync::Semaphore::new(app_config.db_semaphore_size)),
         code_search: Arc::new(CodeSearchEngine::new()),
         memory_search: Arc::new(MemorySearchEngine::new()),
         indexing_projects: Arc::new(std::sync::Mutex::new(std::collections::HashSet::new())),
         shutdown_tx,
         index_pending: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
+        project_registry: Arc::new(memory_mcp::codebase::ProjectRegistry::with_policy(
+            project_registry_policy,
+        )),
+        session_bindings: Arc::new(memory_mcp::codebase::SessionBindingStore::new(1024)),
         projection_registry: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
+        community_cache: moka::future::Cache::builder()
+            .max_capacity(1)
+            .time_to_live(std::time::Duration::from_secs(300))
+            .build(),
+        metrics: metrics_recorder.clone(),
     });
+
+    state.metrics.record_duration(
+        "startup.state_ready",
+        process_start.elapsed(),
+        serde_json::json!({
+            "mode": runtime_mode,
+            "metrics_enabled": state.metrics.is_enabled(),
+        }),
+    );
 
     spawn_heartbeat(
         state.config.data_dir.clone(),
@@ -557,10 +810,18 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
     // Warm the in-memory BM25 index from existing DB data (background, non-blocking)
     let bm25_state = state.clone();
     tokio::spawn(async move {
+        let started = Instant::now();
         let count = bm25_state
             .code_search
             .load_all_from_storage(bm25_state.storage.as_ref())
             .await;
+        bm25_state.metrics.record_duration(
+            "warmup.code_bm25",
+            started.elapsed(),
+            serde_json::json!({
+                "chunks": count,
+            }),
+        );
         if count > 0 {
             tracing::info!(chunks = count, "BM25 in-memory index warmed from DB");
         }
@@ -568,10 +829,16 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
 
     let memory_bm25_state = state.clone();
     tokio::spawn(async move {
+        let started = Instant::now();
         let count = memory_bm25_state
             .memory_search
             .load_all_from_storage(memory_bm25_state.storage.as_ref())
             .await;
+        memory_bm25_state.metrics.record_duration(
+            "warmup.memory_bm25",
+            started.elapsed(),
+            serde_json::json!({"memories": count}),
+        );
         if count > 0 {
             tracing::info!(memories = count, "Memory lexical index warmed from DB");
         }
@@ -581,6 +848,7 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
     let reembed_state = state.clone();
     let reembed_engine = embedding.get_engine();
     tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_secs(60)).await;
         // Wait for embedding engine to be ready
         loop {
             let guard = reembed_engine.read().await;
@@ -670,70 +938,140 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
     // heavier tool calls experience startup latency, and only once.
     // ──────────────────────────────────────────────────────────────────────
 
-    // Auto-start codebase manager if /project exists
-    let project_path = PathBuf::from("/project");
-    if project_path.exists() {
-        let project_id = project_path
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("project")
-            .to_string();
+    let code_startup_state = state.clone();
+    let code_startup_project_path = cli.project_path.clone();
+    tokio::spawn(async move {
+        let recovery_start = Instant::now();
+        perform_startup_job_recovery(&code_startup_state).await;
+        code_startup_state.metrics.record_duration(
+            "startup.code_job_recovery",
+            recovery_start.elapsed(),
+            serde_json::json!({}),
+        );
 
-        // Create the IndexWorker for this project and start it in the background.
-        let (index_worker, index_tx) = IndexWorker::new(state.clone(), project_id.clone());
-        // Register the pending-job counter in AppState so the status API can read it.
-        state
-            .index_pending
-            .write()
-            .await
-            .insert(project_id.clone(), index_tx.pending_arc());
-        index_worker.start(state.shutdown_rx());
+        let indexing_generation_cleanup_start = Instant::now();
+        clear_completed_indexing_generations_on_startup(&code_startup_state).await;
+        code_startup_state.metrics.record_duration(
+            "startup.code_indexing_generation_cleanup",
+            indexing_generation_cleanup_start.elapsed(),
+            serde_json::json!({}),
+        );
 
-        // Build the CodebaseManager with the channel sender and start it.
-        let mgr = CodebaseManager::new(state.clone(), project_path.clone(), index_tx.clone());
-        if let Err(e) = mgr.start().await {
-            tracing::error!(error = %e, "Failed to start codebase manager for /project");
-        }
-        let mgr = Arc::new(mgr);
+        let embedding_resume_start = Instant::now();
+        resume_pending_embeddings_on_startup(&code_startup_state).await;
+        code_startup_state.metrics.record_duration(
+            "startup.code_embedding_resume",
+            embedding_resume_start.elapsed(),
+            serde_json::json!({}),
+        );
 
-        // ── Periodic manifest-diff task ─────────────────────────────────
-        // Every N minutes, run a lightweight manifest diff and push any
-        // discovered changes into the IndexWorker channel.  This catches
-        // files that were missed by the file-system watcher (e.g. because
-        // the process was restarted or the watcher lost events under heavy load).
-        let mgr_for_diff = mgr.clone();
-        let mut diff_shutdown = state.shutdown_rx();
-        let manifest_diff_interval_mins = state.config.manifest_diff_interval_mins;
-        tokio::spawn(async move {
-            let mut interval =
-                tokio::time::interval(Duration::from_secs(manifest_diff_interval_mins * 60));
-            interval.tick().await; // skip immediate first tick
+        let lifecycle_start = Instant::now();
+        let startup_outcome = start_code_intelligence_lifecycle(
+            code_startup_state.clone(),
+            code_startup_project_path.as_deref(),
+            std::path::Path::new("/project"),
+        )
+        .await;
+        let lifecycle_duration = lifecycle_start.elapsed();
 
-            loop {
-                tokio::select! {
-                    _ = interval.tick() => {
-                        tracing::debug!(
+        match startup_outcome.status {
+            CodeIntelligenceStartupStatus::Started {
+                project_id,
+                project_path,
+                source,
+                diagnostic,
+            } => {
+                code_startup_state.metrics.record_duration(
+                    "startup.code_lifecycle",
+                    lifecycle_duration,
+                    serde_json::json!({
+                        "status": "started",
+                        "project_id": project_id,
+                        "project_path": project_path.display().to_string(),
+                        "source": format!("{:?}", source),
+                    }),
+                );
+                match source {
+                    memory_mcp::codebase::resolver::StartupProjectRootSource::Configured => {
+                        tracing::info!(
+                            code_intelligence = ?diagnostic.as_json(),
                             project_id = %project_id,
-                            "Periodic manifest diff starting"
+                            path = %project_path.display(),
+                            "Using configured code intelligence project root"
                         );
-                        if let Err(e) = mgr_for_diff.validate_index_full().await {
-                            tracing::warn!(
-                                project_id = %project_id,
-                                error = %e,
-                                "Periodic manifest diff failed"
-                            );
-                        }
                     }
-                    _ = diff_shutdown.changed() => {
-                        if *diff_shutdown.borrow() {
-                            tracing::debug!(project_id = %project_id, "Manifest diff task stopping");
-                            break;
-                        }
+                    memory_mcp::codebase::resolver::StartupProjectRootSource::Fallback => {
+                        tracing::info!(
+                            code_intelligence = ?diagnostic.as_json(),
+                            project_id = %project_id,
+                            path = %project_path.display(),
+                            "Using compatibility /project code intelligence root"
+                        );
                     }
                 }
             }
-        });
-    }
+            CodeIntelligenceStartupStatus::MissingRoot {
+                configured_path,
+                fallback_path,
+                diagnostic,
+            } => {
+                code_startup_state.metrics.record_duration(
+                    "startup.code_lifecycle",
+                    lifecycle_duration,
+                    serde_json::json!({
+                        "status": "missing_root",
+                        "configured_path": configured_path.display().to_string(),
+                        "fallback_path": fallback_path.display().to_string(),
+                    }),
+                );
+                tracing::warn!(
+                    configured_path = %configured_path.display(),
+                    fallback_path = %fallback_path.display(),
+                    code_intelligence = ?diagnostic.as_json(),
+                    "Configured project root missing; continuing without code intelligence auto-start"
+                );
+            }
+            CodeIntelligenceStartupStatus::Disabled {
+                fallback_path,
+                diagnostic,
+            } => {
+                code_startup_state.metrics.record_duration(
+                    "startup.code_lifecycle",
+                    lifecycle_duration,
+                    serde_json::json!({
+                        "status": "disabled",
+                        "fallback_path": fallback_path.display().to_string(),
+                    }),
+                );
+                tracing::warn!(
+                    fallback_path = %fallback_path.display(),
+                    code_intelligence = ?diagnostic.as_json(),
+                    "Code intelligence auto-start disabled; continuing server startup"
+                );
+            }
+            CodeIntelligenceStartupStatus::StartupFailed {
+                project_path,
+                diagnostic,
+                fatal,
+            } => {
+                code_startup_state.metrics.record_duration(
+                    "startup.code_lifecycle",
+                    lifecycle_duration,
+                    serde_json::json!({
+                        "status": "failed",
+                        "project_path": project_path.display().to_string(),
+                        "fatal": fatal,
+                    }),
+                );
+                tracing::error!(
+                    path = %project_path.display(),
+                    fatal,
+                    code_intelligence = ?diagnostic.as_json(),
+                    "Failed to start code intelligence lifecycle"
+                );
+            }
+        }
+    });
 
     if cli.stdio {
         run_stdio_mode(server, state, cli.idle_timeout).await?;
@@ -856,4 +1194,82 @@ async fn run_http_mode(
         config.port
     );
     serve_http_sse(move || Ok(server.clone()), config, state).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn native_model_cache_defaults_to_shared_cache_outside_data_dir() {
+        let data_dir = PathBuf::from("/tmp/memory-mcp-test-data");
+        let cache_dir = default_model_cache_dir_for(&data_dir, false);
+
+        assert_ne!(cache_dir, data_dir.join("models"));
+        assert!(cache_dir.ends_with("memory-mcp/models"));
+    }
+
+    #[test]
+    fn container_model_cache_defaults_to_data_dir_models() {
+        let data_dir = PathBuf::from("/data");
+
+        assert_eq!(
+            default_model_cache_dir_for(&data_dir, true),
+            PathBuf::from("/data/models")
+        );
+    }
+
+    #[test]
+    fn explicit_model_cache_dir_overrides_default() {
+        let data_dir = PathBuf::from("/tmp/memory-mcp-test-data");
+        let override_dir = PathBuf::from("/tmp/shared-memory-mcp-models");
+
+        assert_eq!(
+            resolve_model_cache_dir(&data_dir, ModelType::Gemma, Some(override_dir.clone())),
+            override_dir
+        );
+    }
+
+    #[test]
+    fn existing_legacy_data_dir_model_cache_is_reused() {
+        let temp_dir = tempfile::tempdir().expect("create temp data dir");
+        let legacy_repo_dir = temp_dir
+            .path()
+            .join("models")
+            .join("models--unsloth--embeddinggemma-300m-qat-q4_0-unquantized");
+        std::fs::create_dir_all(legacy_repo_dir.join("refs"))
+            .expect("create legacy model cache refs");
+        std::fs::create_dir_all(legacy_repo_dir.join("snapshots").join("abc123"))
+            .expect("create legacy model cache snapshot");
+        std::fs::write(legacy_repo_dir.join("refs").join("main"), "abc123")
+            .expect("write legacy model cache ref");
+        std::fs::write(
+            legacy_repo_dir
+                .join("snapshots")
+                .join("abc123")
+                .join("model.safetensors"),
+            "",
+        )
+        .expect("write legacy model cache weight marker");
+
+        assert_eq!(
+            resolve_model_cache_dir(temp_dir.path(), ModelType::Gemma, None),
+            temp_dir.path().join("models")
+        );
+    }
+
+    #[test]
+    fn incomplete_legacy_data_dir_model_cache_is_not_reused() {
+        let temp_dir = tempfile::tempdir().expect("create temp data dir");
+        let legacy_repo_dir = temp_dir
+            .path()
+            .join("models")
+            .join("models--unsloth--embeddinggemma-300m-qat-q4_0-unquantized");
+        std::fs::create_dir_all(&legacy_repo_dir).expect("create incomplete legacy cache dir");
+
+        assert_ne!(
+            resolve_model_cache_dir(temp_dir.path(), ModelType::Gemma, None),
+            temp_dir.path().join("models")
+        );
+    }
 }

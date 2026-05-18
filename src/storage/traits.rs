@@ -10,10 +10,52 @@ use std::pin::Pin;
 use chrono::{DateTime, Utc};
 
 use crate::types::{
-    CodeChunk, CodeSymbol, Direction, Entity, IndexStatus, ManifestEntry, Memory, MemoryUpdate,
-    MemoryQuery, MemoryType, Relation, ScoredCodeChunk, SearchResult, SymbolRelation,
+    CapabilityKind, CodeChunk, CodeSymbol, Direction, Entity, ExportMemoryResponse,
+    ImportConflictStrategy, ImportMemoryResponse, IndexFileCheckpoint, IndexJobRecord, IndexStatus,
+    ManifestEntry, Memory, MemoryQuery, MemoryType, MemoryUpdate, MigrationMemoryRecord, Relation,
+    ScoredCodeChunk, SearchResult, ServingGenerationMetadata, SymbolRelation,
 };
 use crate::Result;
+
+#[derive(Debug, Clone)]
+pub struct MemoryExportOptions {
+    pub project_id: String,
+    pub filters: MemoryQuery,
+    pub valid_only: bool,
+    pub include_invalidated: bool,
+    pub limit: Option<usize>,
+}
+
+impl MemoryExportOptions {
+    pub fn new(project_id: impl Into<String>) -> Self {
+        Self {
+            project_id: project_id.into(),
+            filters: MemoryQuery::default(),
+            valid_only: true,
+            include_invalidated: false,
+            limit: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct MemoryImportOptions {
+    pub project_id: String,
+    pub conflict_strategy: ImportConflictStrategy,
+    pub dry_run: bool,
+    pub allow_invalidated: bool,
+}
+
+impl MemoryImportOptions {
+    pub fn new(project_id: impl Into<String>) -> Self {
+        Self {
+            project_id: project_id.into(),
+            conflict_strategy: ImportConflictStrategy::Remap,
+            dry_run: true,
+            allow_invalidated: false,
+        }
+    }
+}
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct CapacityMemoryCandidate {
@@ -24,6 +66,30 @@ pub struct CapacityMemoryCandidate {
     pub access_count: u32,
     pub last_accessed_at: Option<DateTime<Utc>>,
     pub importance_score: f32,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct MemoryGcFilter {
+    pub namespace: Option<String>,
+    pub memory_type: Option<MemoryType>,
+    pub invalidation_reason: Option<String>,
+    pub invalidated_before: Option<DateTime<Utc>>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct MemoryGcReasonCount {
+    pub reason: Option<String>,
+    pub count: usize,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ProjectStats {
+    pub files: u32,
+    pub chunks: u32,
+    pub symbols: u32,
+    pub embedded_chunks: u32,
+    pub embedded_symbols: u32,
+    pub memories: u32,
 }
 
 /// Object-safe storage surface used by fire-and-forget access tracking.
@@ -61,9 +127,7 @@ where
         id: String,
         accessed_at: DateTime<Utc>,
     ) -> Pin<Box<dyn Future<Output = Result<()>> + Send + '_>> {
-        Box::pin(async move {
-            StorageBackend::record_memory_access(self, &id, accessed_at).await
-        })
+        Box::pin(async move { StorageBackend::record_memory_access(self, &id, accessed_at).await })
     }
 
     fn count_valid_memories(&self) -> Pin<Box<dyn Future<Output = Result<usize>> + Send + '_>> {
@@ -88,7 +152,9 @@ where
         id: String,
         reason: Option<String>,
     ) -> Pin<Box<dyn Future<Output = Result<bool>> + Send + '_>> {
-        Box::pin(async move { StorageBackend::invalidate(self, &id, reason.as_deref(), None).await })
+        Box::pin(
+            async move { StorageBackend::invalidate(self, &id, reason.as_deref(), None).await },
+        )
     }
 }
 
@@ -126,6 +192,9 @@ pub trait StorageBackend: Send + Sync {
         offset: usize,
     ) -> Result<Vec<Memory>>;
 
+    /// List only memory IDs matching the given filters (no full record fetch)
+    async fn list_memory_ids(&self, filters: &MemoryQuery) -> Result<Vec<String>>;
+
     /// Count total number of memories
     async fn count_memories(&self) -> Result<usize>;
 
@@ -153,6 +222,61 @@ pub trait StorageBackend: Send + Sync {
         content_hash: &str,
     ) -> Result<Vec<Memory>>;
 
+    /// List invalidated memories for GC planning.
+    async fn list_invalidated_memories_for_gc(
+        &self,
+        _filter: &MemoryGcFilter,
+        _limit: usize,
+        _offset: usize,
+    ) -> Result<Vec<Memory>> {
+        Ok(Vec::new())
+    }
+
+    /// Count invalidated memories for GC planning.
+    async fn count_invalidated_memories_for_gc(&self, _filter: &MemoryGcFilter) -> Result<usize> {
+        Ok(0)
+    }
+
+    /// Count invalidated memories grouped by invalidation reason.
+    async fn count_invalidated_memories_by_reason(
+        &self,
+        _filter: &MemoryGcFilter,
+    ) -> Result<Vec<MemoryGcReasonCount>> {
+        Ok(Vec::new())
+    }
+
+    /// Physically delete memory rows by ID for explicit GC flows.
+    async fn delete_memories_batch(&self, ids: &[String]) -> Result<Vec<String>> {
+        let mut deleted = Vec::new();
+        for id in ids {
+            if self.delete_memory(id).await? {
+                deleted.push(id.clone());
+            }
+        }
+        Ok(deleted)
+    }
+
+    /// Export project-scoped memory records through the stable migration DTO.
+    async fn export_memories(
+        &self,
+        _options: &MemoryExportOptions,
+    ) -> Result<ExportMemoryResponse> {
+        Err(crate::types::AppError::Internal(
+            anyhow::anyhow!("memory export is not implemented for this storage backend").into(),
+        ))
+    }
+
+    /// Plan or insert memory records from the stable migration DTO.
+    async fn import_memories(
+        &self,
+        _records: Vec<MigrationMemoryRecord>,
+        _options: &MemoryImportOptions,
+    ) -> Result<ImportMemoryResponse> {
+        Err(crate::types::AppError::Internal(
+            anyhow::anyhow!("memory import is not implemented for this storage backend").into(),
+        ))
+    }
+
     // ─────────────────────────────────────────────────────────────────────────
     // Vector search
     // ─────────────────────────────────────────────────────────────────────────
@@ -170,6 +294,7 @@ pub trait StorageBackend: Send + Sync {
         &self,
         embedding: &[f32],
         project_id: Option<&str>,
+        active_generation: Option<u64>,
         limit: usize,
     ) -> Result<Vec<ScoredCodeChunk>>;
 
@@ -178,6 +303,7 @@ pub trait StorageBackend: Send + Sync {
         &self,
         embedding: &[f32],
         project_id: Option<&str>,
+        active_generation: Option<u64>,
         limit: usize,
     ) -> Result<Vec<CodeSymbol>>;
 
@@ -249,11 +375,7 @@ pub trait StorageBackend: Send + Sync {
     async fn get_valid(&self, filters: &MemoryQuery, limit: usize) -> Result<Vec<Memory>>;
 
     /// Get memories that were valid at a specific point in time
-    async fn get_valid_at(
-        &self,
-        filters: &MemoryQuery,
-        limit: usize,
-    ) -> Result<Vec<Memory>>;
+    async fn get_valid_at(&self, filters: &MemoryQuery, limit: usize) -> Result<Vec<Memory>>;
 
     /// Invalidate a memory (soft delete by setting valid_until)
     fn invalidate(
@@ -283,11 +405,19 @@ pub trait StorageBackend: Send + Sync {
     async fn delete_chunks_by_path(&self, project_id: &str, file_path: &str) -> Result<usize>;
 
     /// Get all chunks for a specific file path within a project
-    async fn get_chunks_by_path(&self, project_id: &str, file_path: &str)
-        -> Result<Vec<CodeChunk>>;
+    async fn get_chunks_by_path(
+        &self,
+        project_id: &str,
+        file_path: &str,
+        active_generation: Option<u64>,
+    ) -> Result<Vec<CodeChunk>>;
 
     /// Get all code chunks for a project (used to build in-memory BM25 index)
-    async fn get_all_chunks_for_project(&self, project_id: &str) -> Result<Vec<CodeChunk>>;
+    async fn get_all_chunks_for_project(
+        &self,
+        project_id: &str,
+        active_generation: Option<u64>,
+    ) -> Result<Vec<CodeChunk>>;
 
     /// Paginated code-chunk fetch used by the streaming BM25 warm-up.
     /// Returns up to `limit` chunks starting from row `offset` (zero-based).
@@ -296,6 +426,7 @@ pub trait StorageBackend: Send + Sync {
     async fn get_chunks_paginated(
         &self,
         project_id: &str,
+        active_generation: Option<u64>,
         limit: usize,
         offset: usize,
     ) -> Result<Vec<CodeChunk>>;
@@ -303,7 +434,11 @@ pub trait StorageBackend: Send + Sync {
     /// Fetch specific code chunks by their string IDs (e.g. "abc123").
     /// Used by the BM25 search to hydrate content for top-N results without
     /// keeping all chunk content in RAM.
-    async fn get_chunks_by_ids(&self, ids: &[String]) -> Result<Vec<CodeChunk>>;
+    async fn get_chunks_by_ids(
+        &self,
+        ids: &[String],
+        active_generation: Option<u64>,
+    ) -> Result<Vec<CodeChunk>>;
 
     /// Clear all embeddings for a project, forcing re-embedding via resume pipeline.
     /// Sets embedding = NONE on all chunks and symbols for the given project.
@@ -320,6 +455,110 @@ pub trait StorageBackend: Send + Sync {
 
     /// List all indexed project IDs
     async fn list_projects(&self) -> Result<Vec<String>>;
+
+    /// List indexing status records for project overview surfaces.
+    async fn list_index_statuses(&self) -> Result<Vec<IndexStatus>> {
+        let mut statuses = Vec::new();
+        for project_id in self.list_projects().await? {
+            if let Some(status) = self.get_index_status(&project_id).await? {
+                statuses.push(status);
+            }
+        }
+        Ok(statuses)
+    }
+
+    /// Create or replace a durable indexing job record keyed by (project_id, job_id).
+    ///
+    /// Durable `job_id` is distinct from same-process indexing operation IDs:
+    /// job records survive process restart and are used by resume/cleanup flows.
+    async fn create_or_update_index_job(&self, job: &IndexJobRecord) -> Result<()>;
+
+    /// Create or replace a durable indexing job record keyed by (project_id, job_id).
+    async fn create_index_job(&self, job: IndexJobRecord) -> Result<()> {
+        self.create_or_update_index_job(&job).await
+    }
+
+    /// Update an existing durable indexing job record keyed by job_id.
+    async fn update_index_job(&self, job: IndexJobRecord) -> Result<()> {
+        self.create_or_update_index_job(&job).await
+    }
+
+    /// Get a durable indexing job by (project_id, job_id).
+    async fn get_index_job(&self, project_id: &str, job_id: &str)
+        -> Result<Option<IndexJobRecord>>;
+
+    /// List durable indexing jobs for a project, newest first.
+    async fn list_index_jobs_for_project(&self, project_id: &str) -> Result<Vec<IndexJobRecord>>;
+
+    /// Delete a durable indexing job record by (project_id, job_id).
+    async fn delete_index_job(&self, project_id: &str, job_id: &str) -> Result<()>;
+
+    /// Upsert a per-file checkpoint keyed by (project_id, generation, relative_file_path).
+    async fn upsert_file_checkpoint(&self, checkpoint: &IndexFileCheckpoint) -> Result<()>;
+
+    /// Get a per-file checkpoint by (project_id, generation, relative_file_path).
+    async fn get_file_checkpoint(
+        &self,
+        project_id: &str,
+        generation: u64,
+        relative_file_path: &str,
+    ) -> Result<Option<IndexFileCheckpoint>>;
+
+    /// List checkpoints for a project generation/job target generation.
+    async fn list_file_checkpoints_for_job(
+        &self,
+        project_id: &str,
+        generation: u64,
+    ) -> Result<Vec<IndexFileCheckpoint>>;
+
+    /// Return the active generation for a project. Missing metadata means legacy rows are active.
+    async fn get_active_generation(&self, project_id: &str) -> Result<Option<u64>>;
+
+    /// Set the active generation for a project.
+    async fn set_active_generation(&self, project_id: &str, generation: u64) -> Result<()>;
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Per-capability serving generation accessors
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /// Get the serving (active) generation for a specific capability.
+    ///
+    /// `get_active_generation` / `set_active_generation` are compatibility aliases
+    /// that map to `CapabilityKind::Structural` (or equivalent structural-capability
+    /// serving generation) and must not be removed.
+    async fn get_serving_generation(
+        &self,
+        project_id: &str,
+        capability: CapabilityKind,
+    ) -> Result<Option<u64>>;
+
+    /// Set the serving (active) generation for a specific capability.
+    async fn set_serving_generation(
+        &self,
+        project_id: &str,
+        capability: CapabilityKind,
+        generation: u64,
+    ) -> Result<()>;
+
+    /// Get the currently-building (indexing) generation for a project, if any.
+    async fn get_indexing_generation(&self, project_id: &str) -> Result<Option<u64>>;
+
+    /// Set or clear the currently-building (indexing) generation for a project.
+    /// Pass `None` to clear (indexing finished or was cancelled).
+    async fn set_indexing_generation(
+        &self,
+        project_id: &str,
+        generation: Option<u64>,
+    ) -> Result<()>;
+
+    /// Return all per-capability serving generations plus the active indexing generation.
+    async fn get_serving_metadata(&self, project_id: &str) -> Result<ServingGenerationMetadata>;
+
+    /// List generations that have rows/checkpoints but are not the active generation.
+    async fn list_abandoned_generations(&self, project_id: &str) -> Result<Vec<u64>>;
+
+    /// Delete generation-scoped code intelligence rows for a project after a newer generation is active.
+    async fn delete_project_generation(&self, project_id: &str, generation: u64) -> Result<()>;
 
     // ─────────────────────────────────────────────────────────────────────────
     // File hash operations (incremental indexing)
@@ -377,13 +616,25 @@ pub trait StorageBackend: Send + Sync {
     async fn delete_symbols_by_path(&self, project_id: &str, file_path: &str) -> Result<usize>;
 
     /// Get all symbols for a project (for building cross-file SymbolIndex)
-    async fn get_project_symbols(&self, project_id: &str) -> Result<Vec<CodeSymbol>>;
+    async fn get_project_symbols(
+        &self,
+        project_id: &str,
+        active_generation: Option<u64>,
+    ) -> Result<Vec<CodeSymbol>>;
 
     /// Find all symbols that call a given symbol
-    async fn get_symbol_callers(&self, symbol_id: &str) -> Result<Vec<CodeSymbol>>;
+    async fn get_symbol_callers(
+        &self,
+        symbol_id: &str,
+        active_generation: Option<u64>,
+    ) -> Result<Vec<CodeSymbol>>;
 
     /// Find all symbols called by a given symbol
-    async fn get_symbol_callees(&self, symbol_id: &str) -> Result<Vec<CodeSymbol>>;
+    async fn get_symbol_callees(
+        &self,
+        symbol_id: &str,
+        active_generation: Option<u64>,
+    ) -> Result<Vec<CodeSymbol>>;
 
     /// Get related symbols via graph traversal
     async fn get_related_symbols(
@@ -391,12 +642,14 @@ pub trait StorageBackend: Send + Sync {
         symbol_id: &str,
         depth: usize,
         direction: Direction,
+        active_generation: Option<u64>,
     ) -> Result<(Vec<CodeSymbol>, Vec<SymbolRelation>)>;
 
     /// Get code subgraph for a set of symbol IDs (for recall_code PageRank)
     async fn get_code_subgraph(
         &self,
         symbol_ids: &[String],
+        active_generation: Option<u64>,
     ) -> Result<(Vec<CodeSymbol>, Vec<SymbolRelation>)>;
 
     /// Search symbols by name pattern
@@ -408,6 +661,7 @@ pub trait StorageBackend: Send + Sync {
         offset: usize,
         symbol_type: Option<&str>,
         path_prefix: Option<&str>,
+        active_generation: Option<u64>,
     ) -> Result<(Vec<CodeSymbol>, u32)>;
 
     /// Replace symbol->chunk overlap mappings for a project.
@@ -426,6 +680,7 @@ pub trait StorageBackend: Send + Sync {
         &self,
         project_id: &str,
         symbol_ids: &[String],
+        active_generation: Option<u64>,
         limit: usize,
     ) -> Result<Vec<(String, f32)>>;
 
@@ -434,16 +689,27 @@ pub trait StorageBackend: Send + Sync {
     // ─────────────────────────────────────────────────────────────────────────
 
     /// Count total symbols for a project
-    async fn count_symbols(&self, project_id: &str) -> Result<u32>;
+    async fn count_symbols(&self, project_id: &str, active_generation: Option<u64>) -> Result<u32>;
 
     /// Count total chunks for a project
-    async fn count_chunks(&self, project_id: &str) -> Result<u32>;
+    async fn count_chunks(&self, project_id: &str, active_generation: Option<u64>) -> Result<u32>;
 
     /// Count symbols that have embeddings (embedding IS NOT NULL)
-    async fn count_embedded_symbols(&self, project_id: &str) -> Result<u32>;
+    async fn count_embedded_symbols(
+        &self,
+        project_id: &str,
+        active_generation: Option<u64>,
+    ) -> Result<u32>;
 
     /// Count chunks that have embeddings (embedding IS NOT NULL)
-    async fn count_embedded_chunks(&self, project_id: &str) -> Result<u32>;
+    async fn count_embedded_chunks(
+        &self,
+        project_id: &str,
+        active_generation: Option<u64>,
+    ) -> Result<u32>;
+
+    /// Get per-project aggregate counts in batch for project listing surfaces.
+    async fn get_all_project_stats(&self) -> Result<HashMap<String, ProjectStats>>;
 
     /// Get chunks that have no embedding yet (for resume after interruption)
     async fn get_unembedded_chunks(&self, project_id: &str) -> Result<Vec<(String, String)>>;
@@ -475,6 +741,9 @@ pub trait StorageBackend: Send + Sync {
         name: &str,
         prefer_file: Option<&str>,
     ) -> Result<Option<CodeSymbol>>;
+
+    /// Look up the project_id for a given symbol_id directly from the DB.
+    async fn get_symbol_project_id(&self, symbol_id: &str) -> Result<Option<String>>;
 
     // ─────────────────────────────────────────────────────────────────────────
     // System
