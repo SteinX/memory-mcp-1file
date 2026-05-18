@@ -316,6 +316,35 @@ fn base_query(params: &MemoryBootstrapParams) -> anyhow::Result<MemoryQuery> {
     params.to_memory_query()
 }
 
+async fn fetch_bootstrap_memories(
+    state: &Arc<AppState>,
+    filters: &MemoryQuery,
+    fetch_limit: usize,
+) -> Result<(Vec<Memory>, Vec<Memory>, usize), anyhow::Error> {
+    let total_valid = state.storage.count_memories_filtered(filters).await?;
+    let recent_limit = fetch_limit.min(total_valid.max(1));
+    let memories = state.storage.get_valid(filters, recent_limit).await?;
+
+    if total_valid <= fetch_limit {
+        let mut active_task_candidates: Vec<_> = memories
+            .iter()
+            .filter(|memory| is_active_task_candidate(memory))
+            .cloned()
+            .collect();
+        active_task_candidates.sort_by(|a, b| task_priority(b).cmp(&task_priority(a)));
+        return Ok((memories, active_task_candidates, total_valid));
+    }
+
+    let all_valid = state.storage.get_valid(filters, total_valid).await?;
+    let mut active_task_candidates: Vec<_> = all_valid
+        .iter()
+        .filter(|memory| is_active_task_candidate(memory))
+        .cloned()
+        .collect();
+    active_task_candidates.sort_by(|a, b| task_priority(b).cmp(&task_priority(a)));
+    Ok((memories, active_task_candidates, total_valid))
+}
+
 pub async fn memory_bootstrap(
     state: &Arc<AppState>,
     params: MemoryBootstrapParams,
@@ -332,17 +361,50 @@ pub async fn memory_bootstrap(
     };
 
     let fetch_limit = BOOTSTRAP_FETCH_LIMIT.max(limit * 8);
-    let memories = match state.storage.get_valid(&filters, fetch_limit).await {
-        Ok(memories) => memories,
-        Err(error) => return Ok(error_response(error)),
-    };
+    let (memories, active_task_candidates, total_valid) =
+        match fetch_bootstrap_memories(state, &filters, fetch_limit).await {
+            Ok(result) => result,
+            Err(error) => return Ok(error_response(error)),
+        };
 
-    let mut active_task_candidates: Vec<_> = memories
+    let mut active_budget = SelectionBudget::new(limit, token_budget / 2);
+    let active_tasks = active_budget.select(
+        active_task_candidates
+            .iter()
+            .map(|memory| memory_entry(memory, "active_task", "active_task_priority"))
+            .collect(),
+    );
+
+    let mut known_ids: std::collections::BTreeSet<_> =
+        memories.iter().filter_map(memory_id).collect();
+    let mut bootstrap_pool = memories;
+    for memory in active_task_candidates.iter().cloned() {
+        let Some(id) = memory_id(&memory) else {
+            continue;
+        };
+        if known_ids.insert(id) {
+            bootstrap_pool.push(memory);
+        }
+    }
+
+    let memories = bootstrap_pool;
+
+    let stable_memory_count = memories
         .iter()
-        .filter(|memory| is_active_task_candidate(memory))
-        .cloned()
-        .collect();
-    active_task_candidates.sort_by(|a, b| task_priority(b).cmp(&task_priority(a)));
+        .filter(|memory| content_prefix(&memory.content).is_some())
+        .count();
+
+    let recent_window_truncated = total_valid.saturating_sub(fetch_limit);
+    let candidate_count = total_valid;
+
+    let fetch_window_partial = recent_window_truncated > 0;
+    let fetch_window_reason = if fetch_window_partial {
+        Some(format!(
+            "Bootstrap stable context/recovery scanned the newest {fetch_limit} of {total_valid} valid memories; active TASK candidates used a full filtered scan."
+        ))
+    } else {
+        None
+    };
 
     let mut stable_context_candidates: BTreeMap<&'static str, Vec<Value>> = BTreeMap::new();
     for memory in &memories {
@@ -367,22 +429,16 @@ pub async fn memory_bootstrap(
         .map(|memory| memory_entry(memory, "recovery", "operational_detail"))
         .collect();
 
-    let mut active_budget = SelectionBudget::new(limit, token_budget / 2);
-    let active_tasks = active_budget.select(
-        active_task_candidates
-            .iter()
-            .map(|memory| memory_entry(memory, "active_task", "active_task_priority"))
-            .collect(),
-    );
-
     let mut stable_groups = serde_json::Map::new();
     let mut stable_truncated_limit = 0usize;
     let mut stable_truncated_tokens = 0usize;
+    let mut stable_used_tokens = 0usize;
     let stable_group_budget = (token_budget / 3).max(128);
     for group in ["decision", "user", "research", "project", "context", "epic"] {
         let candidates = stable_context_candidates.remove(group).unwrap_or_default();
         let mut budget = SelectionBudget::new(limit, stable_group_budget);
         let selected = budget.select(candidates);
+        stable_used_tokens += budget.used_tokens;
         stable_truncated_limit += budget.truncated_by_limit;
         stable_truncated_tokens += budget.truncated_by_token_budget;
         stable_groups.insert(group.to_string(), Value::Array(selected));
@@ -404,7 +460,13 @@ pub async fn memory_bootstrap(
     let truncated_by_token_budget = active_budget.truncated_by_token_budget
         + stable_truncated_tokens
         + recovery_budget.truncated_by_token_budget;
-    let is_partial = truncated_by_limit > 0 || truncated_by_token_budget > 0;
+    let is_partial =
+        truncated_by_limit > 0 || truncated_by_token_budget > 0 || fetch_window_partial;
+    let partial_reason = if truncated_by_limit > 0 || truncated_by_token_budget > 0 {
+        Some("Bootstrap selection was truncated by limit or token_budget.".to_string())
+    } else {
+        fetch_window_reason.clone()
+    };
 
     Ok(success_json(json!({
         "active_tasks": active_tasks,
@@ -415,8 +477,11 @@ pub async fn memory_bootstrap(
         "selection_summary": {
             "limit": limit,
             "token_budget": token_budget,
-            "estimated_tokens_used": active_budget.used_tokens + recovery_budget.used_tokens,
-            "candidate_count": memories.len(),
+            "estimated_tokens_used": active_budget.used_tokens + stable_used_tokens + recovery_budget.used_tokens,
+            "candidate_count": candidate_count,
+            "scanned_count": memories.len(),
+            "stable_context_candidate_count": stable_memory_count,
+            "recent_window_truncated": recent_window_truncated,
             "returned_count": selected_count,
             "truncated_by_limit": truncated_by_limit,
             "truncated_by_token_budget": truncated_by_token_budget,
@@ -434,13 +499,9 @@ pub async fn memory_bootstrap(
         "summary": summary_collection_response(
             "memory_bootstrap",
             selected_count,
-            Some(memories.len()),
+            Some(candidate_count),
             is_partial,
-            if is_partial {
-                Some("Bootstrap selection was truncated by limit or token_budget.".to_string())
-            } else {
-                None
-            }
+            partial_reason
         )
     })))
 }
@@ -538,7 +599,11 @@ pub async fn memory_audit(
         .get_valid(&filters, limit)
         .await
         .unwrap_or_default();
-    let active_count = active_memories.len();
+    let active_count = state
+        .storage
+        .count_memories_filtered(&filters)
+        .await
+        .unwrap_or(active_memories.len());
     let invalidated_memories = state
         .storage
         .list_invalidated_memories_for_gc(&gc_filter, limit, 0)
@@ -723,6 +788,55 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn bootstrap_finds_active_task_outside_recent_window() {
+        let ctx = TestContext::new().await;
+        seed(
+            &ctx,
+            "TASK: OLD-WP\nStatus: in_progress\nCurrent: T999",
+            MemoryType::Episodic,
+        )
+        .await;
+        for index in 0..(BOOTSTRAP_FETCH_LIMIT + 5) {
+            seed(
+                &ctx,
+                &format!("CONTEXT: recent observation {index}"),
+                MemoryType::Semantic,
+            )
+            .await;
+        }
+
+        let result = memory_bootstrap(
+            &ctx.state,
+            MemoryBootstrapParams {
+                prompt: Some("continue old task".to_string()),
+                compact_summary: None,
+                namespace: Some("boot".to_string()),
+                user_id: None,
+                agent_id: None,
+                run_id: None,
+                project_id: None,
+                limit: Some(5),
+                token_budget: Some(4_000),
+            },
+        )
+        .await
+        .unwrap();
+
+        let json = text_result(&result);
+        let active_tasks = json["active_tasks"].as_array().unwrap();
+        assert!(
+            active_tasks
+                .iter()
+                .any(|task| task["content"].as_str().unwrap().contains("OLD-WP")),
+            "active task outside recent bootstrap window should still be returned: {json}"
+        );
+        assert_eq!(
+            json["selection_summary"]["recent_window_truncated"].as_u64(),
+            Some(6)
+        );
+    }
+
+    #[tokio::test]
     async fn bootstrap_filters_compact_summary_recovery_duplicates() {
         let ctx = TestContext::new().await;
         seed(
@@ -863,5 +977,38 @@ mod tests {
         );
         assert!(json.get("contract").is_some());
         assert!(json.get("summary").is_some());
+    }
+
+    #[tokio::test]
+    async fn audit_active_count_is_not_limited_to_sample() {
+        let ctx = TestContext::new().await;
+        for index in 0..5 {
+            seed(
+                &ctx,
+                &format!("CONTEXT: active audit count {index}"),
+                MemoryType::Semantic,
+            )
+            .await;
+        }
+
+        let result = memory_audit(
+            &ctx.state,
+            MemoryAuditParams {
+                namespace: Some("boot".to_string()),
+                memory_type: None,
+                include_invalidated: Some(false),
+                limit: Some(2),
+            },
+        )
+        .await
+        .unwrap();
+
+        let json = text_result(&result);
+        assert_eq!(
+            json["lifecycle_counts"]["active"].as_u64(),
+            Some(5),
+            "active count should be the full filtered count, not the limited sample: {json}"
+        );
+        assert_eq!(json["operator_signals"]["sample_limit"].as_u64(), Some(2));
     }
 }
