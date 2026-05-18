@@ -51,8 +51,10 @@ pub(super) async fn create_code_symbols_batch(
             "start_line": symbol.start_line,
             "end_line": symbol.end_line,
             "project_id": symbol.project_id,
-            "signature": symbol.signature,
         });
+        if let Some(signature) = &symbol.signature {
+            row["signature"] = serde_json::json!(signature);
+        }
         if let Some(embedding) = &symbol.embedding {
             row["embedding"] = serde_json::json!(embedding);
         }
@@ -71,7 +73,7 @@ pub(super) async fn create_code_symbols_batch(
             start_line = $input.start_line,
             end_line = $input.end_line,
             project_id = $input.project_id,
-            signature = $input.signature,
+            signature = $input.signature OR NONE,
             embedding = $input.embedding OR NONE,
             generation = $input.generation OR NONE,
             indexed_at = time::now()

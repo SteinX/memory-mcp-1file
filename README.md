@@ -37,6 +37,7 @@ It combines:
 9.  **Operator Attention Summaries** so preview/apply/read responses surface a compact `attention_summary` for multi-match, partial-supersede, lineage-cycle, truncation, and fingerprint-check signals without requiring callers to infer risk from raw fields.
 10. **Retrieval/Read Truth Alignment** so `search_memory` and `recall` also surface consolidation truth summaries instead of requiring a second hop to `get_memory` before a caller can see lifecycle state.
 11. **Plan Diagnostics Echo** so `preview_consolidate_memory` and `consolidate_memory` return a normalized `plan_diagnostics` view of the fingerprint inputs, making stale-plan mismatches explainable without reconstructing the plan by hand.
+12. **Plugin Bootstrap Contract** so `memory_bootstrap`, `memory_observation_create`, `memory_audit`, and `memory_search_trace` give clients one stable server-side contract for startup context, hook observations, lifecycle diagnostics, and ranking explanations.
 12. **Hash-First Duplicate Lookup** so exact-duplicate consolidation can narrow candidates by `content_hash` first, while still falling back to exact-content matching for older memories that predate create-time hashing.
 13. **Lookup Diagnostics** so preview/apply responses explicitly show whether duplicate detection came from `hash-first` narrowing or `exact-content` fallback for legacy no-hash memories.
 14. **Operator Summary** so preview/apply/read/retrieval responses expose one compact `operator_summary` entrypoint that tells clients which diagnostic section to inspect first.
@@ -390,7 +391,10 @@ Or with Docker:
   2. **Session Binding**: If no explicit `project_id` is provided, the server uses the project bound to the current HTTP MCP session.
   3. **Breadth Fallback**: If neither an explicit ID nor a session binding exists, the server performs a cross-project search (if `project_id=None` behavior is supported by the tool).
   *Note: Stale session bindings (e.g., project deleted) return empty success with `reason_code="stale"` and `binding_state="stale_binding"` without broadening to cross-project search.*
-- **Plugin-Facing Contract Freeze**: Code/project read surfaces expose additive `contract` + `summary` metadata with a machine-readable `reason_code` taxonomy (`missing`, `stale`, `partial`, `degraded`, `invalid_locator`, `generation_mismatch`, `unsupported`) while preserving legacy string `reason` fields for compatibility.
+- **Plugin-Facing Contract Freeze**: Code/project/memory bootstrap read surfaces expose additive `contract` + `summary` metadata with a machine-readable `reason_code` taxonomy (`missing`, `stale`, `partial`, `degraded`, `invalid_locator`, `generation_mismatch`, `unsupported`) while preserving legacy string `reason` fields for compatibility.
+- **Server-Side Session Bootstrap**: `memory_bootstrap` is a read-only startup/recovery tool that returns active `TASK:` candidates, stable `DECISION:`/`USER:`/`RESEARCH:`/`PROJECT:`/`CONTEXT:` groups, compact recovery details, project readiness, memory health, and selection diagnostics.
+- **Observation Evidence Capture**: `memory_observation_create` stores plugin/session hook evidence in the existing Memory table with `metadata.observation.schema_version=1`. It never adds an `OBSERVATION:` prefix, never auto-promotes to learning memory, and never silently consolidates or overwrites old records.
+- **Audit and Trace Diagnostics**: `memory_audit` summarizes lifecycle/purge/observation signals for plugin viewers and debug panels. `memory_search_trace` delegates to existing recall/search ranking and explains effective query, result IDs, match channels, lifecycle visibility, and rank source without changing search semantics.
 - **Explicit Projection Locator Lifecycle**: `project_info(action="projection")` returns an ephemeral locator record with typed lifecycle and lookup metadata, and `project_info(action="projection_by_locator")` returns the same contract on resolve/miss without promoting locators to stable public IDs.
 - **Temporal Validity**: Memories can have `valid_from` and `valid_until` dates.
 - **SurrealDB Backend**: Fast, embedded, single-file database.
@@ -472,11 +476,13 @@ The canonical fixture for integration testing is at `tests/fixtures/learning_mem
 
 ## 🛠️ Tools Available
 
-The server exposes **36 tools** to the AI model, organized into logical categories.
+The server exposes **40 tools** to the AI model, organized into logical categories.
 
 ### 🧠 Core Memory Management
 | Tool | Description |
 |------|-------------|
+| `memory_bootstrap` | Read-only session bootstrap for startup, compact recovery, and manual continue flows. Returns `active_tasks`, grouped `stable_context`, `recovery`, `project`, `memory_health`, `selection_summary`, plus additive `contract` and `summary`. |
+| `memory_observation_create` | Create a structured observation evidence memory from plugin/session hooks. Content without a legal prefix is normalized to `CONTEXT:`. Stores `metadata.observation.schema_version=1`; does not auto-promote, auto-consolidate, or silently overwrite. |
 | `store_memory` | Store a new memory with content, optional scope fields, metadata, and optional `importance_score`. Read/list surfaces now also expose additive `contract` + `summary` metadata. |
 | `update_memory` | Update memory fields, including scope and `importance_score`. |
 | `delete_memory` | Emergency/admin single-record deletion by ID. Use only with explicit human confirmation; routine cleanup must use `invalidate` followed by `preview_purge_memory`/`purge_memory`. |
@@ -490,6 +496,7 @@ The server exposes **36 tools** to the AI model, organized into logical categori
 | `get_valid` | Get valid memories. Supports optional timestamp (ISO 8601), scope filters, memory_type, metadata_filter, and event/ingestion ranges. Response includes additive contract and summary metadata. |
 | `export_memory` | Export memories for a project as inline JSONL using the public migration contract. Returns a `jsonl` string in the response body — no filesystem path or file is involved. By default exports only valid (non-invalidated) records. To include invalidated records, set `valid_only=false` and `include_invalidated=true`. Raw embeddings and vectors are never exported. |
 | `import_memory` | Import memories from an inline JSONL string using the public migration contract. The `jsonl` field in the request carries the JSONL content directly — no filesystem path or file is involved. Defaults: `dry_run=false`, `conflict_strategy=remap`, `preserve_project_id=false`. Set `dry_run=true` to validate and preview without writing anything. Invalidated records are skipped unless `allow_invalidated=true`. Imported records are re-embedded by the current service; no vector payloads are preserved. |
+| `memory_audit` | Read-only lifecycle diagnostic surface for plugin/debug/viewer consumers. Summarizes active/invalidated/superseded/learning archived or rejected counts, purge readiness, observation counts, and operator signals. |
 
 ### Memory Lifecycle and GC
 
@@ -550,6 +557,7 @@ Error path guidance:
 |------|-------------|
 | `recall` | Hybrid memory retrieval (vector+BM25+graph via RRF) with bounded effective-query normalization plus additive diagnostics and contract metadata. |
 | `search_memory` | Memory search (`query`, optional `mode`: `vector` or `bm25`) with bounded effective-query normalization, optional filters, and additive contract/summary metadata. |
+| `memory_search_trace` | Read-only ranking explanation for a memory query. Delegates to existing `recall`/`search_memory` paths and returns effective query diagnostics, result IDs, match channels, lifecycle visibility, and rank explanations. |
 
 ### 🕸️ Knowledge Graph
 | Tool | Description |

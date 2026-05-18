@@ -1,3 +1,4 @@
+pub mod bootstrap;
 pub mod code;
 pub mod contracts;
 pub mod graph;
@@ -7,6 +8,7 @@ pub mod learning_lifecycle;
 pub mod learning_response;
 pub mod memory;
 pub mod memory_lifecycle;
+pub mod observation;
 pub mod search;
 pub mod system;
 

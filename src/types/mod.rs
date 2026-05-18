@@ -1,10 +1,10 @@
 pub mod code;
 pub mod code_intelligence;
-pub mod learning;
 pub mod embedding_state;
 pub mod entity;
 pub mod error;
 pub mod export;
+pub mod learning;
 pub mod memory;
 pub mod project_id;
 pub mod safe_thing;

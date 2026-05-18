@@ -39,6 +39,7 @@ graph TD
 
         User -- "MCP Tools" --> Handler
 
+        Handler -- "memory_bootstrap/audit/observation" --> L_Mem
         Handler -- "store_memory" --> L_Mem
         Handler -- "recall/search" --> L_Search
         Handler -- "create_relation" --> L_Graph
@@ -180,6 +181,19 @@ Phase 5A freezes the public integration contract for the current code/project re
 - `unsupported`
 
 Legacy string `summary.partial.reason` values are still emitted for compatibility, but plugin logic should prefer `reason_code`.
+
+### Memory bootstrap, observation, audit, and trace
+
+The server exposes four plugin-facing memory orchestration tools. They are additive surfaces over the existing Memory table and search/index helpers; no new storage table or illegal memory prefix is introduced.
+
+| Tool | Mutates data | Primary consumer | Contract |
+|---|---:|---|---|
+| `memory_bootstrap` | No | session startup, compact recovery, manual continue flows | Returns active `TASK:` candidates, stable `DECISION:`/`USER:`/`RESEARCH:`/`PROJECT:`/`CONTEXT:` groups, compact recovery details, project readiness, memory health, `selection_summary`, `contract`, and `summary`. |
+| `memory_observation_create` | Yes | plugin/session hooks | Stores evidence in the existing Memory table with `metadata.observation.schema_version=1`; content without a legal prefix is normalized to `CONTEXT:`. It never auto-promotes, auto-consolidates, or silently overwrites old memory. |
+| `memory_audit` | No | plugin debug views and operator tooling | Summarizes lifecycle counts, purge readiness, observation counts by source/event type, and operator attention signals. |
+| `memory_search_trace` | No | explainability/debug UI | Delegates to the existing `recall`/`search_memory` ranking path and reports effective query diagnostics, result IDs, match channels, lifecycle visibility, and rank explanation. |
+
+Observation records are event evidence, not final learning conclusions. Promotion to durable learning rules continues to use the explicit `learning_memory_*` lifecycle tools.
 
 ### Projection locator lifecycle
 

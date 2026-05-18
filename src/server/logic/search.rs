@@ -2,8 +2,8 @@ use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Instant;
 
-use rmcp::model::CallToolResult;
-use serde_json::json;
+use rmcp::model::{CallToolResult, RawContent};
+use serde_json::{json, Value};
 
 use crate::config::AppState;
 use crate::forgetting::access::AccessTracker;
@@ -15,7 +15,7 @@ use crate::forgetting::decay::{
 use crate::graph::{
     rrf_merge, run_ppr, DEFAULT_BM25_WEIGHT, DEFAULT_PPR_WEIGHT, DEFAULT_VECTOR_WEIGHT,
 };
-use crate::server::params::{RecallParams, SearchParams};
+use crate::server::params::{MemorySearchTraceParams, RecallParams, SearchParams};
 use crate::storage::StorageBackend;
 use crate::types::{ExportIdentity, Memory, MemoryQuery, MemoryType, ScoredMemory, SearchResult};
 
@@ -1062,6 +1062,206 @@ pub async fn recall(state: &Arc<AppState>, params: RecallParams) -> anyhow::Resu
     recall_impl(state, params, None).await
 }
 
+fn search_trace_contract_json() -> Value {
+    let contract = with_surface_guidance(
+        export_contract_meta(ExportIdentity::default(), None),
+        &[
+            "effective_query",
+            "result_ids",
+            "results",
+            "operator_summary",
+            "contract",
+            "summary",
+        ],
+        &["source_response_summary"],
+        &[],
+    );
+    serde_json::to_value(contract).unwrap_or_else(|_| json!({}))
+}
+
+fn call_tool_json(result: &CallToolResult) -> anyhow::Result<Value> {
+    match result.content.first().map(|content| &content.raw) {
+        Some(RawContent::Text(text)) => Ok(serde_json::from_str(&text.text)?),
+        _ => Err(anyhow::anyhow!("tool result did not contain JSON text")),
+    }
+}
+
+fn result_array(response: &Value, mode: &str) -> Vec<Value> {
+    let key = if mode == "recall" {
+        "memories"
+    } else {
+        "results"
+    };
+    response
+        .get(key)
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default()
+}
+
+fn trace_match_channels(result: &Value, mode: &str) -> Value {
+    if let Some(channels) = result.get("channels").and_then(Value::as_array) {
+        return json!(channels
+            .iter()
+            .filter_map(Value::as_str)
+            .collect::<Vec<_>>());
+    }
+    match mode {
+        "vector" => json!(["vector"]),
+        "bm25" => json!(["bm25"]),
+        _ => json!([]),
+    }
+}
+
+fn trace_result(result: &Value, index: usize, mode: &str) -> Value {
+    json!({
+        "id": result.get("id").cloned().unwrap_or(Value::Null),
+        "rank": index + 1,
+        "score": result.get("score").cloned().unwrap_or(Value::Null),
+        "match_channels": trace_match_channels(result, mode),
+        "channel_scores": {
+            "vector": result.get("vector_score").cloned().unwrap_or(Value::Null),
+            "bm25": result.get("bm25_score").cloned().unwrap_or(Value::Null),
+            "graph": result.get("ppr_score").cloned().unwrap_or(Value::Null),
+        },
+        "lifecycle_visibility": {
+            "valid_until": result.get("valid_until").cloned().unwrap_or(Value::Null),
+            "invalidation_reason": result.get("invalidation_reason").cloned().unwrap_or(Value::Null),
+            "superseded_by": result.get("superseded_by").cloned().unwrap_or(Value::Null),
+            "consolidation_trace": result.get("consolidation_trace").cloned().unwrap_or(Value::Null),
+        },
+        "rank_explanation": {
+            "mode": mode,
+            "score_source": if mode == "recall" {
+                "rrf_fused_score_with_importance_and_decay"
+            } else {
+                "single_channel_score_with_optional_decay"
+            },
+            "operator_summary": result.get("operator_summary").cloned().unwrap_or(Value::Null),
+        }
+    })
+}
+
+fn normalize_trace_mode(mode: Option<&str>) -> anyhow::Result<&'static str> {
+    match mode.map(str::trim).filter(|value| !value.is_empty()) {
+        None | Some("recall") => Ok("recall"),
+        Some("vector") => Ok("vector"),
+        Some("bm25") => Ok("bm25"),
+        Some(value) => Err(anyhow::anyhow!(
+            "Invalid mode '{}'. Supported values: recall, vector, bm25",
+            value
+        )),
+    }
+}
+
+pub async fn memory_search_trace(
+    state: &Arc<AppState>,
+    params: MemorySearchTraceParams,
+) -> anyhow::Result<CallToolResult> {
+    let mode = match normalize_trace_mode(params.mode.as_deref()) {
+        Ok(mode) => mode,
+        Err(error) => return Ok(error_response(error)),
+    };
+    let limit = normalize_limit(params.limit);
+
+    let response = match mode {
+        "recall" => {
+            let recall_params = RecallParams {
+                query: params.query.clone(),
+                limit: Some(limit),
+                vector_weight: None,
+                bm25_weight: None,
+                ppr_weight: None,
+                min_score: None,
+                user_id: None,
+                agent_id: None,
+                run_id: None,
+                namespace: params.namespace.clone(),
+                memory_type: params.memory_type.clone(),
+                metadata_filter: None,
+                valid_at: None,
+                event_after: None,
+                event_before: None,
+                ingestion_after: None,
+                ingestion_before: None,
+            };
+            call_tool_json(&recall(state, recall_params).await?)?
+        }
+        "vector" | "bm25" => {
+            let search_params = SearchParams {
+                query: params.query.clone(),
+                limit: Some(limit),
+                mode: Some(mode.to_string()),
+                min_score: None,
+                user_id: None,
+                agent_id: None,
+                run_id: None,
+                namespace: params.namespace.clone(),
+                memory_type: params.memory_type.clone(),
+                metadata_filter: None,
+                valid_at: None,
+                event_after: None,
+                event_before: None,
+                ingestion_after: None,
+                ingestion_before: None,
+            };
+            if mode == "bm25" {
+                call_tool_json(&search_text(state, search_params).await?)?
+            } else {
+                call_tool_json(&search(state, search_params).await?)?
+            }
+        }
+        _ => unreachable!(),
+    };
+
+    if response.get("error").is_some() {
+        return Ok(success_json(response));
+    }
+
+    let raw_results = result_array(&response, mode);
+    let traced_results: Vec<Value> = raw_results
+        .iter()
+        .enumerate()
+        .map(|(index, result)| trace_result(result, index, mode))
+        .collect();
+    let result_ids: Vec<Value> = traced_results
+        .iter()
+        .filter_map(|result| result.get("id").cloned())
+        .collect();
+
+    Ok(success_json(json!({
+        "effective_query": {
+            "input": params.query,
+            "normalized": response.get("query").cloned().unwrap_or(Value::Null),
+            "diagnostics": response
+                .get("diagnostics")
+                .and_then(|diagnostics| diagnostics.get("query"))
+                .cloned()
+                .unwrap_or(Value::Null),
+            "mode": mode,
+            "filters": response.get("filters").cloned().unwrap_or(Value::Null),
+        },
+        "result_ids": result_ids,
+        "results": traced_results,
+        "operator_summary": {
+            "mode": mode,
+            "returned": raw_results.len(),
+            "diagnostics": response.get("diagnostics").cloned().unwrap_or(Value::Null),
+            "trace_is_read_only": true,
+            "ranking_source": "delegated_to_existing_search_path",
+        },
+        "source_response_summary": response.get("summary").cloned().unwrap_or(Value::Null),
+        "contract": search_trace_contract_json(),
+        "summary": summary_collection_response(
+            "memory_search_trace",
+            raw_results.len(),
+            Some(raw_results.len()),
+            false,
+            Some("Trace delegates ranking to the existing recall/search implementation and does not mutate result ordering.".to_string())
+        )
+    })))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1081,6 +1281,13 @@ mod tests {
             .expect("seeded memory should exist");
         ctx.state.memory_search.upsert_memory(stored).await;
         id
+    }
+
+    fn text_result(result: &CallToolResult) -> serde_json::Value {
+        match &result.content[0].raw {
+            rmcp::model::RawContent::Text(text) => serde_json::from_str(&text.text).unwrap(),
+            other => panic!("unexpected content: {other:?}"),
+        }
     }
 
     #[tokio::test]
@@ -1388,6 +1595,90 @@ mod tests {
         let text = val["content"][0]["text"].as_str().unwrap();
         let json: serde_json::Value = serde_json::from_str(text).unwrap();
         assert_eq!(json["count"], 0);
+    }
+
+    #[tokio::test]
+    async fn memory_search_trace_delegates_to_existing_recall_order() {
+        let ctx = TestContext::new().await;
+        let _ = seed_memory(
+            &ctx,
+            Memory {
+                content: "trace apple alpha".to_string(),
+                embedding: Some(vec![0.2; 768]),
+                namespace: Some("trace".to_string()),
+                ..Memory::new("trace apple alpha".to_string())
+            },
+        )
+        .await;
+        let _ = seed_memory(
+            &ctx,
+            Memory {
+                content: "trace apple beta".to_string(),
+                embedding: Some(vec![0.3; 768]),
+                namespace: Some("trace".to_string()),
+                ..Memory::new("trace apple beta".to_string())
+            },
+        )
+        .await;
+
+        let recall_result = recall(
+            &ctx.state,
+            RecallParams {
+                query: "trace apple".to_string(),
+                limit: Some(5),
+                vector_weight: None,
+                bm25_weight: None,
+                ppr_weight: None,
+                min_score: None,
+                user_id: None,
+                agent_id: None,
+                run_id: None,
+                namespace: Some("trace".to_string()),
+                memory_type: None,
+                metadata_filter: None,
+                valid_at: None,
+                event_after: None,
+                event_before: None,
+                ingestion_after: None,
+                ingestion_before: None,
+            },
+        )
+        .await
+        .unwrap();
+        let trace_result = memory_search_trace(
+            &ctx.state,
+            MemorySearchTraceParams {
+                query: "trace apple".to_string(),
+                namespace: Some("trace".to_string()),
+                memory_type: None,
+                limit: Some(5),
+                mode: Some("recall".to_string()),
+            },
+        )
+        .await
+        .unwrap();
+
+        let recall_json = text_result(&recall_result);
+        let trace_json = text_result(&trace_result);
+        let recall_ids: Vec<_> = recall_json["memories"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|memory| memory["id"].clone())
+            .collect();
+
+        assert_eq!(trace_json["result_ids"].as_array().unwrap(), &recall_ids);
+        assert_eq!(
+            trace_json["results"][0]["rank_explanation"]["mode"].as_str(),
+            Some("recall")
+        );
+        assert!(trace_json["results"][0]["match_channels"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|channel| channel.as_str() == Some("bm25") || channel.as_str() == Some("vector")));
+        assert!(trace_json.get("contract").is_some());
+        assert!(trace_json.get("summary").is_some());
     }
 
     #[test]

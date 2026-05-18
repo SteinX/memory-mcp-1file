@@ -133,7 +133,11 @@ impl ValidationError {
 
 impl fmt::Display for ValidationError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "validation error on field `{}`: {}", self.field, self.message)
+        write!(
+            f,
+            "validation error on field `{}`: {}",
+            self.field, self.message
+        )
     }
 }
 
@@ -149,7 +153,9 @@ impl std::error::Error for ValidationError {}
 /// - An enum field contains an unknown variant.
 /// - `confidence` is outside `[0.0, 1.0]`.
 /// - `schema_version` is not `1`.
-pub fn validate_learning_metadata(value: &serde_json::Value) -> Result<LearningMetadata, ValidationError> {
+pub fn validate_learning_metadata(
+    value: &serde_json::Value,
+) -> Result<LearningMetadata, ValidationError> {
     // Deserialize into the typed struct first; serde handles unknown enum variants.
     let meta: LearningMetadata = serde_json::from_value(value.clone()).map_err(|e| {
         // Attempt to give a field-specific error by inspecting the message.
@@ -245,7 +251,8 @@ mod learning_schema {
         for (raw, expected) in statuses {
             let mut v = valid_base();
             v["status"] = json!(raw);
-            let meta = validate_learning_metadata(&v).unwrap_or_else(|e| panic!("status={raw}: {e}"));
+            let meta =
+                validate_learning_metadata(&v).unwrap_or_else(|e| panic!("status={raw}: {e}"));
             assert_eq!(meta.status, expected, "status={raw}");
         }
     }
@@ -263,7 +270,8 @@ mod learning_schema {
         for (raw, expected) in levels {
             let mut v = valid_base();
             v["scope"]["level"] = json!(raw);
-            let meta = validate_learning_metadata(&v).unwrap_or_else(|e| panic!("level={raw}: {e}"));
+            let meta =
+                validate_learning_metadata(&v).unwrap_or_else(|e| panic!("level={raw}: {e}"));
             assert_eq!(meta.scope.level, expected, "level={raw}");
         }
     }
@@ -281,7 +289,8 @@ mod learning_schema {
         for (raw, expected) in variants {
             let mut v = valid_base();
             v["source"]["created_from"] = json!(raw);
-            let meta = validate_learning_metadata(&v).unwrap_or_else(|e| panic!("created_from={raw}: {e}"));
+            let meta = validate_learning_metadata(&v)
+                .unwrap_or_else(|e| panic!("created_from={raw}: {e}"));
             assert_eq!(meta.source.created_from, expected, "created_from={raw}");
         }
     }
@@ -351,7 +360,10 @@ mod learning_schema {
         let mut v = valid_base();
         v["kind"] = json!("not_a_kind");
         let err = validate_learning_metadata(&v).unwrap_err();
-        assert!(err.field.contains("kind") || err.message.contains("not_a_kind"), "{err}");
+        assert!(
+            err.field.contains("kind") || err.message.contains("not_a_kind"),
+            "{err}"
+        );
     }
 
     #[test]

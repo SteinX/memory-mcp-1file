@@ -11,6 +11,7 @@ Benchmark V2 focuses on providing a trustworthy local runbook for evaluating ret
 
 ### 🧪 Benchmark Scenarios
 - **Memory Retrieval**: Evaluates `recall` and `search_memory` performance using golden queries covering long-memory recall, namespace boundaries, temporal boundaries, and ID mismatch cases.
+- **Bootstrap Contract**: Validates fixture/golden coverage for `memory_bootstrap` and `memory_search_trace` startup/debug contracts.
 - **Code Retrieval**: Evaluates codebase indexing and `recall_code` performance covering symbol definitions, caller/callee relationships, and similar-function interference.
 - **Readiness & Contract Diagnostics**: Reports preserve `reason_code` taxonomy and classify impact as `informational`, `degraded`, or `blocking`.
 
@@ -39,6 +40,12 @@ python3 evals/memory_retrieval_benchmark.py
 
 # Run specific tier
 python3 evals/memory_retrieval_benchmark.py --tier medium
+```
+
+### 🧭 Bootstrap Contract Eval
+```bash
+# Self-Test (fixture/golden schema only)
+python3 evals/bootstrap_eval.py --self-test
 ```
 
 ### 💻 Code Retrieval Benchmark

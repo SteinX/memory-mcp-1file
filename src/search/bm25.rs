@@ -680,7 +680,11 @@ impl CodeSearchEngine {
         // ── Phase 2: fetch content for only the top-N results from the DB ──
         let ids: Vec<String> = scored_metas.iter().map(|(_, m)| m.id.clone()).collect();
         let active_generation = match project_id {
-            Some(project_id) => storage.get_active_generation(project_id).await.ok().flatten(),
+            Some(project_id) => storage
+                .get_active_generation(project_id)
+                .await
+                .ok()
+                .flatten(),
             None => None,
         };
         let fetched = match storage.get_chunks_by_ids(&ids, active_generation).await {
@@ -883,7 +887,11 @@ impl CodeSearchEngine {
         storage: &impl crate::storage::StorageBackend,
         project_id: &str,
     ) {
-        let active_generation = storage.get_active_generation(project_id).await.ok().flatten();
+        let active_generation = storage
+            .get_active_generation(project_id)
+            .await
+            .ok()
+            .flatten();
         let _ = self
             .try_rebuild_from_storage(storage, project_id, active_generation)
             .await;
@@ -1325,11 +1333,7 @@ mod tests {
         async fn get_indexing_generation(&self, _: &str) -> crate::Result<Option<u64>> {
             Ok(None)
         }
-        async fn set_indexing_generation(
-            &self,
-            _: &str,
-            _: Option<u64>,
-        ) -> crate::Result<()> {
+        async fn set_indexing_generation(&self, _: &str, _: Option<u64>) -> crate::Result<()> {
             unreachable!()
         }
         async fn get_serving_metadata(
@@ -1501,9 +1505,8 @@ mod tests {
         }
         async fn get_all_project_stats(
             &self,
-        ) -> crate::Result<
-            std::collections::HashMap<String, crate::storage::traits::ProjectStats>,
-        > {
+        ) -> crate::Result<std::collections::HashMap<String, crate::storage::traits::ProjectStats>>
+        {
             unreachable!()
         }
         async fn get_unembedded_chunks(

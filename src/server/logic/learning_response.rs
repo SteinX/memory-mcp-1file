@@ -184,10 +184,8 @@ mod tests {
 
     #[test]
     fn test_rule_pending_review_all_false() {
-        let (list, search, inject) = compute_default_inclusion(
-            &LearningStatus::Rule,
-            &LearningLifecycleState::Unknown,
-        );
+        let (list, search, inject) =
+            compute_default_inclusion(&LearningStatus::Rule, &LearningLifecycleState::Unknown);
         assert!(!list);
         assert!(!search);
         assert!(!inject);

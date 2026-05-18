@@ -2417,11 +2417,12 @@ mod tests {
     ) {
         assert_eq!(
             json["capability_readiness"]["serving_generation"],
-            serde_json::to_value(expected_serving).unwrap()
+            serde_json::to_value(expected_serving).unwrap(),
+            "capability serving_generation mismatch for response: {json}"
         );
         assert_eq!(
-            json["capability_readiness"]["indexing_generation"],
-            expected_indexing
+            json["capability_readiness"]["indexing_generation"], expected_indexing,
+            "capability indexing_generation mismatch for response: {json}"
         );
         assert!(json["capability_readiness"]["capabilities"].is_array());
         assert_eq!(
