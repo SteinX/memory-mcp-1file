@@ -19,7 +19,12 @@ struct MetricsInner {
 impl MetricsRecorder {
     pub fn from_env() -> Self {
         let enabled = std::env::var("MEMORY_MCP_METRICS")
-            .map(|value| !matches!(value.trim().to_ascii_lowercase().as_str(), "0" | "false" | "off" | "no"))
+            .map(|value| {
+                !matches!(
+                    value.trim().to_ascii_lowercase().as_str(),
+                    "0" | "false" | "off" | "no"
+                )
+            })
             .unwrap_or(true);
 
         if !enabled {

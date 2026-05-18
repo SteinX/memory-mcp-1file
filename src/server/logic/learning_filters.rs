@@ -7,7 +7,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
-use crate::types::{search::MemoryQuery, learning::LearningStatus};
+use crate::types::{learning::LearningStatus, search::MemoryQuery};
 
 // ─── Error ────────────────────────────────────────────────────────────────────
 
@@ -15,9 +15,7 @@ use crate::types::{search::MemoryQuery, learning::LearningStatus};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FilterError {
     /// A destructive operation was requested without an `id` or a scoped filter.
-    BroadDestructiveOperation {
-        hint: String,
-    },
+    BroadDestructiveOperation { hint: String },
 }
 
 impl std::fmt::Display for FilterError {
@@ -49,7 +47,9 @@ pub struct FallbackOptions {
 
 impl Default for FallbackOptions {
     fn default() -> Self {
-        Self { include_global: false }
+        Self {
+            include_global: false,
+        }
     }
 }
 
@@ -144,12 +144,12 @@ pub fn default_list_filter() -> LearningFilter {
 /// Serialise a `LearningStatus` to its snake_case string representation.
 fn status_str(s: &LearningStatus) -> &'static str {
     match s {
-        LearningStatus::Candidate  => "candidate",
-        LearningStatus::Confirmed  => "confirmed",
-        LearningStatus::Rule       => "rule",
-        LearningStatus::Rejected   => "rejected",
+        LearningStatus::Candidate => "candidate",
+        LearningStatus::Confirmed => "confirmed",
+        LearningStatus::Rule => "rule",
+        LearningStatus::Rejected => "rejected",
         LearningStatus::Superseded => "superseded",
-        LearningStatus::Archived   => "archived",
+        LearningStatus::Archived => "archived",
     }
 }
 
@@ -345,7 +345,10 @@ mod tests {
         let mf = q.metadata_filter.unwrap();
         // Should contain an "in" condition for confirmed
         let s = mf.to_string();
-        assert!(s.contains("confirmed"), "expected 'confirmed' in filter: {s}");
+        assert!(
+            s.contains("confirmed"),
+            "expected 'confirmed' in filter: {s}"
+        );
         assert!(s.contains("\"op\":\"in\""), "expected op=in in filter: {s}");
     }
 
@@ -379,7 +382,10 @@ mod tests {
         let mf = q.metadata_filter.unwrap();
         let s = mf.to_string();
         // audit=true → no invalidated guard
-        assert!(!s.contains("invalidated"), "audit mode should skip invalidated guard: {s}");
+        assert!(
+            !s.contains("invalidated"),
+            "audit mode should skip invalidated guard: {s}"
+        );
     }
 
     #[test]
@@ -390,7 +396,10 @@ mod tests {
         apply_learning_filter(&mut q, &f);
         let mf = q.metadata_filter.unwrap();
         let s = mf.to_string();
-        assert!(s.contains("proj-1"), "existing filter should be preserved: {s}");
+        assert!(
+            s.contains("proj-1"),
+            "existing filter should be preserved: {s}"
+        );
         assert!(s.contains("confirmed"), "new filter should be merged: {s}");
     }
 
@@ -422,7 +431,9 @@ mod tests {
     #[test]
     fn explicit_include_global_is_respected() {
         let f = LearningFilter {
-            fallback: FallbackOptions { include_global: true },
+            fallback: FallbackOptions {
+                include_global: true,
+            },
             ..Default::default()
         };
         assert!(f.fallback.include_global);

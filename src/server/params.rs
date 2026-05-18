@@ -206,6 +206,122 @@ pub struct RecallParams {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[schemars(title = "")]
+pub struct MemoryBootstrapParams {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub prompt: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub compact_summary: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub namespace: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub user_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub agent_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub run_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none", alias = "projectId")]
+    pub project_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub limit: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub token_budget: Option<usize>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[schemars(title = "")]
+pub struct MemoryObservationCreateParams {
+    pub content: String,
+    pub source: String,
+    pub event_type: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub namespace: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub user_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub agent_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub run_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub confidence: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub redaction_state: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    #[schemars(schema_with = "any_value_schema")]
+    pub metadata: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[schemars(title = "")]
+pub struct MemoryAuditParams {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub namespace: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub memory_type: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub include_invalidated: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub limit: Option<usize>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[schemars(title = "")]
+pub struct MemorySearchTraceParams {
+    pub query: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub namespace: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub memory_type: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub limit: Option<usize>,
+    /// recall|vector|bm25 (default: recall)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mode: Option<String>,
+}
+
+impl MemoryBootstrapParams {
+    pub fn to_memory_query(&self) -> anyhow::Result<MemoryQuery> {
+        Ok(MemoryQuery {
+            user_id: self.user_id.clone(),
+            agent_id: self.agent_id.clone(),
+            run_id: self.run_id.clone(),
+            namespace: self.namespace.clone(),
+            memory_type: None,
+            metadata_filter: None,
+            valid_at: None,
+            event_after: None,
+            event_before: None,
+            ingestion_after: None,
+            ingestion_before: None,
+        })
+    }
+}
+
+impl MemoryAuditParams {
+    pub fn memory_type_filter(&self) -> anyhow::Result<Option<MemoryType>> {
+        parse_memory_type(self.memory_type.as_deref())
+    }
+}
+
+impl MemorySearchTraceParams {
+    pub fn to_memory_query(&self) -> anyhow::Result<MemoryQuery> {
+        Ok(MemoryQuery {
+            user_id: None,
+            agent_id: None,
+            run_id: None,
+            namespace: self.namespace.clone(),
+            memory_type: parse_memory_type(self.memory_type.as_deref())?,
+            metadata_filter: None,
+            valid_at: None,
+            event_after: None,
+            event_before: None,
+            ingestion_after: None,
+            ingestion_before: None,
+        })
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 #[schemars(title = "")]
 pub struct RecallCodeParams {

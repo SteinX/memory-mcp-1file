@@ -353,10 +353,7 @@ pub fn validate_index_job_transition(
     }
 }
 
-pub fn validate_job_transition(
-    from: IndexJobState,
-    to: IndexJobState,
-) -> Result<(), String> {
+pub fn validate_job_transition(from: IndexJobState, to: IndexJobState) -> Result<(), String> {
     validate_index_job_transition(from, to).map_err(|error| error.to_string())
 }
 
@@ -378,7 +375,9 @@ pub struct IndexJobResumeState {
     pub reason_if_not_supported: Option<IndexJobReasonCode>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, SurrealValue, JsonSchema, Default, PartialEq, Eq)]
+#[derive(
+    Debug, Clone, Serialize, Deserialize, SurrealValue, JsonSchema, Default, PartialEq, Eq,
+)]
 pub struct IndexJobProgress {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub total_files: Option<u32>,

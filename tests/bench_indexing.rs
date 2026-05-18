@@ -86,8 +86,7 @@ async fn bench_indexing_src_directory() {
     });
 
     let evidence_path = manifest_dir.join(".sisyphus/evidence/task-1-indexing-benchmark.json");
-    std::fs::create_dir_all(evidence_path.parent().unwrap())
-        .expect("create evidence dir");
+    std::fs::create_dir_all(evidence_path.parent().unwrap()).expect("create evidence dir");
     std::fs::write(
         &evidence_path,
         serde_json::to_string_pretty(&evidence).unwrap(),

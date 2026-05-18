@@ -23,7 +23,9 @@ impl EmbeddingStore {
     pub fn new(data_dir: &Path, model_name: &str) -> Result<Self> {
         let db_path = data_dir.join("cache.redb");
         let started_at = Instant::now();
-        let cache_size = std::fs::metadata(&db_path).map(|meta| meta.len()).unwrap_or(0);
+        let cache_size = std::fs::metadata(&db_path)
+            .map(|meta| meta.len())
+            .unwrap_or(0);
         if cache_size > 256 * 1024 * 1024 {
             tracing::warn!(
                 path = %db_path.display(),

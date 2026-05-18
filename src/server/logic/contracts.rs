@@ -1,3 +1,6 @@
+use crate::types::code::{
+    CapabilityFreshness, CapabilityKind, CapabilityReadiness, ServingGenerationMetadata,
+};
 use crate::types::{
     record_key_to_string, CodeSymbol, ContractReasonCode, CountSummary, Entity, ExportContractMeta,
     ExportIdentity, ExportResponseSummary, ExportedGraphEdge, ExportedGraphNode,
@@ -7,7 +10,6 @@ use crate::types::{
     ProjectionMaterializationEnvelope, Relation, SemanticLifecycleView, StructuralLifecycleView,
     SurfaceGuidance, SymbolRelation, TraversalDefaults, TraversalSummary,
 };
-use crate::types::code::{CapabilityFreshness, CapabilityKind, CapabilityReadiness, ServingGenerationMetadata};
 
 fn projection_partial_reason_code(status: &IndexStatus) -> Option<ContractReasonCode> {
     match status.projection_state {
@@ -1737,10 +1739,11 @@ pub fn build_capability_readiness(
     is_interrupted: bool,
 ) -> Vec<CapabilityReadiness> {
     let structural_serving = meta.structural;
-    let is_stale = is_indexing || match (indexing_gen, structural_serving) {
-        (Some(i), Some(s)) => i > s,
-        _ => false,
-    };
+    let is_stale = is_indexing
+        || match (indexing_gen, structural_serving) {
+            (Some(i), Some(s)) => i > s,
+            _ => false,
+        };
 
     let caps: &[(CapabilityKind, Option<u64>)] = &[
         (CapabilityKind::ProjectInfo, meta.structural),
@@ -1751,7 +1754,8 @@ pub fn build_capability_readiness(
         (CapabilityKind::Semantic, meta.semantic),
     ];
 
-    let mut result: Vec<CapabilityReadiness> = caps.iter()
+    let mut result: Vec<CapabilityReadiness> = caps
+        .iter()
         .map(|(kind, gen)| {
             let freshness = match gen {
                 None => CapabilityFreshness::Missing,
@@ -1760,7 +1764,9 @@ pub fn build_capability_readiness(
             };
             let reason_code = match &freshness {
                 CapabilityFreshness::Missing => Some("no_serving_generation".to_string()),
-                CapabilityFreshness::Stale if is_indexing => Some("indexing_in_progress".to_string()),
+                CapabilityFreshness::Stale if is_indexing => {
+                    Some("indexing_in_progress".to_string())
+                }
                 CapabilityFreshness::Stale => Some("stale".to_string()),
                 CapabilityFreshness::Fresh => None,
                 CapabilityFreshness::Partial => Some("partial".to_string()),
@@ -1828,7 +1834,8 @@ pub fn project_info_capability_block(
     is_indexing: bool,
     is_interrupted: bool,
 ) -> serde_json::Value {
-    let capabilities = build_capability_readiness(meta, indexing_generation, is_indexing, is_interrupted);
+    let capabilities =
+        build_capability_readiness(meta, indexing_generation, is_indexing, is_interrupted);
     let caps_json: Vec<serde_json::Value> = capabilities
         .iter()
         .map(|c| {

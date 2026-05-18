@@ -1,0 +1,75 @@
+[
+  {
+    "id": "bootstrap-active-task",
+    "tool": "memory_bootstrap",
+    "arguments": {
+      "prompt": "continue bootstrap server contract work",
+      "namespace": "bootstrap-eval",
+      "limit": 5,
+      "token_budget": 2000
+    },
+    "expected_sections": [
+      "active_tasks",
+      "stable_context.decision",
+      "stable_context.user",
+      "stable_context.research",
+      "recovery",
+      "project",
+      "memory_health",
+      "selection_summary",
+      "contract",
+      "summary"
+    ],
+    "label_rationale": {
+      "category": "bootstrap_contract",
+      "tier": "small",
+      "rationale": "A session bootstrap query should surface the active TASK plus stable decision/user/research context.",
+      "expected_behavior": "At least one active task and grouped stable context are returned with contract and summary metadata."
+    }
+  },
+  {
+    "id": "bootstrap-compact-filter",
+    "tool": "memory_bootstrap",
+    "arguments": {
+      "prompt": "continue bootstrap server contract work",
+      "compact_summary": "Recovery command cargo test lib server logic Path src server logic bootstrap",
+      "namespace": "bootstrap-eval",
+      "limit": 5,
+      "token_budget": 2000
+    },
+    "expected_sections": [
+      "recovery",
+      "selection_summary.compact_summary_filter"
+    ],
+    "label_rationale": {
+      "category": "compact_recovery_filter",
+      "tier": "small",
+      "rationale": "Compact recovery should avoid returning details already present in the compact summary.",
+      "expected_behavior": "The response marks compact_summary filtering as enabled and suppresses obvious duplicate recovery material."
+    }
+  },
+  {
+    "id": "trace-smoke",
+    "tool": "memory_search_trace",
+    "arguments": {
+      "query": "bootstrap server contract",
+      "namespace": "bootstrap-eval",
+      "mode": "recall",
+      "limit": 5
+    },
+    "expected_sections": [
+      "effective_query",
+      "result_ids",
+      "results.match_channels",
+      "operator_summary",
+      "contract",
+      "summary"
+    ],
+    "label_rationale": {
+      "category": "search_trace_contract",
+      "tier": "small",
+      "rationale": "Search trace should explain the same ranking path as recall without changing recall results.",
+      "expected_behavior": "Trace returns effective query diagnostics, result IDs, channel information, and contract metadata."
+    }
+  }
+]

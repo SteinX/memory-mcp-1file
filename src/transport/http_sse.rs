@@ -353,8 +353,8 @@ mod tests {
                 allow_full_restart_fallback: None,
                 force: None,
                 confirm_failed_restart: None,
-            include_patterns: None,
-            exclude_patterns: None,
+                include_patterns: None,
+                exclude_patterns: None,
             },
         )
         .await
