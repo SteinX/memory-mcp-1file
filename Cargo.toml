@@ -3,7 +3,7 @@ name = "memory-mcp"
 
 
 
-version = "0.8.2"
+version = "0.9.0"
 
 edition = "2021"
 description = "MCP memory server for AI agents"
