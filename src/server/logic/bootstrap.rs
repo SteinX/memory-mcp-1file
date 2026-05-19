@@ -15,6 +15,8 @@ use super::memory_lifecycle::{derive_memory_lifecycle, MemoryLifecycleState, Ret
 use super::{error_response, normalize_limit, success_json};
 
 const BOOTSTRAP_FETCH_LIMIT: usize = 200;
+const BOOTSTRAP_ACTIVE_TASK_SCAN_LIMIT: usize = 1_000;
+const AUDIT_LIFECYCLE_COUNT_PAGE_SIZE: usize = 500;
 const DEFAULT_BOOTSTRAP_TOKEN_BUDGET: usize = 4_000;
 const RECOVERY_SIMILARITY_THRESHOLD: f32 = 0.72;
 
@@ -320,29 +322,52 @@ async fn fetch_bootstrap_memories(
     state: &Arc<AppState>,
     filters: &MemoryQuery,
     fetch_limit: usize,
-) -> Result<(Vec<Memory>, Vec<Memory>, usize), anyhow::Error> {
+) -> Result<BootstrapMemoryWindow, anyhow::Error> {
     let total_valid = state.storage.count_memories_filtered(filters).await?;
-    let recent_limit = fetch_limit.min(total_valid.max(1));
-    let memories = state.storage.get_valid(filters, recent_limit).await?;
+    let recent_limit = fetch_limit.min(total_valid);
+    let memories = if recent_limit == 0 {
+        Vec::new()
+    } else {
+        state.storage.get_valid(filters, recent_limit).await?
+    };
 
-    if total_valid <= fetch_limit {
-        let mut active_task_candidates: Vec<_> = memories
-            .iter()
-            .filter(|memory| is_active_task_candidate(memory))
-            .cloned()
-            .collect();
-        active_task_candidates.sort_by(|a, b| task_priority(b).cmp(&task_priority(a)));
-        return Ok((memories, active_task_candidates, total_valid));
-    }
-
-    let all_valid = state.storage.get_valid(filters, total_valid).await?;
-    let mut active_task_candidates: Vec<_> = all_valid
+    // Active TASK recovery is more important than the stable context window, but
+    // it must still stay bounded so session startup cannot materialize the corpus.
+    let active_task_scan_limit = BOOTSTRAP_ACTIVE_TASK_SCAN_LIMIT
+        .max(fetch_limit)
+        .min(total_valid);
+    let active_task_scan = if active_task_scan_limit == 0 {
+        Vec::new()
+    } else if active_task_scan_limit <= memories.len() {
+        memories.clone()
+    } else {
+        state
+            .storage
+            .get_valid(filters, active_task_scan_limit)
+            .await?
+    };
+    let active_task_scanned_count = active_task_scan.len();
+    let mut active_task_candidates: Vec<_> = active_task_scan
         .iter()
         .filter(|memory| is_active_task_candidate(memory))
         .cloned()
         .collect();
     active_task_candidates.sort_by(|a, b| task_priority(b).cmp(&task_priority(a)));
-    Ok((memories, active_task_candidates, total_valid))
+    Ok(BootstrapMemoryWindow {
+        recent_memories: memories,
+        active_task_candidates,
+        total_valid,
+        active_task_scanned_count,
+        active_task_scan_limit,
+    })
+}
+
+struct BootstrapMemoryWindow {
+    recent_memories: Vec<Memory>,
+    active_task_candidates: Vec<Memory>,
+    total_valid: usize,
+    active_task_scanned_count: usize,
+    active_task_scan_limit: usize,
 }
 
 pub async fn memory_bootstrap(
@@ -361,11 +386,16 @@ pub async fn memory_bootstrap(
     };
 
     let fetch_limit = BOOTSTRAP_FETCH_LIMIT.max(limit * 8);
-    let (memories, active_task_candidates, total_valid) =
-        match fetch_bootstrap_memories(state, &filters, fetch_limit).await {
-            Ok(result) => result,
-            Err(error) => return Ok(error_response(error)),
-        };
+    let BootstrapMemoryWindow {
+        recent_memories: memories,
+        active_task_candidates,
+        total_valid,
+        active_task_scanned_count,
+        active_task_scan_limit,
+    } = match fetch_bootstrap_memories(state, &filters, fetch_limit).await {
+        Ok(result) => result,
+        Err(error) => return Ok(error_response(error)),
+    };
 
     let mut active_budget = SelectionBudget::new(limit, token_budget / 2);
     let active_tasks = active_budget.select(
@@ -377,6 +407,7 @@ pub async fn memory_bootstrap(
 
     let mut known_ids: std::collections::BTreeSet<_> =
         memories.iter().filter_map(memory_id).collect();
+    let stable_recovery_scanned_count = memories.len();
     let mut bootstrap_pool = memories;
     for memory in active_task_candidates.iter().cloned() {
         let Some(id) = memory_id(&memory) else {
@@ -395,16 +426,23 @@ pub async fn memory_bootstrap(
         .count();
 
     let recent_window_truncated = total_valid.saturating_sub(fetch_limit);
+    let active_task_scan_truncated = total_valid.saturating_sub(active_task_scan_limit);
     let candidate_count = total_valid;
 
     let fetch_window_partial = recent_window_truncated > 0;
-    let fetch_window_reason = if fetch_window_partial {
-        Some(format!(
-            "Bootstrap stable context/recovery scanned the newest {fetch_limit} of {total_valid} valid memories; active TASK candidates used a full filtered scan."
-        ))
-    } else {
-        None
-    };
+    let active_task_window_partial = active_task_scan_truncated > 0;
+    let mut window_reasons = Vec::new();
+    if fetch_window_partial {
+        window_reasons.push(format!(
+            "Bootstrap stable context/recovery scanned the newest {fetch_limit} of {total_valid} valid memories."
+        ));
+    }
+    if active_task_window_partial {
+        window_reasons.push(format!(
+            "Active TASK candidate scan was bounded to the newest {active_task_scan_limit} of {total_valid} valid memories."
+        ));
+    }
+    let fetch_window_reason = (!window_reasons.is_empty()).then(|| window_reasons.join(" "));
 
     let mut stable_context_candidates: BTreeMap<&'static str, Vec<Value>> = BTreeMap::new();
     for memory in &memories {
@@ -460,8 +498,10 @@ pub async fn memory_bootstrap(
     let truncated_by_token_budget = active_budget.truncated_by_token_budget
         + stable_truncated_tokens
         + recovery_budget.truncated_by_token_budget;
-    let is_partial =
-        truncated_by_limit > 0 || truncated_by_token_budget > 0 || fetch_window_partial;
+    let is_partial = truncated_by_limit > 0
+        || truncated_by_token_budget > 0
+        || fetch_window_partial
+        || active_task_window_partial;
     let partial_reason = if truncated_by_limit > 0 || truncated_by_token_budget > 0 {
         Some("Bootstrap selection was truncated by limit or token_budget.".to_string())
     } else {
@@ -480,6 +520,10 @@ pub async fn memory_bootstrap(
             "estimated_tokens_used": active_budget.used_tokens + stable_used_tokens + recovery_budget.used_tokens,
             "candidate_count": candidate_count,
             "scanned_count": memories.len(),
+            "stable_recovery_scanned_count": stable_recovery_scanned_count,
+            "active_task_scanned_count": active_task_scanned_count,
+            "active_task_scan_limit": active_task_scan_limit,
+            "active_task_scan_truncated": active_task_scan_truncated,
             "stable_context_candidate_count": stable_memory_count,
             "recent_window_truncated": recent_window_truncated,
             "returned_count": selected_count,
@@ -579,6 +623,50 @@ fn observation_counts(memories: &[Memory]) -> Value {
     })
 }
 
+#[derive(Default)]
+struct AuditLifecycleTotals {
+    superseded: usize,
+    archived_learning: usize,
+    rejected_learning: usize,
+}
+
+async fn count_invalidated_lifecycle_totals(
+    state: &Arc<AppState>,
+    gc_filter: &MemoryGcFilter,
+    now: chrono::DateTime<chrono::Utc>,
+    policy: &RetentionPolicy,
+) -> anyhow::Result<AuditLifecycleTotals> {
+    let mut totals = AuditLifecycleTotals::default();
+    let mut offset = 0usize;
+
+    loop {
+        let page = state
+            .storage
+            .list_invalidated_memories_for_gc(gc_filter, AUDIT_LIFECYCLE_COUNT_PAGE_SIZE, offset)
+            .await?;
+        if page.is_empty() {
+            break;
+        }
+
+        let page_len = page.len();
+        for memory in page {
+            match derive_memory_lifecycle(&memory, now, policy).lifecycle_state {
+                MemoryLifecycleState::Superseded => totals.superseded += 1,
+                MemoryLifecycleState::Archived => totals.archived_learning += 1,
+                MemoryLifecycleState::Rejected => totals.rejected_learning += 1,
+                _ => {}
+            }
+        }
+
+        if page_len < AUDIT_LIFECYCLE_COUNT_PAGE_SIZE {
+            break;
+        }
+        offset += page_len;
+    }
+
+    Ok(totals)
+}
+
 pub async fn memory_audit(
     state: &Arc<AppState>,
     params: MemoryAuditParams,
@@ -617,9 +705,9 @@ pub async fn memory_audit(
 
     let now = chrono::Utc::now();
     let policy = RetentionPolicy::default();
-    let mut superseded_count = 0usize;
-    let mut archived_count = 0usize;
-    let mut rejected_count = 0usize;
+    let lifecycle_totals = count_invalidated_lifecycle_totals(state, &gc_filter, now, &policy)
+        .await
+        .unwrap_or_default();
     let mut purge_eligible = 0usize;
     let mut pinned = 0usize;
     let mut next_eligible_window: Option<Value> = None;
@@ -627,12 +715,6 @@ pub async fn memory_audit(
 
     for memory in active_memories.iter().chain(invalidated_memories.iter()) {
         let lifecycle = derive_memory_lifecycle(memory, now, &policy);
-        match lifecycle.lifecycle_state {
-            MemoryLifecycleState::Superseded => superseded_count += 1,
-            MemoryLifecycleState::Archived => archived_count += 1,
-            MemoryLifecycleState::Rejected => rejected_count += 1,
-            _ => {}
-        }
         if lifecycle.purge_eligible {
             purge_eligible += 1;
         }
@@ -673,9 +755,9 @@ pub async fn memory_audit(
         "lifecycle_counts": {
             "active": active_count,
             "invalidated": invalidated_count,
-            "superseded": superseded_count,
-            "archived_learning": archived_count,
-            "rejected_learning": rejected_count,
+            "superseded": lifecycle_totals.superseded,
+            "archived_learning": lifecycle_totals.archived_learning,
+            "rejected_learning": lifecycle_totals.rejected_learning,
         },
         "purge_readiness": {
             "eligible_count_sampled": purge_eligible,
@@ -834,6 +916,18 @@ mod tests {
             json["selection_summary"]["recent_window_truncated"].as_u64(),
             Some(6)
         );
+        assert_eq!(
+            json["selection_summary"]["stable_recovery_scanned_count"].as_u64(),
+            Some(BOOTSTRAP_FETCH_LIMIT as u64)
+        );
+        assert_eq!(
+            json["selection_summary"]["active_task_scanned_count"].as_u64(),
+            Some((BOOTSTRAP_FETCH_LIMIT + 6) as u64)
+        );
+        assert_eq!(
+            json["selection_summary"]["active_task_scan_truncated"].as_u64(),
+            Some(0)
+        );
     }
 
     #[tokio::test]
@@ -971,6 +1065,7 @@ mod tests {
         let json = text_result(&result);
         assert!(json["lifecycle_counts"]["active"].as_u64().unwrap() >= 1);
         assert!(json["lifecycle_counts"]["invalidated"].as_u64().unwrap() >= 1);
+        assert!(json["lifecycle_counts"]["superseded"].as_u64().unwrap() >= 1);
         assert_eq!(
             json["observation_counts"]["by_source_event_type"]["plugin"]["session_start"].as_u64(),
             Some(1)
@@ -1008,6 +1103,76 @@ mod tests {
             json["lifecycle_counts"]["active"].as_u64(),
             Some(5),
             "active count should be the full filtered count, not the limited sample: {json}"
+        );
+        assert_eq!(json["operator_signals"]["sample_limit"].as_u64(), Some(2));
+    }
+
+    #[tokio::test]
+    async fn audit_terminal_lifecycle_counts_are_not_limited_to_sample() {
+        let ctx = TestContext::new().await;
+
+        for index in 0..3 {
+            let id = seed(
+                &ctx,
+                &format!("CONTEXT: superseded audit count {index}"),
+                MemoryType::Semantic,
+            )
+            .await;
+            ctx.state
+                .storage
+                .invalidate(&id, Some("superseded"), Some("replacement"))
+                .await
+                .unwrap();
+        }
+
+        for index in 0..2 {
+            let id = seed(
+                &ctx,
+                &format!("CONTEXT: archived learning audit count {index}"),
+                MemoryType::Semantic,
+            )
+            .await;
+            ctx.state
+                .storage
+                .invalidate(&id, Some("learning_archived"), None)
+                .await
+                .unwrap();
+        }
+
+        let rejected_id = seed(
+            &ctx,
+            "CONTEXT: rejected learning audit count",
+            MemoryType::Semantic,
+        )
+        .await;
+        ctx.state
+            .storage
+            .invalidate(&rejected_id, Some("learning_rejected"), None)
+            .await
+            .unwrap();
+
+        let result = memory_audit(
+            &ctx.state,
+            MemoryAuditParams {
+                namespace: Some("boot".to_string()),
+                memory_type: None,
+                include_invalidated: Some(true),
+                limit: Some(2),
+            },
+        )
+        .await
+        .unwrap();
+
+        let json = text_result(&result);
+        assert_eq!(json["lifecycle_counts"]["invalidated"].as_u64(), Some(6));
+        assert_eq!(json["lifecycle_counts"]["superseded"].as_u64(), Some(3));
+        assert_eq!(
+            json["lifecycle_counts"]["archived_learning"].as_u64(),
+            Some(2)
+        );
+        assert_eq!(
+            json["lifecycle_counts"]["rejected_learning"].as_u64(),
+            Some(1)
         );
         assert_eq!(json["operator_signals"]["sample_limit"].as_u64(), Some(2));
     }
