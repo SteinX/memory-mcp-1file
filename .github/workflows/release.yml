@@ -87,11 +87,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
+      - name: Compute publish targets
+        id: publish_targets
+        shell: bash
+        run: |
+          REPO_LOWER=$(printf '%s' "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
+          IMAGE_NAME="ghcr.io/${REPO_LOWER}"
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+          echo "image_name=${IMAGE_NAME}" >> "$GITHUB_OUTPUT"
 
       - name: Log in to the Container registry
         uses: docker/login-action@v3
@@ -104,7 +107,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ghcr.io/${{ github.repository }}
+          images: ${{ steps.publish_targets.outputs.image_name }}
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
@@ -228,26 +231,51 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Read npm package metadata
+        id: npm_meta
+        shell: bash
+        run: |
+          PACKAGE_NAME=$(node -p "require('./npm/package.json').name")
+          PACKAGE_BASENAME=$(node -p "require('./npm/package.json').name.replace(/^@[^/]+\//, '')")
+          REPO_OWNER_LOWER=$(printf '%s' "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+          TARGET_PACKAGE_SCOPE="@${REPO_OWNER_LOWER}"
+          TARGET_PACKAGE_NAME="@${REPO_OWNER_LOWER}/${PACKAGE_BASENAME}"
+
+          echo "package_name=${PACKAGE_NAME}" >> "$GITHUB_OUTPUT"
+          echo "package_basename=${PACKAGE_BASENAME}" >> "$GITHUB_OUTPUT"
+          echo "target_package_scope=${TARGET_PACKAGE_SCOPE}" >> "$GITHUB_OUTPUT"
+          echo "target_package_name=${TARGET_PACKAGE_NAME}" >> "$GITHUB_OUTPUT"
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: "20"
-          registry-url: "https://registry.npmjs.org"
+          registry-url: "https://npm.pkg.github.com"
+          scope: ${{ steps.npm_meta.outputs.target_package_scope }}
 
-      - name: Sync version from tag
+      - name: Sync npm package metadata from repository
         run: |
           VERSION=${GITHUB_REF#refs/tags/v}
+          REPOSITORY_URL="https://github.com/${{ github.repository }}"
+          TARGET_PACKAGE_NAME="${{ steps.npm_meta.outputs.target_package_name }}"
           cd npm
           node -e "
             const pkg = require('./package.json');
+            pkg.name = '$TARGET_PACKAGE_NAME';
             pkg.version = '$VERSION';
+            pkg.repository = {
+              type: 'git',
+              url: 'git+' + '$REPOSITORY_URL' + '.git'
+            };
+            pkg.homepage = '$REPOSITORY_URL#readme';
+            pkg.bugs = { url: '$REPOSITORY_URL/issues' };
             require('fs').writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n');
           "
-          echo "Publishing memory-mcp@${VERSION} to npm"
+          echo "Publishing ${TARGET_PACKAGE_NAME}@${VERSION} to GitHub Packages"
 
-      - name: Publish to npm
+      - name: Publish to GitHub Packages
         run: |
           cd npm
-          npm publish --access public
+          npm publish
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

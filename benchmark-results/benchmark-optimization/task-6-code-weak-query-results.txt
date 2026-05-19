@@ -60,4 +60,3 @@ Query: code_recall_code_fn
   8. /var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-9-code-retrieval-project-o37a2e2x/task-9-code-retrieval-fixture/src/server/handler.rs
   9. /var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-9-code-retrieval-project-o37a2e2x/task-9-code-retrieval-fixture/src/server/logic/code/search.rs
   10. /var/folders/mx/tffz_j1d5lg_twyfntz97yr00000gp/T/task-9-code-retrieval-project-o37a2e2x/task-9-code-retrieval-fixture/src/server/handler.rs
-

@@ -15,7 +15,6 @@ const { execSync } = require("child_process");
 const os = require("os");
 const zlib = require("zlib");
 
-const REPO = "pomazanbohdan/memory-mcp-1file";
 const BINARY_NAME = "memory-mcp";
 
 // Map Node.js platform/arch to Rust target triples
@@ -51,9 +50,36 @@ function getVersion() {
     return pkg.version;
 }
 
-function getDownloadUrl(version, target) {
+function getRepo() {
+    const envRepo = process.env.MEMORY_MCP_RELEASE_REPO?.trim();
+    if (envRepo) {
+        return envRepo.replace(/^https:\/\/github\.com\//, "").replace(/\.git$/, "");
+    }
+
+    const pkg = JSON.parse(
+        fs.readFileSync(path.join(__dirname, "package.json"), "utf8")
+    );
+    const repository = pkg.repository;
+    const repositoryUrl = typeof repository === "string" ? repository : repository?.url;
+
+    if (typeof repositoryUrl === "string") {
+        const normalized = repositoryUrl
+            .replace(/^git\+/, "")
+            .replace(/^https:\/\/github\.com\//, "")
+            .replace(/^git@github\.com:/, "")
+            .replace(/\.git$/, "");
+
+        if (normalized.includes("/")) {
+            return normalized;
+        }
+    }
+
+    return "SteinX/memory-mcp-1file";
+}
+
+function getDownloadUrl(repo, version, target) {
     const ext = target.includes("windows") ? ".zip" : ".tar.gz";
-    return `https://github.com/${REPO}/releases/download/v${version}/${BINARY_NAME}-${version}-${target}${ext}`;
+    return `https://github.com/${repo}/releases/download/v${version}/${BINARY_NAME}-${version}-${target}${ext}`;
 }
 
 /**
@@ -117,9 +143,10 @@ async function extractZip(buffer, destDir) {
 }
 
 async function main() {
+    const repo = getRepo();
     const target = getTarget();
     const version = getVersion();
-    const url = getDownloadUrl(version, target);
+    const url = getDownloadUrl(repo, version, target);
     const binDir = path.join(__dirname, "bin");
     const isWindows = target.includes("windows");
     const binaryPath = path.join(
@@ -133,7 +160,7 @@ async function main() {
         return;
     }
 
-    console.log(`Downloading memory-mcp v${version} for ${target}...`);
+    console.log(`Downloading memory-mcp v${version} for ${target} from ${repo}...`);
     console.log(`  URL: ${url}`);
 
     try {
@@ -158,7 +185,7 @@ async function main() {
             `\nYou can manually download the binary from:`
         );
         console.error(
-            `   https://github.com/${REPO}/releases/tag/v${version}`
+            `   https://github.com/${repo}/releases/tag/v${version}`
         );
         process.exit(1);
     }

@@ -1,7 +1,7 @@
 # 🧠 Memory MCP Server
 
-[![Release](https://github.com/pomazanbohdan/memory-mcp-1file/actions/workflows/release.yml/badge.svg)](https://github.com/pomazanbohdan/memory-mcp-1file/actions/workflows/release.yml)
-[![Docker](https://img.shields.io/badge/docker-ghcr.io-blue.svg)](https://github.com/pomazanbohdan/memory-mcp-1file/pkgs/container/memory-mcp-1file)
+[![Release](https://github.com/SteinX/memory-mcp-1file/actions/workflows/release.yml/badge.svg)](https://github.com/SteinX/memory-mcp-1file/actions/workflows/release.yml)
+[![Docker](https://img.shields.io/badge/docker-ghcr.io-blue.svg)](https://github.com/SteinX/memory-mcp-1file/pkgs/container/memory-mcp-1file)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Built with Rust](https://img.shields.io/badge/Built%20with-Rust-d64e25.svg)](https://www.rust-lang.org)
 [![Architecture](https://img.shields.io/badge/Architecture-Single%20Binary-success.svg)](#)
@@ -97,6 +97,7 @@ Instead of scattering instructions across IDE-specific files (like `.cursorrules
 Instruct your agent (in its base system prompt) to:
 1.  **Read `AGENTS.md`** at the start of every session.
 2.  **Follow the protocols** defined therein.
+3.  **Keep documentation honest** by promptly updating any in-scope `AGENTS.md` and `README.md` files whenever they drift from the actual behavior, workflow, or project state.
 
 Here is a minimal reference prompt to bootstrap this behavior:
 
@@ -107,6 +108,7 @@ You have access to a persistent memory server and a protocol definition file.
 1.  **Protocol Adherence**:
     - READ `AGENTS.md` immediately upon starting.
     - Strictly follow the "Session Startup" and "Sync" protocols defined there.
+    - Promptly update any in-scope `AGENTS.md` and `README.md` files when they no longer match actual behavior, workflow, or project state.
 
 2.  **Context Restoration**:
     - Run `search_text("TASK: in_progress")` to restore context.
@@ -215,11 +217,10 @@ Add this to your configuration file (e.g., `claude_desktop_config.json`):
         "--init",
         "-i",
         "--rm",
-        "--memory=3g",
+        "--memory=4g",
         "-v", "mcp-data:/data",
         "-v", "/absolute/path/to/your/project:/project:ro",
-        "ghcr.io/pomazanbohdan/memory-mcp-1file:latest",
-        "--stdio"
+        "ghcr.io/<owner>/memory-mcp-1file:latest"
       ]
     }
   }
@@ -236,18 +237,17 @@ Add this to your configuration file (e.g., `claude_desktop_config.json`):
 4.  **Name**: `memory`
 5.  **Command**:
     ```bash
-    docker run --init -i --rm --memory=3g -v mcp-data:/data -v "/Users/yourname/projects/current:/project:ro" ghcr.io/pomazanbohdan/memory-mcp-1file:latest --stdio
+    docker run --init -i --rm --memory=4g -v mcp-data:/data -v "/Users/yourname/projects/current:/project:ro" ghcr.io/<owner>/memory-mcp-1file:latest
     ```
     *(Remember to update the project path when switching workspaces if you need code indexing)*
 
 ### OpenCode / CLI
 
 ```bash
-docker run --init -i --rm --memory=3g \
+docker run --init -i --rm --memory=4g \
   -v mcp-data:/data \
   -v $(pwd):/project:ro \
-  ghcr.io/pomazanbohdan/memory-mcp-1file:latest \
-  --stdio
+  ghcr.io/<owner>/memory-mcp-1file:latest
 ```
 
 > [!NOTE]
@@ -263,6 +263,23 @@ Embedding cache initialization is also kept out of destructive startup work: cac
 
 You can run the server directly via `npx` or `bunx`. The npm package automatically downloads the correct pre-compiled binary for your platform.
 
+Because the package is published to GitHub Packages instead of npmjs.org, authenticate first and map the package scope from `npm/package.json` (for this repo, `@steinx`) to `npm.pkg.github.com`. During the release workflow, the published npm package metadata is automatically re-derived from the current GitHub repository, so a fork publishes under `@<fork-owner>/memory-mcp-1file` without needing to pre-edit the checked-in scope.
+
+Choose one authentication method:
+- add a personal access token (classic) to `~/.npmrc`; or
+- run `npm login` against `npm.pkg.github.com`.
+
+```bash
+# Option 1: configure ~/.npmrc with your token
+cat <<'EOF' >> ~/.npmrc
+@steinx:registry=https://npm.pkg.github.com
+//npm.pkg.github.com/:_authToken=YOUR_GITHUB_PAT_CLASSIC
+EOF
+
+# Option 2: interactive login
+npm login --scope=@steinx --auth-type=legacy --registry=https://npm.pkg.github.com
+```
+
 #### Claude Desktop
 
 Add to `claude_desktop_config.json`:
@@ -272,7 +289,7 @@ Add to `claude_desktop_config.json`:
   "mcpServers": {
     "memory": {
       "command": "npx",
-      "args": ["-y", "memory-mcp-1file"]
+      "args": ["-y", "@steinx/memory-mcp-1file"]
     }
   }
 }
@@ -281,7 +298,7 @@ Add to `claude_desktop_config.json`:
 #### Claude Code (CLI)
 
 ```bash
-claude mcp add memory -- npx -y memory-mcp-1file
+claude mcp add memory -- npx -y @steinx/memory-mcp-1file
 ```
 
 #### Cursor
@@ -290,7 +307,7 @@ claude mcp add memory -- npx -y memory-mcp-1file
 2.  Click **+ Add New MCP Server**.
 3.  **Type**: `command`
 4.  **Name**: `memory`
-5.  **Command**: `npx -y memory-mcp-1file`
+5.  **Command**: `npx -y @steinx/memory-mcp-1file`
 
 Or add to `.cursor/mcp.json`:
 
@@ -299,7 +316,7 @@ Or add to `.cursor/mcp.json`:
   "mcpServers": {
     "memory": {
       "command": "npx",
-      "args": ["-y", "memory-mcp-1file"]
+      "args": ["-y", "@steinx/memory-mcp-1file"]
     }
   }
 }
@@ -314,7 +331,7 @@ Add to your MCP settings:
   "mcpServers": {
     "memory": {
       "command": "npx",
-      "args": ["-y", "memory-mcp-1file"]
+      "args": ["-y", "@steinx/memory-mcp-1file"]
     }
   }
 }
@@ -327,15 +344,15 @@ Add to your MCP settings:
   "mcpServers": {
     "memory": {
       "command": "bunx",
-      "args": ["memory-mcp-1file"]
+      "args": ["@steinx/memory-mcp-1file"]
     }
   }
 }
 ```
 
-> **Note:** Unlike Docker, `npx`/`bunx` runs the binary **locally** — it already has access to your filesystem, so no directory mounting is needed. To customize the data storage path, pass `--data-dir` via args:
+> **Note:** Unlike Docker, `npx`/`bunx` runs the binary **locally** — it already has access to your filesystem, so no directory mounting is needed. To customize the data storage path, pass `--data-dir` via args. The release workflow automatically rewrites published npm package metadata to point at the current repository, but local installs still read the checked-in `npm/package.json`, so fork maintainers should keep that `repository` field accurate or set `MEMORY_MCP_RELEASE_REPO=owner/repo` during install.
 > ```json
-> "args": ["-y", "memory-mcp-1file", "--", "--data-dir", "/path/to/data"]
+> "args": ["-y", "@steinx/memory-mcp-1file", "--", "--data-dir", "/path/to/data"]
 > ```
 > Downloaded HuggingFace model files are shared across local `--data-dir` values by default. The native default uses the platform's durable app-data location, not the OS cache directory. If the selected model is already present under the legacy `${data_dir}/models` layout, that existing cache is reused. Override `--model-cache-dir` only if you need a custom shared model location.
 
@@ -348,7 +365,7 @@ Add to your `~/.gemini/settings.json`:
   "mcpServers": {
     "memory": {
       "command": "npx",
-      "args": ["-y", "memory-mcp-1file"]
+      "args": ["-y", "@steinx/memory-mcp-1file"]
     }
   }
 }
@@ -362,11 +379,10 @@ Or with Docker:
     "memory": {
       "command": "docker",
       "args": [
-        "run", "--init", "-i", "--rm", "--memory=3g",
+        "run", "--init", "-i", "--rm", "--memory=4g",
         "-v", "mcp-data:/data",
         "-v", "${workspaceFolder}:/project:ro",
-        "ghcr.io/pomazanbohdan/memory-mcp-1file:latest",
-        "--stdio"
+        "ghcr.io/<owner>/memory-mcp-1file:latest"
       ]
     }
   }

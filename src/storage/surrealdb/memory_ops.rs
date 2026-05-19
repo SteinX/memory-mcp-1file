@@ -577,7 +577,7 @@ pub(super) async fn get_valid(
 ) -> Result<Vec<Memory>> {
     let sql = format!(
         r#"
-        SELECT {MEMORY_SELECT} FROM memories 
+        SELECT {MEMORY_SELECT} FROM memories
         WHERE {}
         ORDER BY ingestion_time DESC
         LIMIT $limit
@@ -603,7 +603,7 @@ pub(super) async fn get_valid_at(
 
     let sql = format!(
         r#"
-        SELECT {MEMORY_SELECT} FROM memories 
+        SELECT {MEMORY_SELECT} FROM memories
         WHERE {}
         ORDER BY ingestion_time DESC
         LIMIT $limit
