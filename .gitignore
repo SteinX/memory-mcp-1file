@@ -14,10 +14,17 @@
 
 _tmp/
 .kittify
-# doc
 target
 .clavix
-doc/
+doc/*
+!doc/architecture/
+!doc/architecture/**
+!doc/client-configuration.md
+!doc/runtime-configuration.md
+!doc/code-intelligence.md
+!doc/tools-reference.md
+!doc/troubleshooting.md
+!doc/roadmap.md
 opencode-mmcp-1file.jsonc
 opencode-mmcp-1file.bck.jsonc
 .opencode/package-lock.json
