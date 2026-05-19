@@ -24,7 +24,7 @@ use memory_mcp::forgetting::access::create_access_channel;
 use memory_mcp::forgetting::capacity::CapacityController;
 use memory_mcp::forgetting::config::ForgettingConfig;
 use memory_mcp::lifecycle::{
-    install_panic_hook, record_runtime_event_with_details, spawn_heartbeat,
+    install_panic_hook, parent_process_id, record_runtime_event_with_details, spawn_heartbeat,
 };
 use memory_mcp::search::{CodeSearchEngine, MemorySearchEngine};
 use memory_mcp::server::MemoryMcpServer;
@@ -536,7 +536,7 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
     tracing::info!(
         version = env!("CARGO_PKG_VERSION"),
         pid = std::process::id(),
-        ppid = unsafe { libc::getppid() },
+        ppid = ?parent_process_id(),
         mode = runtime_mode,
         model = %cli.model,
         data_dir = %cli.data_dir.display(),

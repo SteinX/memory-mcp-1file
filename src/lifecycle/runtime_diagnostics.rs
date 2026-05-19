@@ -33,7 +33,7 @@ pub fn install_panic_hook(data_dir: PathBuf, mode: String) {
 
         write_runtime_event(&data_dir, "last_panic.json", "panic", &mode, details);
         eprintln!(
-            "[memory-mcp] panic captured: mode={} pid={} ppid={} thread={}",
+            "[memory-mcp] panic captured: mode={} pid={} ppid={:?} thread={}",
             mode,
             std::process::id(),
             parent_process_id(),
@@ -56,6 +56,10 @@ pub fn record_runtime_event_with_details(
     details: Value,
 ) {
     write_runtime_event(data_dir, marker_name, event, mode, details);
+}
+
+pub fn parent_process_id() -> Option<u32> {
+    platform_parent_process_id()
 }
 
 pub fn spawn_heartbeat(
@@ -146,13 +150,14 @@ fn panic_payload_to_string(panic_info: &std::panic::PanicHookInfo<'_>) -> String
 }
 
 #[cfg(unix)]
-fn parent_process_id() -> u32 {
-    unsafe { libc::getppid() as u32 }
+fn platform_parent_process_id() -> Option<u32> {
+    let pid = unsafe { libc::getppid() };
+    (pid > 0).then_some(pid as u32)
 }
 
 #[cfg(not(unix))]
-fn parent_process_id() -> u32 {
-    0
+fn platform_parent_process_id() -> Option<u32> {
+    None
 }
 
 #[cfg(test)]
