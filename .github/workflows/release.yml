@@ -8,9 +8,16 @@ on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Existing release tag to publish, e.g. v0.9.0"
+        required: true
+        type: string
 
 env:
   CARGO_TERM_COLOR: always
+  RELEASE_REF: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref_name }}
 
 jobs:
   create-release:
@@ -19,11 +26,14 @@ jobs:
       upload_url: ${{ steps.create_release.outputs.upload_url }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_REF }}
       
       - name: Create Release
         id: create_release
         uses: softprops/action-gh-release@v1
         with:
+          tag_name: ${{ env.RELEASE_REF }}
           draft: false
           prerelease: false
           generate_release_notes: true
@@ -43,6 +53,8 @@ jobs:
             rustflags: ""
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_REF }}
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -65,7 +77,7 @@ jobs:
       - name: Package Artifacts
         shell: bash
         run: |
-          VERSION=${GITHUB_REF#refs/tags/v}
+          VERSION=${RELEASE_REF#v}
           BINARY_NAME="memory-mcp"
           TARGET="${{ matrix.target }}"
           BIN_PATH="target/${TARGET}/release/$BINARY_NAME"
@@ -79,6 +91,7 @@ jobs:
       - name: Upload Release Asset
         uses: softprops/action-gh-release@v1
         with:
+          tag_name: ${{ env.RELEASE_REF }}
           files: ${{ env.ASSET_NAME }}
 
   docker-release:
@@ -86,6 +99,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_REF }}
 
       - name: Compute publish targets
         id: publish_targets
@@ -109,14 +124,14 @@ jobs:
         with:
           images: ${{ steps.publish_targets.outputs.image_name }}
           tags: |
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=raw,value=latest,enable=${{ !github.event.release.prerelease }}
+            type=semver,pattern={{version}},value=${{ env.RELEASE_REF }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ env.RELEASE_REF }}
+            type=raw,value=latest
 
       - name: Prepare Version
         id: prep
         run: |
-          VERSION=${GITHUB_REF#refs/tags/v}
+          VERSION=${RELEASE_REF#v}
           echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
 
       - name: Build and push Docker image
@@ -160,6 +175,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_REF }}
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -200,7 +217,7 @@ jobs:
       - name: Package Artifacts
         shell: bash
         run: |
-          VERSION=${GITHUB_REF#refs/tags/v}
+          VERSION=${RELEASE_REF#v}
           BINARY_NAME="memory-mcp"
           if [ "${{ matrix.os }}" = "windows-latest" ]; then
             BINARY_NAME="memory-mcp.exe"
@@ -222,6 +239,7 @@ jobs:
       - name: Upload Release Asset
         uses: softprops/action-gh-release@v1
         with:
+          tag_name: ${{ env.RELEASE_REF }}
           files: ${{ env.ASSET_NAME }}
 
   # 📦 Publish npm wrapper package
@@ -230,6 +248,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_REF }}
 
       - name: Read npm package metadata
         id: npm_meta
@@ -255,7 +275,7 @@ jobs:
 
       - name: Sync npm package metadata from repository
         run: |
-          VERSION=${GITHUB_REF#refs/tags/v}
+          VERSION=${RELEASE_REF#v}
           REPOSITORY_URL="https://github.com/${{ github.repository }}"
           TARGET_PACKAGE_NAME="${{ steps.npm_meta.outputs.target_package_name }}"
           cd npm

@@ -1249,6 +1249,7 @@ When running in Docker, the published image sets `EMBEDDING_MODEL_CACHE_DIR=/dat
 - The published image defaults to **HTTP SSE** on port `8080` and binds to `0.0.0.0`, so `-p 8080:8080` works as expected.
 - MCP desktop/CLI integrations should append `--stdio`, because those clients speak stdio rather than HTTP.
 - The release pipeline now publishes both **linux/amd64** (`x86_64-unknown-linux-musl`) and **linux/arm64** (`aarch64-unknown-linux-musl`) artifacts, and the published container image resolves the correct binary per target architecture.
+- If a tag push is not picked up by GitHub Actions, run the Release workflow manually from `master` and provide the existing tag in `release_tag`; the workflow checks out that tag before building and publishing artifacts.
 
 > [!WARNING]
 > **Changing Models & Data Compatibility**
